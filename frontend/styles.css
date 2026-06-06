@@ -423,6 +423,14 @@ details.ops-details[open] .ops-summary::after {
   font-size: 1.35rem;
 }
 
+.sidebar .panel-head h2 {
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--muted);
+}
+
 .slate-card,
 .status-card,
 .provider-card {
@@ -469,6 +477,7 @@ details.ops-details[open] .ops-summary::after {
   background: rgba(18, 17, 24, 0.84);
   box-shadow: none;
   text-align: left;
+  transition: border-color 0.15s, background 0.15s;
 }
 
 .aside-slate span,
@@ -491,8 +500,9 @@ details.ops-details[open] .ops-summary::after {
 }
 
 .aside-slate.active {
-  border-color: var(--line-strong);
-  background: linear-gradient(180deg, rgba(21, 45, 59, 0.88), rgba(22, 21, 30, 0.94));
+  border-color: rgba(125, 211, 252, 0.65);
+  background: linear-gradient(180deg, rgba(21, 45, 59, 0.95), rgba(22, 21, 30, 0.96));
+  box-shadow: inset 0 0 12px rgba(125, 211, 252, 0.06);
 }
 
 .match-menu-item {
@@ -508,6 +518,7 @@ details.ops-details[open] .ops-summary::after {
   background: rgba(18, 17, 24, 0.84);
   box-shadow: none;
   text-align: left;
+  transition: border-color 0.15s, background 0.15s;
 }
 
 .match-menu-item span {
@@ -528,8 +539,8 @@ details.ops-details[open] .ops-summary::after {
 }
 
 .match-menu-item.active {
-  border-color: var(--line-strong);
-  background: linear-gradient(180deg, rgba(21, 45, 59, 0.88), rgba(22, 21, 30, 0.94));
+  border-color: rgba(125, 211, 252, 0.65);
+  background: linear-gradient(180deg, rgba(21, 45, 59, 0.95), rgba(22, 21, 30, 0.96));
 }
 
 .ticket-head {
@@ -866,15 +877,15 @@ details.ops-details[open] .ops-summary::after {
 
 .summary-band {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px;
 }
 
 .summary-band > div {
-  min-height: 78px;
+  min-height: 72px;
   display: grid;
   align-content: space-between;
-  gap: 6px;
+  gap: 5px;
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 10px 12px;
@@ -883,14 +894,14 @@ details.ops-details[open] .ops-summary::after {
 
 .summary-band span {
   color: var(--muted);
-  font-family: "IBM Plex Mono", monospace;
-  font-size: 0.72rem;
+  font-size: 0.7rem;
   text-transform: uppercase;
   letter-spacing: 0.06em;
 }
 
 .summary-band strong {
-  font-size: 1.1rem;
+  font-size: 1rem;
+  line-height: 1.3;
 }
 
 .summary-band .ok {
@@ -958,11 +969,12 @@ details.ops-details[open] .ops-summary::after {
   border: 1px solid var(--line);
   background: rgba(18, 17, 24, 0.88);
   animation: fadeIn 0.2s ease both;
+  transition: border-color 0.15s, box-shadow 0.15s;
 }
 
 .pick-row.active {
-  border-color: var(--line-strong);
-  box-shadow: inset 0 0 0 1px rgba(154, 111, 36, 0.2);
+  border-color: rgba(125, 211, 252, 0.6);
+  box-shadow: inset 0 0 0 1px rgba(125, 211, 252, 0.1), 0 0 14px rgba(125, 211, 252, 0.07);
 }
 
 .pick-row.manual {
@@ -1035,9 +1047,9 @@ details.ops-details[open] .ops-summary::after {
   border-radius: 0.4rem;
   background: rgba(255, 255, 255, 0.04);
   color: var(--muted);
-  font-size: 0.7rem;
+  font-size: 0.68rem;
   letter-spacing: 0.02em;
-  opacity: 0.5;
+  opacity: 0.3;
 }
 
 .quality-item {
@@ -1194,7 +1206,14 @@ details.ops-details[open] .ops-summary::after {
 }
 
 .option-pill strong {
-  font-size: 1rem;
+  font-size: 1.05rem;
+  line-height: 1;
+}
+
+.option-pill span {
+  font-size: 0.8rem;
+  font-weight: 600;
+  opacity: 0.9;
 }
 
 .option-pill.active {
@@ -1293,6 +1312,7 @@ details.ops-details[open] .ops-summary::after {
 .analysis-card {
   display: grid;
   gap: 14px;
+  animation: fadeIn 0.2s ease both;
 }
 
 .analysis-head h3 {
@@ -1509,7 +1529,10 @@ details.analysis-block summary h4 {
 
   button,
   .ops-summary::after,
-  .next-contest-fixture {
+  .next-contest-fixture,
+  .aside-slate,
+  .match-menu-item,
+  .pick-row {
     transition: none;
   }
 
@@ -1518,7 +1541,8 @@ details.analysis-block summary h4 {
   }
 
   .pick-row,
-  .panel {
+  .panel,
+  .analysis-card {
     animation: none;
   }
 

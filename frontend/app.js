@@ -621,27 +621,27 @@ function renderValidationSummary() {
         <strong>${fixed.length} fijos · ${doubles.length} dobles · ${triples.length} triples</strong>
       </div>
       <div class="${jackpotTone}">
-        <span>P(${slateSize}/${slateSize}) jackpot</span>
+        <span>Jackpot ${slateSize}/${slateSize}</span>
         <strong>${escapeHtml(jackpotValue)}</strong>
       </div>
       <div class="${ticketsHalf != null && ticketsHalf <= 50 ? "ok" : (ticketsHalf != null && ticketsHalf <= 500 ? "warn" : "bad")}">
-        <span>Para 50% acumulado</span>
+        <span>Cobertura ~50%</span>
         <strong>${escapeHtml(ticketsLabel)}</strong>
       </div>
       <div class="${review.length ? "bad" : "ok"}">
-        <span>Revisar</span>
+        <span>A revisar</span>
         <strong>${escapeHtml(review.length)}</strong>
       </div>
       <div class="${caution.length ? "warn" : "ok"}">
-        <span>Cautela</span>
+        <span>Con cautela</span>
         <strong>${escapeHtml(caution.length)}</strong>
       </div>
       <div class="${blocked.length ? "bad" : "ok"}">
-        <span>Bloqueados</span>
+        <span>Sin datos</span>
         <strong>${escapeHtml(blocked.length)}</strong>
       </div>
       <div class="${manual.length ? "ok" : ""}">
-        <span>Manual</span>
+        <span>Ajustados</span>
         <strong>${escapeHtml(manual.length)}</strong>
       </div>
     </div>
@@ -1088,7 +1088,7 @@ function renderBoard() {
     if (summaryNode) summaryNode.innerHTML = renderEmpty("Consultando API, predicciones y evidencias.");
     if (validationSummaryNode) validationSummaryNode.innerHTML = "";
     if (gridNode) gridNode.innerHTML = renderLoadingRows();
-    if (analysisNode) analysisNode.innerHTML = renderEmpty("Calculando vista de análisis.");
+    if (analysisNode) analysisNode.innerHTML = renderEmpty("Cargando análisis del partido…");
     return;
   }
 
@@ -1097,10 +1097,10 @@ function renderBoard() {
     if (codeNode) codeNode.textContent = "Carga una papeleta";
     if (slateSwitcherNode) slateSwitcherNode.innerHTML = "";
     if (tabsNode) tabsNode.innerHTML = renderTicketTabs();
-    if (summaryNode) summaryNode.innerHTML = renderEmpty("El worker descargará la quiniela activa en la próxima ejecución automática.");
+    if (summaryNode) summaryNode.innerHTML = renderEmpty("El sistema cargará la quiniela activa en la próxima ejecución.");
     if (validationSummaryNode) validationSummaryNode.innerHTML = "";
-    if (gridNode) gridNode.innerHTML = renderEmpty("No se encontró una quiniela activa. El sistema la cargará automáticamente cuando esté disponible.");
-    if (analysisNode) analysisNode.innerHTML = renderEmpty("El análisis aparecerá aquí una vez que la quiniela esté disponible.");
+    if (gridNode) gridNode.innerHTML = renderEmpty("Sin quiniela activa. Selecciona una boleta en el panel izquierdo o espera a que el sistema la cargue.");
+    if (analysisNode) analysisNode.innerHTML = renderEmpty("Selecciona un partido para ver la explicación del modelo.");
     return;
   }
 
