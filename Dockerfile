@@ -23,7 +23,8 @@ COPY backend/pyproject.toml backend/constraints.txt /tmp/build/backend/
 COPY backend/app/__init__.py /tmp/build/backend/app/__init__.py
 
 RUN pip install --upgrade pip && \
-    pip install -c /tmp/build/backend/constraints.txt /tmp/build/backend
+    pip install -c /tmp/build/backend/constraints.txt /tmp/build/backend && \
+    pip uninstall -y nvidia-nccl-cu12
 
 
 FROM python:3.12-slim AS runtime

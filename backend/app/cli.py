@@ -282,7 +282,7 @@ def prune_source_documents(args: argparse.Namespace) -> None:
             {
                 "dry_run": False,
                 "cutoff": cutoff.isoformat(),
-                "deleted": int(result.rowcount or 0),
+                "deleted": int(getattr(result, "rowcount", None) or 0),
             }
         )
     finally:

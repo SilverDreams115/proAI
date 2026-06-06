@@ -88,10 +88,12 @@ def _collect_operational_signals() -> dict[str, object]:
 
     try:
         state = worker_module._state
+        # WorkerState stores these as ISO-formatted strings (set via .isoformat()
+        # in the worker loop); assign directly, no second .isoformat() call needed.
         if state.last_executed_at is not None:
-            signals["worker_last_executed_at"] = state.last_executed_at.isoformat()
+            signals["worker_last_executed_at"] = state.last_executed_at
         if state.last_polled_at is not None:
-            signals["worker_last_polled_at"] = state.last_polled_at.isoformat()
+            signals["worker_last_polled_at"] = state.last_polled_at
     except Exception:
         pass
 
@@ -105,7 +107,8 @@ async def health() -> HealthResponse:
     # Status starts as "ok" when the schema matches, degrades when an
     # operational signal is missing/stale enough to warrant attention.
     status = "ok" if db_health["schema_up_to_date"] else "degraded"
-    if int(ops.get("unregistered_parser_sources") or 0) > 0:
+    _unreg = ops.get("unregistered_parser_sources")
+    if isinstance(_unreg, int) and _unreg > 0:
         status = "degraded"
     return HealthResponse(
         status=status,

@@ -361,7 +361,7 @@ class NeuralBaselineModel:
         brier = float(_NumpyMLP._brier_score(probs, y))
         ce = float(_NumpyMLP._cross_entropy(probs, y))
         n = len(y)
-        per_class: dict[str, dict[str, float]] = {}
+        per_class: dict[str, dict[str, float | None]] = {}
         for cls_idx, cls_label in IDX_TO_RESULT.items():
             mask = y == cls_idx
             total = int(mask.sum())
