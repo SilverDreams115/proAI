@@ -204,7 +204,7 @@ class TestDatasetIgnoresConflicts:
         for mid in match_ids:
             _add_prediction(db, mid, slate_id, hash_, recommended_outcome="1")
 
-        score = _score_slate(db, slate)
+        _score_slate(db, slate)
 
         rows = AdaptiveDatasetService(db).build_rows_for_slate(
             slate_id, include_partial=True

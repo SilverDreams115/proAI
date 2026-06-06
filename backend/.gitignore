@@ -1,0 +1,28 @@
+# Secrets
+.env
+.env.*
+
+# Python artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Tool caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Test artifacts
+.coverage
+htmlcov/
+
+# Data files
+data/*.db
+data/*.sqlite
+data/*.sqlite3
+
+# Package metadata
+proai_backend.egg-info/
+dist/
+build/

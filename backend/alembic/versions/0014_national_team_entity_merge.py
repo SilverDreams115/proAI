@@ -12,7 +12,6 @@ from the placeholders are moved to the canonical entities.
 
 See _migrate_to_v14 in app/db/migrations.py for full details.
 """
-from alembic import op
 
 revision = "0014"
 down_revision = "0013"

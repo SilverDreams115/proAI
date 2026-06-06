@@ -1,3 +1,5 @@
+# EXPERIMENTAL / NOT WIRED TO PRODUCTION
+# Kept for future research; do not import in runtime paths.
 """Per-league stacking meta-learner over base scorers (Fase 4.1).
 
 Each base scorer (Dixon-Coles heuristic blend, XGBoost) emits a three-way

@@ -18,7 +18,6 @@ from __future__ import annotations
 import json
 from datetime import datetime, timedelta, timezone
 from typing import Any
-from uuid import uuid4
 
 import pytest
 from sqlalchemy import select

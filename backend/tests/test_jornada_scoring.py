@@ -18,20 +18,16 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone, timedelta
 from typing import Any
-from uuid import uuid4
 
 import pytest
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.models.tables import (
-    CompetitionModel,
-    MatchModel,
     MatchResultModel,
     PredictionModel,
     ProgolJornadaScoreModel,
     SourceModel,
-    TeamModel,
     TicketRecommendationSnapshotModel,
 )
 from app.repositories.jornada_score_repository import JornadaScoreRepository

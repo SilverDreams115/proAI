@@ -68,7 +68,7 @@ class JornadaScoringService:
 
             hit: bool | None = None
             brier_score: float | None = None
-            if has_result and pred is not None:
+            if result is not None and pred is not None:
                 hit = pred.recommended_outcome == result.result_code
                 if hit:
                     simple_hits += 1
@@ -90,14 +90,14 @@ class JornadaScoringService:
                 ticket_mode_detail = {}
                 for mode, mode_data in t_picks.items():
                     mode_hit: bool | None = None
-                    if has_result:
+                    if result is not None:
                         mode_hit = result.result_code in mode_data["picks"]
                     ticket_mode_detail[mode] = {
                         "pick_type": mode_data["pick_type"],
                         "picks": mode_data["picks"],
                         "hit": mode_hit,
                     }
-                if has_result:
+                if result is not None:
                     simple_mode = t_picks.get("simple")
                     if simple_mode:
                         ticket_simple_evaluable += 1

@@ -16,7 +16,6 @@ from __future__ import annotations
 import json
 import logging
 from collections import defaultdict
-from datetime import datetime, timezone
 from statistics import mean
 from typing import Any
 

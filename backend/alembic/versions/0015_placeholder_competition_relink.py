@@ -6,7 +6,6 @@ Create Date: 2026-06-06
 
 No schema changes. Data-only migration. See _migrate_to_v15 in app/db/migrations.py.
 """
-from alembic import op
 
 revision = "0015"
 down_revision = "0014"

@@ -14,8 +14,6 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-import pytest
-from sqlalchemy.orm import Session
 
 from app.services.normalization_service import NormalizationService
 
@@ -159,7 +157,7 @@ class TestMigrationV14:
 
             match_id = match.id
             canonical_id = canonical.id
-            placeholder_id = placeholder.id
+            _placeholder_id = placeholder.id  # captured for potential assertion, not used here
 
             # Run migration
             with session.get_bind().begin() as conn:
@@ -183,7 +181,6 @@ class TestMigrationV14:
     def test_migration_skips_conflict_when_canonical_match_already_exists(self, tmp_path):
         """When a canonical match already exists at the same (comp, home, away, kickoff),
         the placeholder match is NOT re-pointed — no unique constraint violation."""
-        from sqlalchemy import select
 
         from app.db.migrations import _migrate_to_v14
         from app.models.tables import CompetitionModel, MatchModel, TeamModel, TeamAliasModel
@@ -295,7 +292,6 @@ class TestEntityResolutionAfterMigration:
     def test_find_team_prefers_canonical_via_moved_alias(self, tmp_path):
         """After v14 runs, find_team_by_alias('Croacia', 'croatia') returns
         Croatia (real, is_placeholder=False), not the Croacia placeholder."""
-        from sqlalchemy import select
 
         from app.db.migrations import _migrate_to_v14
         from app.models.tables import TeamModel, TeamAliasModel
@@ -327,7 +323,6 @@ class TestEntityResolutionAfterMigration:
         """After v14, the progol_slate_matches still has the same slate composition
         (same match UUIDs) — the merge only changes which team entity the match
         references, not the slate's match list."""
-        from sqlalchemy import text
 
         from app.db.migrations import _migrate_to_v14
         from app.models.tables import (
@@ -481,7 +476,6 @@ class TestMigrationV15:
         session.close()
 
     def test_migration_relinks_progol_concurso_match_to_international_friendlies(self, tmp_path):
-        from sqlalchemy import select
 
         from app.db.migrations import _migrate_to_v15
         from app.models.tables import CompetitionModel, MatchModel, TeamModel

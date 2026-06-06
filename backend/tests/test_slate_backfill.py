@@ -13,7 +13,7 @@ Covers:
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -90,7 +90,7 @@ def test_backfill_fills_null_hash(db):
     """backfill_composition_hashes() sets composition_hash for a NULL-hash slate."""
     repo = SlateRepository(db)
 
-    slate = repo.upsert_slate(_slate("PG-BACK1", _matches_v1()))
+    _slate_obj = repo.upsert_slate(_slate("PG-BACK1", _matches_v1()))
     db.commit()
 
     # Manually clear the hash to simulate pre-v10 state.
@@ -203,7 +203,7 @@ def test_backfill_pg2336_pattern(db):
         )
         for i in range(1, 15)
     ]
-    slate = repo.upsert_slate(_slate("PG-2336-SIM", international))
+    _slate_obj = repo.upsert_slate(_slate("PG-2336-SIM", international))
     db.commit()
 
     db.execute(
@@ -329,7 +329,7 @@ def test_auto_discover_proceeds_when_week_type_matches(tmp_path):
     with Session(engine) as session:
         slate_repo = SlateRepository(session)
         # Create an existing weekend slate.
-        existing = slate_repo.upsert_slate(_slate("PG-8000", _matches_v1(), week_type="weekend"))
+        _existing = slate_repo.upsert_slate(_slate("PG-8000", _matches_v1(), week_type="weekend"))
         session.commit()
 
         mock_ingestion_repo = MagicMock(spec=IngestionRepository)

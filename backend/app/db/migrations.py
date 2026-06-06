@@ -527,7 +527,6 @@ def _migrate_to_v12(connection) -> None:
     """
     dialect_name = connection.engine.dialect.name
     timestamp_type = "TIMESTAMP WITH TIME ZONE" if dialect_name == "postgresql" else "DATETIME"
-    boolean_default_true = "true" if dialect_name == "postgresql" else "1"
     boolean_default_false = "false" if dialect_name == "postgresql" else "0"
     connection.execute(
         text(

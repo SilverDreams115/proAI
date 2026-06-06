@@ -10,9 +10,8 @@ Covers:
 """
 from __future__ import annotations
 
-import json
 from datetime import datetime, timezone, timedelta
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 from sqlalchemy import inspect, text

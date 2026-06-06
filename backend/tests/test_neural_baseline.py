@@ -29,7 +29,6 @@ from app.services.neural_baseline_service import (
     INPUT_DIM,
     RESULT_TO_IDX,
     NeuralBaselineConfig,
-    NeuralBaselineModel,
     NeuralBaselineService,
     NeuralDatasetBuilder,
     _NumpyMLP,

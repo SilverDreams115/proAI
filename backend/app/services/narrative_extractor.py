@@ -1,3 +1,5 @@
+# EXPERIMENTAL / NOT WIRED TO PRODUCTION
+# Kept for future research; do not import in runtime paths.
 """Strict contract for LLM-based narrative extraction (Fase 3.2).
 
 The architecture rule is firm: the LLM is an *extractor*, never a

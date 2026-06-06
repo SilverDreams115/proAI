@@ -3,6 +3,7 @@
 __pycache__
 .pytest_cache
 .ruff_cache
+.mypy_cache
 *.pyc
 *.pyo
 *.pyd
@@ -14,3 +15,7 @@ backend/data
 backend/tests
 backend/proai_backend.egg-info
 .env
+
+# Frontend dev toolchain — not needed at runtime (only index.html, app.js,
+# styles.css, api-client.js, helpers.js, config.js, ui-utils.js are served)
+frontend/node_modules

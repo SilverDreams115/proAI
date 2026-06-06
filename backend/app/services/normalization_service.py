@@ -73,43 +73,29 @@ class NormalizationService:
         "korea republic": "south-korea",
         "corea del norte": "north-korea",
         "corea": "south-korea",       # bare "Corea" in some PDF editions
-        # "chequia" is the modern Spanish name for Czech Republic.
-        # "republica checa" was already mapped; both are needed because
-        # different PDF editions use different spellings.
+        # "chequia" is the modern Spanish name for Czech Republic;
+        # "republica checa" is already mapped above.
         "chequia": "czech-republic",
-        "republica checa": "czech-republic",
         # Canada (same in Spanish/English) – explicit to avoid tokenizer
         # stripping "canada" as a stopword substring.
         "canada": "canada",
-        # South Africa variants
-        "sudafrica": "south-africa",
+        # South Africa: "sudafrica" already mapped above; add regional variant
         "africa del sur": "south-africa",
-        # Ivory Coast / Côte d'Ivoire
-        "costa de marfil": "ivory-coast",
+        # Ivory Coast: "costa de marfil" already mapped above; add French variants
         "cote d ivoire": "ivory-coast",
         "costa marfil": "ivory-coast",
         # Ecuador (same in Spanish) – explicit entry for safety
         "ecuador": "ecuador",
-        # Egypt
-        "egipto": "egypt",
         # panamá with accent stripped → "panama" is already the slug
-        # (no stopword collision); this entry exists to make the mapping
-        # explicit and to document that "panama" = English = canonical.
+        # (no stopword collision); this entry documents the canonical form.
         "panama": "panama",
-        # Netherlands / Países Bajos / Holanda
-        "paises bajos": "netherlands",
-        "holanda": "netherlands",
+        # Netherlands: "paises bajos" and "holanda" already mapped above
         "holland": "netherlands",
-        # USA variants
-        "estados unidos": "usa",
-        "eua": "usa",
+        # USA: "estados unidos" and "eua" already mapped above
         "united states": "usa",
         "usa": "usa",
-        # Belgium
-        "belgica": "belgium",
+        # Belgium: "belgica" already mapped above
         "belgie": "belgium",
-        # Turkey
-        "turquia": "turkey",
         # Liga Expansión MX team aliases (PDF uses short names)
         "tampico": "tampico-madero",
         "tepatitlan": "tepatitlan-fc",
