@@ -44,16 +44,16 @@ body {
 .shell {
   max-width: 1520px;
   margin: 0 auto;
-  padding: 20px 16px 36px;
+  padding: 10px 16px 28px;
 }
 
 .masthead {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 20px;
-  margin-bottom: 16px;
-  padding-bottom: 14px;
+  gap: 16px;
+  margin-bottom: 8px;
+  padding-bottom: 8px;
   border-bottom: 1px solid rgba(125, 211, 252, 0.16);
 }
 
@@ -74,16 +74,17 @@ h3 {
 
 h1 {
   margin: 0;
-  font-size: clamp(1.8rem, 3vw, 3rem);
-  line-height: 1.02;
+  font-size: clamp(1.3rem, 2vw, 2rem);
+  line-height: 1.05;
   letter-spacing: 0;
 }
 
 .lede,
 .meta-copy {
-  margin: 8px 0 0;
+  margin: 4px 0 0;
   color: var(--muted);
-  line-height: 1.55;
+  line-height: 1.45;
+  font-size: 0.86rem;
 }
 
 .toolbar {
@@ -163,6 +164,12 @@ button:disabled {
   transform: none;
 }
 
+button:focus-visible,
+[role="button"]:focus-visible {
+  outline: 2px solid var(--line-strong);
+  outline-offset: 2px;
+}
+
 .layout {
   display: grid;
   grid-template-columns: 300px minmax(0, 1fr);
@@ -170,21 +177,21 @@ button:disabled {
 }
 
 .ops-panel {
-  margin-bottom: 14px;
-  padding: 14px;
+  margin-bottom: 10px;
+  padding: 10px 14px 12px;
 }
 
 .ops-head {
   display: flex;
   justify-content: space-between;
-  gap: 14px;
-  align-items: flex-start;
-  margin-bottom: 14px;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 8px;
 }
 
 .ops-head h2 {
   margin: 0;
-  font-size: 1.25rem;
+  font-size: 1rem;
 }
 
 .ops-badge {
@@ -206,13 +213,13 @@ button:disabled {
 }
 
 .ops-item {
-  min-height: 86px;
+  min-height: 60px;
   display: grid;
   align-content: space-between;
-  gap: 8px;
+  gap: 3px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  padding: 10px;
+  padding: 7px 10px;
   background: rgba(20, 19, 27, 0.78);
 }
 
@@ -236,7 +243,7 @@ button:disabled {
 }
 
 .ops-item strong {
-  font-size: 1.05rem;
+  font-size: 0.92rem;
 }
 
 .ops-item.ok,
@@ -275,7 +282,16 @@ button:disabled {
 }
 
 .compact-head {
-  margin-top: 22px;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+#match-menu {
+  max-height: 55vh;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line) transparent;
 }
 
 .panel-head h2,
@@ -762,10 +778,10 @@ button:disabled {
 
 .pick-row {
   display: grid;
-  grid-template-columns: 64px minmax(0, 2fr) minmax(250px, 0.85fr);
-  gap: 12px;
+  grid-template-columns: 56px minmax(0, 2fr) minmax(230px, 0.85fr);
+  gap: 10px;
   align-items: stretch;
-  padding: 12px;
+  padding: 10px;
   border-radius: 8px;
   border: 1px solid var(--line);
   background: rgba(18, 17, 24, 0.88);
@@ -827,8 +843,8 @@ button:disabled {
 }
 
 .pick-meta h3 {
-  margin: 0 0 6px;
-  font-size: 1.08rem;
+  margin: 0 0 4px;
+  font-size: 1rem;
 }
 
 .pick-sub,
@@ -846,8 +862,9 @@ button:disabled {
   border-radius: 0.4rem;
   background: rgba(255, 255, 255, 0.04);
   color: var(--muted);
-  font-size: 0.75rem;
+  font-size: 0.7rem;
   letter-spacing: 0.02em;
+  opacity: 0.5;
 }
 
 .quality-item {
@@ -860,7 +877,7 @@ button:disabled {
 .facts-grid {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 6px;
 }
 
 .tag,
@@ -871,8 +888,8 @@ button:disabled {
   align-items: center;
   justify-content: center;
   border-radius: 7px;
-  padding: 5px 11px;
-  font-size: 0.78rem;
+  padding: 4px 9px;
+  font-size: 0.76rem;
   font-weight: 700;
 }
 
@@ -1008,8 +1025,9 @@ button:disabled {
 }
 
 .option-pill.active {
-  border-color: var(--accent);
-  background: linear-gradient(180deg, #5f2030 0%, #331621 100%);
+  border-color: rgba(155, 227, 106, 0.55);
+  background: linear-gradient(180deg, #162b0f 0%, #0c1c08 100%);
+  color: var(--win);
 }
 
 .option-pill.secondary {
@@ -1093,7 +1111,8 @@ button:disabled {
   gap: 12px;
 }
 
-.analysis-block {
+.analysis-block,
+details.analysis-block {
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 14px;
@@ -1106,6 +1125,33 @@ button:disabled {
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--accent-2);
+}
+
+details.analysis-block summary {
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+details.analysis-block summary::-webkit-details-marker {
+  display: none;
+}
+
+details.analysis-block summary::before {
+  content: "▶";
+  font-size: 0.65rem;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+details.analysis-block[open] summary::before {
+  content: "▼";
+}
+
+details.analysis-block summary h4 {
+  margin: 0;
 }
 
 .validation-block {

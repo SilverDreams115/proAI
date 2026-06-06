@@ -194,7 +194,7 @@ async def test_frontend_shell_supports_eight_match_slate(client) -> None:
     assert "doubleLimitForSlate" in js_response.text
     assert "chooseModelDoubleMatchIds" in js_response.text
     assert "ticketRecommendationFor" in js_response.text
-    assert "Validación Codex" in js_response.text
+    assert "Riesgo del partido" in js_response.text
     assert "Calidad de datos" in js_response.text
     assert "Estado de producción" in js_response.text
     assert "rutas HTTP cerradas" in js_response.text

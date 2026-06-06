@@ -240,9 +240,9 @@ function validationProfile(match) {
   }
 
   if (["ready", "covered"].includes(profile.readiness)) {
-    reasons.push(`benchmark ${readinessLabel(profile.readiness)}`);
+    reasons.push(`referencia ${readinessLabel(profile.readiness)}`);
   } else {
-    reasons.push(`benchmark ${readinessLabel(profile.readiness)}; no se trata como fijo seguro`);
+    reasons.push(`referencia ${readinessLabel(profile.readiness)}; no se trata como fijo seguro`);
   }
 
   if (profile.evidenceCount <= 0) {
@@ -327,8 +327,8 @@ function qualityIssueProfile(match) {
     (benchmarkWeak || cautionOnly || thin || !anchored || validation.level === "medium");
   const reasons = [];
 
-  if (blocked) reasons.push("sin benchmark confiable");
-  if (benchmarkWeak) reasons.push("benchmark bajo");
+  if (blocked) reasons.push("sin referencia confiable");
+  if (benchmarkWeak) reasons.push("referencia débil");
   if (!blocked && !benchmarkWeak && cautionOnly) reasons.push("usar con cautela");
   if (thin) reasons.push("calidad de datos delgada");
   if (validation.level === "high") reasons.push(validation.label.toLowerCase());
@@ -476,9 +476,10 @@ function buildMatchCard(match) {
         .join(" ");
 
       const isSelected = decision.picks.includes(key);
-      const outcomeNames = { "1": "Local", X: "Empate", "2": "Visita" };
+      const outcomeNames = { "1": "Local", X: "Empate", "2": "Visitante" };
       return `
         <button class="${classes}" data-option-pick="${key}" data-option-match="${matchId}"
+          title="${outcomeNames[key]}: ${formatPercent(value)}"
           aria-label="${outcomeNames[key]} (${displayOutcome(key)}) ${formatPercent(value)}"
           aria-pressed="${isSelected}">
           <strong>${displayOutcome(key)}</strong>
@@ -508,8 +509,7 @@ function buildMatchCard(match) {
           ${decision.source === "manual" ? `<span class="tag manual">Manual</span>` : ""}
           ${match.prediction.is_knockout ? `<span class="tag knockout" title="Eliminatoria: empate descartado">Eliminatoria</span>` : ""}
           <span class="tag">${escapeHtml(match.prediction.competition_name)}</span>
-          <span class="tag ${validation.className}">${escapeHtml(validation.label)}</span>
-          <span class="tag quality-${issue.tone}">${escapeHtml(issue.label)}</span>
+          <span class="tag quality-${issue.tone}" title="${escapeHtml(issue.reasons.join(' · ') || issue.label)}">${escapeHtml(issue.label)}</span>
         </div>
         <h3>${escapeHtml(match.prediction.home_team_name)} vs ${escapeHtml(match.prediction.away_team_name)}</h3>
         <p class="pick-sub">${escapeHtml(formatDate(match.kickoff_at))} ${match.venue ? `· ${escapeHtml(match.venue)}` : ""}<span class="freshness-tag" title="Cuándo se calculó esta probabilidad">Actualizado ${escapeHtml(formatRelativeAge(match.prediction.generated_at))}</span></p>
@@ -618,7 +618,7 @@ function renderValidationSummary() {
     <div class="summary-band">
       <div>
         <span>Jugada actual</span>
-        <strong>${escapeHtml(fixed.length)}F / ${escapeHtml(doubles.length)}D / ${escapeHtml(triples.length)}T</strong>
+        <strong>${fixed.length} fijos · ${doubles.length} dobles · ${triples.length} triples</strong>
       </div>
       <div class="${jackpotTone}">
         <span>P(${slateSize}/${slateSize}) jackpot</span>
@@ -749,8 +749,8 @@ function renderProductionStatus() {
   const blockedMatches = state.matches.filter((match) => qualityIssueProfile(match).blocked).length;
   const thinMatches = state.matches.filter((match) => match.quality?.quality_level === "thin").length;
   const authState = state.authenticated ? "activa" : "pendiente";
-  const readyStatus = state.ready?.status || "sin dato";
-  const healthStatus = state.health?.status || "sin dato";
+  const readyStatus = { ready: "listo", not_ready: "no listo" }[state.ready?.status] || state.ready?.status || "sin dato";
+  const healthStatus = { ok: "ok", degraded: "degradado" }[state.health?.status] || state.health?.status || "sin dato";
   const schemaCopy = state.health
     ? `schema ${state.health.schema_version}${state.health.schema_up_to_date ? " al día" : " pendiente"}`
     : "schema sin dato";
@@ -771,7 +771,7 @@ function renderProductionStatus() {
         <small>${escapeHtml(schemaCopy)}</small>
       </div>
       <div class="ops-item ${statusTone(state.ready?.ready)}">
-        <span>Readiness</span>
+        <span>Estado BD</span>
         <strong>${escapeHtml(readyStatus)}</strong>
         <small>DB ${state.ready?.database_ok ? "OK" : "sin confirmar"}</small>
       </div>
@@ -809,9 +809,9 @@ function renderDataQuality(match, featurePayload, evidenceCount, resultCount) {
     `Calidad: ${dataQualityLabel(level)}${score !== null ? ` (${score}/100)` : ""}`,
     `Evidencia: ${quality.evidence_count ?? evidenceCount}`,
     `Forma reciente: ${quality.recent_results_count ?? resultCount}`,
-    `H2H: ${quality.head_to_head_results_count ?? featurePayload.head_to_head_results_count ?? 0}`,
+    `Antecedentes H2H: ${quality.head_to_head_results_count ?? featurePayload.head_to_head_results_count ?? 0}`,
     `Disponibilidad: ${quality.availability_count ?? 0}`,
-    `Benchmark: ${readinessLabel(quality.competition_readiness || match.prediction.competition_readiness)}`,
+    `Referencia: ${readinessLabel(quality.competition_readiness || match.prediction.competition_readiness)}`,
   ];
   const missingCopy = missing.length
     ? `<p class="mini-copy">Falta reforzar: ${escapeHtml(missing.join(", "))}.</p>`
@@ -942,7 +942,7 @@ function buildAnalysis(match) {
       <div class="analysis-head">
         <h3>${escapeHtml(match.prediction.home_team_name)} vs ${escapeHtml(match.prediction.away_team_name)}</h3>
         <p class="meta-copy">
-          Quiniela activa: <strong>${escapeHtml(displayPicks(decision.picks))}</strong>
+          Jugada: <strong>${escapeHtml(displayPicks(decision.picks))}</strong>
           · ${decision.source === "manual" ? "ajustada manualmente" : "sugerida por el modelo"}
         </p>
       </div>
@@ -950,50 +950,50 @@ function buildAnalysis(match) {
         <section class="analysis-block">
           <h4>Probabilidades</h4>
           <div class="facts-grid">
-            <div class="fact"><strong>L</strong><span>${formatPercent(match.prediction.home_probability)}</span></div>
-            <div class="fact"><strong>E</strong><span>${formatPercent(match.prediction.draw_probability)}</span></div>
-            <div class="fact"><strong>V</strong><span>${formatPercent(match.prediction.away_probability)}</span></div>
-            <div class="fact"><strong>Ticket</strong><span>${escapeHtml(displayPicks(decision.picks))}</span></div>
+            <div class="fact" title="Local (equipo de casa)"><strong>L</strong><span>${formatPercent(match.prediction.home_probability)}</span></div>
+            <div class="fact" title="Empate"><strong>E</strong><span>${formatPercent(match.prediction.draw_probability)}</span></div>
+            <div class="fact" title="Visitante (equipo de visita)"><strong>V</strong><span>${formatPercent(match.prediction.away_probability)}</span></div>
+            <div class="fact"><strong>Jugada</strong><span>${escapeHtml(displayPicks(decision.picks))}</span></div>
           </div>
         </section>
         <section class="analysis-block validation-block ${validation.className}">
-          <h4>Validación Codex</h4>
+          <h4>Riesgo del partido</h4>
           <div class="facts-grid">
             <div class="fact"><strong>Recomendación</strong><span>${escapeHtml(validation.label)}</span></div>
             <div class="fact"><strong>Acción</strong><span>${escapeHtml(validation.recommendation)}</span></div>
-            <div class="fact"><strong>Brecha top 2</strong><span>${escapeHtml(displayOutcome(validation.profile.bestOutcome))}/${escapeHtml(displayOutcome(validation.profile.secondOutcome))} · ${formatPercent(validation.profile.topGap)}</span></div>
-            <div class="fact"><strong>Entropía</strong><span>${Math.round(validation.profile.entropy * 100)}%</span></div>
             <div class="fact"><strong>Confianza</strong><span>${escapeHtml(confidenceLabel(validation.profile.confidence))}</span></div>
-            <div class="fact"><strong>Benchmark</strong><span>${escapeHtml(readinessLabel(validation.profile.readiness))}</span></div>
-            <div class="fact"><strong>Evidencia ligada</strong><span>${escapeHtml(evidenceCount)}</span></div>
+            <div class="fact"><strong>Referencia</strong><span>${escapeHtml(readinessLabel(validation.profile.readiness))}</span></div>
+            <div class="fact"><strong>Brecha top 2</strong><span>${escapeHtml(displayOutcome(validation.profile.bestOutcome))}/${escapeHtml(displayOutcome(validation.profile.secondOutcome))} · ${formatPercent(validation.profile.topGap)}</span></div>
             <div class="fact"><strong>3er resultado</strong><span>${escapeHtml(displayOutcome(validation.profile.thirdOutcome))} · ${formatPercent(validation.profile.thirdProbability)}</span></div>
+            <div class="fact"><strong>Evidencia ligada</strong><span>${escapeHtml(evidenceCount)}</span></div>
+            <div class="fact"><strong>Incertidumbre</strong><span>${Math.round(validation.profile.entropy * 100)}%</span></div>
           </div>
           <p class="validation-copy">${validation.reasons.map(escapeHtml).join(" · ")}</p>
         </section>
         <section class="analysis-block">
-          <h4>Calidad de datos</h4>
-          ${renderDataQuality(match, featurePayload, evidenceCount, resultCount)}
-        </section>
-        <section class="analysis-block">
-          <h4>Señales del modelo</h4>
-          <div class="signal-grid">${signalItems.map((item) => `<span class="signal-pill">${escapeHtml(item)}</span>`).join("")}</div>
-        </section>
-        <section class="analysis-block">
-          <h4>Por qué tomó esta decisión</h4>
+          <h4>Análisis de la decisión</h4>
           <div>${decisionReasons.map((item) => `<p>${escapeHtml(item)}</p>`).join("")}</div>
         </section>
         <section class="analysis-block">
-          <h4>Disponibilidad</h4>
+          <h4>Disponibilidad de jugadores</h4>
           <div class="signal-grid">${availabilityMarkup}</div>
         </section>
         <section class="analysis-block">
-          <h4>Evidencia</h4>
+          <h4>Evidencia contextual</h4>
           ${evidenceMarkup}
         </section>
         <section class="analysis-block">
-          <h4>Resultados ligados</h4>
+          <h4>Historial de resultados</h4>
           ${resultMarkup}
         </section>
+        <details class="analysis-block">
+          <summary><h4>Calidad de datos</h4></summary>
+          ${renderDataQuality(match, featurePayload, evidenceCount, resultCount)}
+        </details>
+        <details class="analysis-block">
+          <summary><h4>Datos estadísticos del modelo</h4></summary>
+          <div class="signal-grid">${signalItems.map((item) => `<span class="signal-pill">${escapeHtml(item)}</span>`).join("")}</div>
+        </details>
       </div>
     </div>
   `;
