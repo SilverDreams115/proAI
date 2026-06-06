@@ -58,12 +58,11 @@ body {
 }
 
 .eyebrow {
-  margin: 0 0 8px;
+  margin: 0 0 4px;
   color: var(--accent-2);
-  text-transform: uppercase;
-  letter-spacing: 0.24em;
-  font-size: 0.76rem;
+  font-size: 0.8rem;
   font-weight: 700;
+  letter-spacing: 0.06em;
 }
 
 h1,
@@ -123,13 +122,13 @@ h1 {
 }
 
 .auth-feedback {
-  flex: 1 1 100%;
-  min-height: 30px;
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  gap: 5px;
+  min-height: 24px;
+  flex: 0 1 auto;
   color: var(--muted);
-  font-size: 0.84rem;
+  font-size: 0.8rem;
   line-height: 1.35;
 }
 
@@ -137,7 +136,16 @@ h1 {
   color: var(--win);
 }
 
+.auth-feedback.ok::before {
+  content: "●";
+  font-size: 0.6em;
+  flex-shrink: 0;
+  animation: statusPulse 2.5s ease-in-out infinite;
+}
+
 .auth-feedback.warn {
+  flex: 1 1 100%;
+  justify-content: flex-end;
   color: var(--warn);
 }
 
@@ -179,6 +187,75 @@ button:focus-visible,
 .ops-panel {
   margin-bottom: 10px;
   padding: 10px 14px 12px;
+}
+
+.ops-details {
+  border: none;
+}
+
+.ops-summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  list-style: none;
+  padding: 2px 0;
+  font-size: 0.84rem;
+  user-select: none;
+}
+
+.ops-summary::-webkit-details-marker {
+  display: none;
+}
+
+.ops-summary::after {
+  content: "▾";
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 0.7rem;
+  transition: transform 0.2s ease;
+}
+
+details.ops-details[open] .ops-summary::after {
+  transform: rotate(180deg);
+}
+
+.ops-status-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.ops-status-dot.ok {
+  background: var(--win);
+  animation: statusPulse 2.5s ease-in-out infinite;
+}
+
+.ops-status-dot.warn {
+  background: var(--warn);
+}
+
+.ops-status-dot.bad {
+  background: var(--bad);
+}
+
+.ops-status-label {
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.ops-status-text {
+  color: var(--muted);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.76rem;
+}
+
+.ops-inner {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
 }
 
 .ops-head {
@@ -502,8 +579,8 @@ button:focus-visible,
 .next-contest-fixtures {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: 6px 14px;
-  margin: 14px 0 0;
+  gap: 4px 14px;
+  margin: 12px 0 0;
   padding: 0;
   list-style: none;
 }
@@ -511,8 +588,15 @@ button:focus-visible,
 .next-contest-fixture {
   display: flex;
   gap: 8px;
-  align-items: baseline;
-  font-size: 0.88rem;
+  align-items: center;
+  font-size: 0.86rem;
+  padding: 5px 8px;
+  border-radius: 6px;
+  transition: background 0.15s;
+}
+
+.next-contest-fixture:hover {
+  background: rgba(125, 211, 252, 0.06);
 }
 
 .next-contest-pos {
@@ -654,6 +738,18 @@ button:focus-visible,
   box-shadow: none;
 }
 
+.primary-button {
+  background: linear-gradient(180deg, rgba(125, 211, 252, 0.18), rgba(125, 211, 252, 0.06));
+  border-color: rgba(125, 211, 252, 0.55);
+  color: var(--line-strong);
+  font-weight: 700;
+}
+
+.primary-button:hover:not(:disabled) {
+  background: linear-gradient(180deg, rgba(125, 211, 252, 0.28), rgba(125, 211, 252, 0.12));
+  transform: translateY(-1px);
+}
+
 .ticket-actions {
   display: flex;
   flex-wrap: wrap;
@@ -785,6 +881,7 @@ button:focus-visible,
   border-radius: 8px;
   border: 1px solid var(--line);
   background: rgba(18, 17, 24, 0.88);
+  animation: fadeIn 0.2s ease both;
 }
 
 .pick-row.active {
@@ -1095,6 +1192,28 @@ button:focus-visible,
   }
 }
 
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes statusPulse {
+  0%, 100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.4;
+  }
+}
+
 .analysis-card {
   display: grid;
   gap: 14px;
@@ -1240,10 +1359,6 @@ details.analysis-block summary h4 {
     max-width: none;
   }
 
-  .auth-feedback {
-    justify-content: flex-start;
-  }
-
   .ticket-actions {
     justify-content: flex-start;
   }
@@ -1316,11 +1431,21 @@ details.analysis-block summary h4 {
     background: rgba(30, 56, 48, 0.65);
   }
 
-  button {
+  button,
+  .ops-summary::after {
     transition: none;
   }
 
   button:hover {
     transform: none;
+  }
+
+  .pick-row {
+    animation: none;
+  }
+
+  .ops-status-dot.ok,
+  .auth-feedback.ok::before {
+    animation: none;
   }
 }

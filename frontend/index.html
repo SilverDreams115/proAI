@@ -18,10 +18,10 @@
     <main class="shell">
       <section class="masthead">
         <div>
-          <p class="eyebrow">proAI x Progol</p>
-          <h1>Escritorio de quiniela inteligente</h1>
+          <p class="eyebrow">ProAI Quiniela</p>
+          <h1>Quiniela inteligente</h1>
           <p class="lede">
-            Papeleta sugerida con fijos, dobles y trazabilidad completa de cada decisión.
+            Predicción, cobertura y seguimiento para tu boleta.
           </p>
         </div>
         <form class="toolbar" id="login-form">
@@ -30,10 +30,10 @@
             <input id="auth-password" type="password" autocomplete="current-password" placeholder="Password de acceso" />
           </label>
           <button id="login-button" type="submit">Entrar</button>
+          <button id="refresh" type="button" class="ghost-button">Actualizar</button>
+          <button id="run-worker" type="button" class="ghost-button">Scheduler</button>
           <button id="logout-button" type="button" class="ghost-button">Salir</button>
-          <button id="refresh" type="button">Actualizar</button>
-          <button id="load-demo" type="button">Cargar demo</button>
-          <button id="run-worker" type="button">Correr scheduler</button>
+          <button id="load-demo" type="button" class="ghost-button">Cargar demo</button>
           <div class="auth-feedback" id="auth-feedback" role="status"></div>
         </form>
       </section>

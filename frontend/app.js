@@ -755,47 +755,67 @@ function renderProductionStatus() {
     ? `schema ${state.health.schema_version}${state.health.schema_up_to_date ? " al día" : " pendiente"}`
     : "schema sin dato";
 
+  const apiOk = statusTone(state.health?.status) === "ok";
+  const dbOk = statusTone(state.ready?.ready) === "ok";
+  const overallOk = apiOk && dbOk && !blockedMatches;
+  const dotClass = overallOk ? "ok" : (blockedMatches ? "bad" : "warn");
+  const summaryLabel = overallOk ? "Sistema listo" : "Revisar estado";
+  const summaryParts = [
+    `API ${apiOk ? "OK" : healthStatus}`,
+    `BD ${dbOk ? "OK" : readyStatus}`,
+    `${blockedMatches} bloqueo${blockedMatches !== 1 ? "s" : ""}`,
+  ].join(" · ");
+
   node.innerHTML = `
-    <div class="ops-head">
-      <div>
-        <p class="ticket-label">Estado de producción</p>
-        <h2>${escapeHtml(activeSlate?.draw_code || "Sin papeleta activa")}</h2>
-        <p class="meta-copy">${escapeHtml(state.authStatusMessage || "Validando sesión.")}</p>
+    <details class="ops-details" ${!overallOk ? "open" : ""}>
+      <summary class="ops-summary" aria-label="${escapeHtml(summaryLabel)} — clic para ver detalles">
+        <span class="ops-status-dot ${dotClass}"></span>
+        <span class="ops-status-label">${escapeHtml(summaryLabel)}</span>
+        <span class="ops-status-text">${escapeHtml(summaryParts)}</span>
+      </summary>
+      <div class="ops-inner">
+        <div class="ops-head">
+          <div>
+            <p class="ticket-label">Estado de producción</p>
+            <h2>${escapeHtml(activeSlate?.draw_code || "Sin papeleta activa")}</h2>
+            <p class="meta-copy">${escapeHtml(activeSlate?.label || "sin papeleta activa")}</p>
+          </div>
+          <span class="ops-badge ${state.authenticated ? "ok" : "warn"}">Auth ${escapeHtml(authState)}</span>
+        </div>
+        <div class="ops-grid">
+          <div class="ops-item ${statusTone(healthStatus)}">
+            <span>API</span>
+            <strong>${escapeHtml(healthStatus)}</strong>
+            <small>${escapeHtml(schemaCopy)}</small>
+          </div>
+          <div class="ops-item ${statusTone(state.ready?.ready)}">
+            <span>Estado BD</span>
+            <strong>${escapeHtml(readyStatus)}</strong>
+            <small>DB ${state.ready?.database_ok ? "OK" : "sin confirmar"}</small>
+          </div>
+          <div class="ops-item warn">
+            <span>Worker</span>
+            <strong>interno</strong>
+            <small>rutas HTTP cerradas</small>
+          </div>
+          <div class="ops-item quality-item ${averageQuality !== null && averageQuality >= 70 ? "ok" : averageQuality !== null && averageQuality >= 40 ? "warn" : "bad"}" title="${escapeHtml(buildQualityTooltip(state.matches))}">
+            <span>Calidad</span>
+            <strong>${averageQuality !== null ? `${averageQuality}/100` : "sin dato"}</strong>
+            <small>${escapeHtml(thinMatches)} delgada(s)</small>
+          </div>
+          <div class="ops-item ${blockedMatches ? "warn" : "ok"}">
+            <span>Bloqueos</span>
+            <strong>${escapeHtml(blockedMatches)}</strong>
+            <small>${escapeHtml(state.matches.length)} partido(s)</small>
+          </div>
+          <div class="ops-item">
+            <span>Último refresh</span>
+            <strong>${escapeHtml(activeSlate ? formatDate(activeSlate.created_at) : "sin dato")}</strong>
+            <small>${escapeHtml(activeSlate?.label || "sin papeleta")}</small>
+          </div>
+        </div>
       </div>
-      <span class="ops-badge ${state.authenticated ? "ok" : "warn"}">Auth ${escapeHtml(authState)}</span>
-    </div>
-    <div class="ops-grid">
-      <div class="ops-item ${statusTone(healthStatus)}">
-        <span>API</span>
-        <strong>${escapeHtml(healthStatus)}</strong>
-        <small>${escapeHtml(schemaCopy)}</small>
-      </div>
-      <div class="ops-item ${statusTone(state.ready?.ready)}">
-        <span>Estado BD</span>
-        <strong>${escapeHtml(readyStatus)}</strong>
-        <small>DB ${state.ready?.database_ok ? "OK" : "sin confirmar"}</small>
-      </div>
-      <div class="ops-item warn">
-        <span>Worker</span>
-        <strong>interno</strong>
-        <small>rutas HTTP cerradas</small>
-      </div>
-      <div class="ops-item quality-item ${averageQuality !== null && averageQuality >= 70 ? "ok" : averageQuality !== null && averageQuality >= 40 ? "warn" : "bad"}" title="${escapeHtml(buildQualityTooltip(state.matches))}">
-        <span>Calidad</span>
-        <strong>${averageQuality !== null ? `${averageQuality}/100` : "sin dato"}</strong>
-        <small>${escapeHtml(thinMatches)} delgada(s) · hover para desglose</small>
-      </div>
-      <div class="ops-item ${blockedMatches ? "warn" : "ok"}">
-        <span>Bloqueos</span>
-        <strong>${escapeHtml(blockedMatches)}</strong>
-        <small>${escapeHtml(state.matches.length)} partido(s)</small>
-      </div>
-      <div class="ops-item">
-        <span>Último refresh</span>
-        <strong>${escapeHtml(activeSlate ? formatDate(activeSlate.created_at) : "sin dato")}</strong>
-        <small>${escapeHtml(activeSlate?.label || "sin papeleta")}</small>
-      </div>
-    </div>
+    </details>
   `;
 }
 
@@ -1322,10 +1342,13 @@ function updateAuthControls() {
   const resetButton = getById("reset-picks");
   const filterNode = getById("quality-filter");
   const feedbackNode = getById("auth-feedback");
+  const secretField = passwordInput?.closest(".secret-field");
   if (loginButton) {
     loginButton.disabled = state.authenticated || state.isLoading;
+    loginButton.hidden = Boolean(state.authenticated);
     loginButton.textContent = state.isLoading && !state.authenticated ? "Entrando" : "Entrar";
   }
+  if (secretField) secretField.hidden = Boolean(state.authenticated);
   if (logoutButton) logoutButton.disabled = !state.authenticated;
   if (passwordInput) passwordInput.disabled = state.authenticated;
   if (refreshButton) refreshButton.disabled = !state.authenticated || state.isLoading;
@@ -1476,7 +1499,7 @@ async function boot() {
     state.selectedMatchId = null;
   }
 
-  state.authStatusMessage = "Sesión activa.";
+  state.authStatusMessage = "Conectado";
   state.isLoading = false;
   updateAuthControls();
   renderSidebar();
@@ -1604,20 +1627,22 @@ function renderNextContestCard() {
   const sourceHost = (() => {
     try { return new URL(proposal.source_url).host; } catch { return proposal.source_url; }
   })();
+  const weekTypeLabel = { weekend: "Fin de semana", revancha: "Revancha" }[proposal.week_type] || proposal.week_type;
+  const fixtureCount = (proposal.fixtures || []).length;
   const promoteDisabled = state.proposalPromoting ? "disabled" : "";
   node.innerHTML = `
     <div class="panel-head">
       <h2>Próximo concurso</h2>
-      <p class="meta-copy">Validado por dual-time scrape de la GUÍA LN — listo para promover.</p>
+      <p class="meta-copy">Validado y listo para usar como boleta activa.</p>
     </div>
     <div class="next-contest-summary">
       <div class="next-contest-head">
         <span class="next-contest-code">Concurso ${escapeHtml(proposal.draw_code)}</span>
-        <span class="next-contest-meta">${escapeHtml(proposal.week_type)} · cierra ${escapeHtml(closesAt)}</span>
+        <span class="next-contest-meta">${escapeHtml(weekTypeLabel)} · ${fixtureCount} partidos · cierra ${escapeHtml(closesAt)}</span>
         <span class="next-contest-source">Fuente: ${escapeHtml(sourceHost)} · ${proposal.observations} observación(es)</span>
       </div>
       <button id="promote-proposal-btn" type="button" class="primary-button" data-proposal-id="${escapeHtml(proposal.id)}" ${promoteDisabled}>
-        ${state.proposalPromoting ? "Promoviendo…" : "Promover a slate"}
+        ${state.proposalPromoting ? "Promoviendo…" : "Usar esta boleta"}
       </button>
     </div>
     <ol class="next-contest-fixtures">${fixturesHtml}</ol>

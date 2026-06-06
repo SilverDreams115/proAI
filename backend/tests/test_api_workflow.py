@@ -170,7 +170,7 @@ async def test_frontend_shell_supports_eight_match_slate(client) -> None:
     assert calibration_response.status_code == 200
     assert "bins" in calibration_response.json()
     assert page_response.status_code == 200
-    assert "Escritorio de quiniela inteligente" in page_response.text
+    assert "Quiniela inteligente" in page_response.text
     assert "?v=" in page_response.text
     assert "config.js" in page_response.text
     assert "ui-utils.js" in page_response.text
