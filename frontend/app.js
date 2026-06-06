@@ -760,18 +760,18 @@ function renderProductionStatus() {
   const overallOk = apiOk && dbOk && !blockedMatches;
   const dotClass = overallOk ? "ok" : (blockedMatches ? "bad" : "warn");
   const summaryLabel = overallOk ? "Sistema listo" : "Revisar estado";
-  const summaryParts = [
-    `API ${apiOk ? "OK" : healthStatus}`,
-    `BD ${dbOk ? "OK" : readyStatus}`,
-    `${blockedMatches} bloqueo${blockedMatches !== 1 ? "s" : ""}`,
-  ].join(" · ");
+  const summaryChips = [
+    `<span class="ops-chip ${apiOk ? "ok" : "warn"}">API ${apiOk ? "OK" : escapeHtml(healthStatus)}</span>`,
+    `<span class="ops-chip ${dbOk ? "ok" : "warn"}">BD ${dbOk ? "OK" : escapeHtml(readyStatus)}</span>`,
+    `<span class="ops-chip ${blockedMatches ? "bad" : "ok"}">${blockedMatches} bloqueo${blockedMatches !== 1 ? "s" : ""}</span>`,
+  ].join("");
 
   node.innerHTML = `
     <details class="ops-details" ${!overallOk ? "open" : ""}>
       <summary class="ops-summary" aria-label="${escapeHtml(summaryLabel)} — clic para ver detalles">
         <span class="ops-status-dot ${dotClass}"></span>
         <span class="ops-status-label">${escapeHtml(summaryLabel)}</span>
-        <span class="ops-status-text">${escapeHtml(summaryParts)}</span>
+        <span class="ops-chips">${summaryChips}</span>
       </summary>
       <div class="ops-inner">
         <div class="ops-head">
@@ -1638,8 +1638,12 @@ function renderNextContestCard() {
     <div class="next-contest-summary">
       <div class="next-contest-head">
         <span class="next-contest-code">Concurso ${escapeHtml(proposal.draw_code)}</span>
-        <span class="next-contest-meta">${escapeHtml(weekTypeLabel)} · ${fixtureCount} partidos · cierra ${escapeHtml(closesAt)}</span>
-        <span class="next-contest-source">Fuente: ${escapeHtml(sourceHost)} · ${proposal.observations} observación(es)</span>
+        <div class="next-contest-pills">
+          <span class="next-contest-pill accent">${escapeHtml(weekTypeLabel)}</span>
+          <span class="next-contest-pill">${fixtureCount} partidos</span>
+          <span class="next-contest-pill">cierra ${escapeHtml(closesAt)}</span>
+          <span class="next-contest-pill">${escapeHtml(sourceHost)} · ${proposal.observations} obs.</span>
+        </div>
       </div>
       <button id="promote-proposal-btn" type="button" class="primary-button" data-proposal-id="${escapeHtml(proposal.id)}" ${promoteDisabled}>
         ${state.proposalPromoting ? "Promoviendo…" : "Usar esta boleta"}
