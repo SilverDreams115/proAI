@@ -1,0 +1,124 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: proai-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-proai}
+      POSTGRES_USER: ${POSTGRES_USER:-proai}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-proai}
+    volumes:
+      - proai-postgres-data:/var/lib/postgresql/data
+      - proai-backups:/backups:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-proai} -d ${POSTGRES_DB:-proai}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  proai:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: proai
+    env_file:
+      - .env
+    environment:
+      PROAI_DATABASE_URL: ${PROAI_DATABASE_URL:-postgresql+psycopg://proai:proai@postgres:5432/proai}
+    expose:
+      - "8000"
+    volumes:
+      - proai-data:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/ready', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: proai-worker
+    command: ["python", "-m", "app.workers.scheduler_worker"]
+    env_file:
+      - .env
+    environment:
+      PROAI_DATABASE_URL: ${PROAI_DATABASE_URL:-postgresql+psycopg://proai:proai@postgres:5432/proai}
+    volumes:
+      - proai-data:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "from pathlib import Path; raise SystemExit(0 if 'app.workers.scheduler_worker' in Path('/proc/1/cmdline').read_text() else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: proai-caddy
+    env_file:
+      - .env
+    ports:
+      - "${PROAI_HTTP_PORT:-80}:80"
+      - "${PROAI_HTTPS_PORT:-443}:443"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      proai:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "ps | grep '[c]addy' >/dev/null"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+  backup:
+    image: postgres:16-alpine
+    container_name: proai-backup
+    env_file:
+      - .env
+    environment:
+      PGHOST: postgres
+      PGPORT: 5432
+      PGDATABASE: ${POSTGRES_DB:-proai}
+      PGUSER: ${POSTGRES_USER:-proai}
+      PGPASSWORD: ${POSTGRES_PASSWORD:-proai}
+      PROAI_BACKUP_DIR: /backups
+      PROAI_BACKUP_INTERVAL_SECONDS: ${PROAI_BACKUP_INTERVAL_SECONDS:-86400}
+      PROAI_BACKUP_RETENTION_DAYS: ${PROAI_BACKUP_RETENTION_DAYS:-7}
+    command: ["sh", "/scripts/postgres_backup.sh"]
+    volumes:
+      - ./deploy/postgres_backup.sh:/scripts/postgres_backup.sh:ro
+      - proai-backups:/backups
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /backups/.last_success"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    restart: unless-stopped
+
+volumes:
+  caddy-config:
+  caddy-data:
+  proai-backups:
+  proai-data:
+  proai-postgres-data:

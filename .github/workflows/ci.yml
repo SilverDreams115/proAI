@@ -1,0 +1,106 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  backend-quality:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -c backend/constraints.txt -e "./backend[dev]"
+
+      # Invoke Makefile targets so local `make check` and CI run the
+      # exact same commands. Drift between the two used to bite us:
+      # local would lint clean while CI ran a slightly different
+      # invocation and surfaced new findings.
+      - name: Lint
+        run: make lint PYTHON=python
+
+      - name: Type check
+        run: make typecheck PYTHON=python
+
+      - name: Tests
+        run: PYTEST_ARGS='--cov=app --cov-report=term-missing --cov-fail-under=70' make test PYTHON=python
+
+  docker-build:
+    runs-on: ubuntu-latest
+    needs: backend-quality
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Build the standalone image used by the healthcheck smoke below,
+      # AND build BOTH compose services (proai + worker) so any
+      # divergence between them — worker has a different command/entry
+      # path — fails CI rather than slipping to prod. Local dev relies
+      # on `make rebuild` to do the same thing.
+      - name: Build standalone image
+        run: docker build -t proai:ci .
+
+      - name: Build both compose services (proai + worker)
+        run: docker compose build proai worker
+
+      - name: Run image healthcheck
+        run: |
+          docker run -d --rm --name proai-ci \
+            -e PROAI_AUTH_API_KEY=ci-secret \
+            -e PROAI_AUTH_PASSWORD_HASH='pbkdf2_sha256$390000$ca8d2fb5aa00353673f60720a4717bc3$8a7f2dfcaac18b46b8862a2d213cf974e4a4710849992bae8a88e5ce9c57b58f' \
+            -e PROAI_SESSION_SECRET=7zP5-sT8fP4j2Dlh5UJAG924-FxNGeFINWDTeO-G0hVioOol \
+            -e PROAI_ALLOWED_HOSTS=127.0.0.1,localhost \
+            -p 18080:8000 proai:ci
+          for attempt in $(seq 1 20); do
+            if curl -fsS http://127.0.0.1:18080/api/ready; then
+              break
+            fi
+            sleep 2
+          done
+          curl -fsS http://127.0.0.1:18080/api/ready
+          PROAI_BASE_URL=http://127.0.0.1:18080 python backend/scripts/frontend_smoke.py
+          PROAI_BASE_URL=http://127.0.0.1:18080 PROAI_LOAD_REQUESTS=40 python backend/scripts/http_load_smoke.py
+          docker inspect --format '{{json .State.Health}}' proai-ci
+          docker stop proai-ci
+
+      - name: Validate production compose
+        run: |
+          cp .env.example .env
+          sed -i 's|POSTGRES_PASSWORD=.*|POSTGRES_PASSWORD=ci-db-credential-1234567890|' .env
+          sed -i 's|proai:proai@postgres|proai:ci-db-credential-1234567890@postgres|' .env
+          sed -i 's|PROAI_AUTH_API_KEY=.*|PROAI_AUTH_API_KEY=ci-auth-key-1234567890-abcdef|' .env
+          sed -i "s|PROAI_AUTH_PASSWORD_HASH=.*|PROAI_AUTH_PASSWORD_HASH='pbkdf2_sha256\\$390000\\$ca8d2fb5aa00353673f60720a4717bc3\\$8a7f2dfcaac18b46b8862a2d213cf974e4a4710849992bae8a88e5ce9c57b58f'|" .env
+          sed -i 's|PROAI_SESSION_SECRET=.*|PROAI_SESSION_SECRET=7zP5-sT8fP4j2Dlh5UJAG924-FxNGeFINWDTeO-G0hVioOol|' .env
+          docker compose -f docker-compose.prod.yml config > /tmp/proai-prod-compose.yaml
+
+      - name: Smoke production stack
+        run: |
+          cp .env.example .env
+          sed -i 's|POSTGRES_PASSWORD=.*|POSTGRES_PASSWORD=ci-db-credential-1234567890|' .env
+          sed -i 's|proai:proai@postgres|proai:ci-db-credential-1234567890@postgres|' .env
+          sed -i 's|PROAI_AUTH_API_KEY=.*|PROAI_AUTH_API_KEY=ci-auth-key-1234567890-abcdef|' .env
+          sed -i "s|PROAI_AUTH_PASSWORD_HASH=.*|PROAI_AUTH_PASSWORD_HASH='pbkdf2_sha256\\$390000\\$ca8d2fb5aa00353673f60720a4717bc3\\$8a7f2dfcaac18b46b8862a2d213cf974e4a4710849992bae8a88e5ce9c57b58f'|" .env
+          sed -i 's|PROAI_SESSION_SECRET=.*|PROAI_SESSION_SECRET=7zP5-sT8fP4j2Dlh5UJAG924-FxNGeFINWDTeO-G0hVioOol|' .env
+          docker compose -f docker-compose.prod.yml up -d
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1/api/ready; then
+              break
+            fi
+            sleep 2
+          done
+          curl -fsS http://127.0.0.1/api/metrics -H 'X-API-Key: ci-auth-key-1234567890-abcdef' > /tmp/proai-metrics.txt
+          PROAI_BASE_URL=http://127.0.0.1 python backend/scripts/frontend_smoke.py
+          PROAI_BASE_URL=http://127.0.0.1 PROAI_AUTH_API_KEY=ci-auth-key-1234567890-abcdef PROAI_LOAD_REQUESTS=40 python backend/scripts/http_load_smoke.py
+          docker inspect --format '{{json .State.Health}}' proai-backup
+          docker inspect --format '{{json .State.Health}}' proai-worker
+          docker compose -f docker-compose.prod.yml down

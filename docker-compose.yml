@@ -1,0 +1,106 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: proai-postgres
+    environment:
+      POSTGRES_DB: proai
+      POSTGRES_USER: proai
+      POSTGRES_PASSWORD: proai
+    volumes:
+      - proai-postgres-data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U proai -d proai"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  proai:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: proai
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
+    volumes:
+      - proai-data:/data
+      - ./data/progol_context:/data/progol_context:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/ready', timeout=8)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: proai-worker
+    command: ["python", "-m", "app.workers.scheduler_worker"]
+    env_file:
+      - .env
+    environment:
+      PYTHONPATH: /app/backend
+    volumes:
+      - proai-data:/data
+      - ./data/progol_context:/data/progol_context:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "from pathlib import Path; raise SystemExit(0 if 'app.workers.scheduler_worker' in Path('/proc/1/cmdline').read_text() else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+  postgres-backup:
+    # P12: pg_dump on a 24h cycle so an operator never has to remember
+    # to crontab it. Uses the same postgres image (matched major
+    # version so dump/restore stays compatible) and writes timestamped
+    # `proai-YYYYMMDDTHHMMSSZ.sql.gz` files under /backups. The
+    # backup script touches `.last_success` after each successful dump
+    # so a health probe can spot stalls before the next disaster.
+    image: postgres:16-alpine
+    container_name: proai-postgres-backup
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGHOST: postgres
+      PGUSER: proai
+      PGPASSWORD: proai
+      PGDATABASE: proai
+      PROAI_BACKUP_DIR: /backups
+      PROAI_BACKUP_INTERVAL_SECONDS: "86400"
+      PROAI_BACKUP_RETENTION_DAYS: "7"
+    volumes:
+      - ./deploy/postgres_backup.sh:/opt/postgres_backup.sh:ro
+      - proai-backups:/backups
+    entrypoint: ["/bin/sh", "/opt/postgres_backup.sh"]
+    restart: unless-stopped
+    healthcheck:
+      # Probe checks that the last successful backup is fresher than
+      # 30h — gives one full cycle plus 6h of slack before flagging
+      # the service degraded. Without it a silent pg_dump failure
+      # (corrupt volume, password change, disk full) goes unnoticed
+      # until the next disaster.
+      test: ["CMD-SHELL", "test -f /backups/.last_success && test $(( $(date -u +%s) - $(date -u -d \"$(cat /backups/.last_success)\" +%s) )) -lt 108000"]
+      interval: 1h
+      timeout: 5s
+      retries: 3
+      start_period: 5m
+
+volumes:
+  proai-data:
+  proai-postgres-data:
+  proai-backups:

@@ -1,0 +1,28 @@
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.pyc
+*.pyo
+*.pyd
+*.db
+*.sqlite
+*.sqlite3
+*.migration.lock
+.env
+.env.local
+backend/data/
+backend/proai_backend.egg-info/
+build/
+dist/
+
+# Frontend build artifacts — dev tools, not needed in VCS
+frontend/node_modules/
+
+# Coverage reports
+backend/.coverage
+.coverage
+
+# OpenCode IDE files
+.opencode/

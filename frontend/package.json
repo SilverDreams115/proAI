@@ -1,0 +1,17 @@
+{
+  "name": "proai-frontend",
+  "private": true,
+  "version": "0.1.0",
+  "description": "proAI static dashboard. Pure ES modules — no bundler.",
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
+  },
+  "devDependencies": {
+    "@vitest/coverage-v8": "^2.1.0",
+    "jsdom": "^25.0.0",
+    "vitest": "^2.1.0"
+  }
+}

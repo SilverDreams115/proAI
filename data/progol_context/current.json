@@ -1,0 +1,210 @@
+{
+  "items": [
+    {
+      "title": "Progol Media Semana 797 - Guia oficial Loteria Nacional",
+      "source_url": "https://www.loterianacional.gob.mx/Documentos/juegos/Concursosysorteos/progol_media_guia_quiniela/guiamedia.pdf?v=15052026181109",
+      "summary": "Programa oficial Progol 1/2 Semana 797. Cierre de venta: martes 26 de mayo de 2026 a las 15:00. Juegos del 26 al 28 de mayo de 2026.",
+      "context_summary": "Catalogo oficial verificado contra la guia PDF de Loteria Nacional. Nueve partidos: ocho de Copa Libertadores y Copa Sudamericana (cuartos/grupos), uno de UEFA Conference League (semifinal Crystal Palace vs Rayo Vallecano).",
+      "catalog_metadata": {
+        "contest_type": "progol_media_semana",
+        "draw_number": 797,
+        "match_count": 9,
+        "registration_closes_at": "2026-05-26T20:00:00Z"
+      },
+      "fixture_candidates": [
+        {
+          "position": 1,
+          "competition": "UEFA Conference League",
+          "country": "Europe",
+          "season": "2025-26",
+          "home_team": "Crystal Palace",
+          "away_team": "Rayo Vallecano",
+          "kickoff_at": "2026-05-26T19:00:00Z",
+          "venue": null
+        },
+        {
+          "position": 2,
+          "competition": "Copa Libertadores",
+          "country": "South America",
+          "season": "2026",
+          "home_team": "Lanus",
+          "away_team": "Mirassol",
+          "kickoff_at": "2026-05-26T23:30:00Z",
+          "venue": null
+        },
+        {
+          "position": 3,
+          "competition": "Copa Libertadores",
+          "country": "South America",
+          "season": "2026",
+          "home_team": "Estudiantes",
+          "away_team": "Independiente Medellin",
+          "kickoff_at": "2026-05-27T01:30:00Z",
+          "venue": null
+        },
+        {
+          "position": 4,
+          "competition": "Copa Libertadores",
+          "country": "South America",
+          "season": "2026",
+          "home_team": "Universitario",
+          "away_team": "Tolima",
+          "kickoff_at": "2026-05-27T01:30:00Z",
+          "venue": null
+        },
+        {
+          "position": 5,
+          "competition": "Copa Libertadores",
+          "country": "South America",
+          "season": "2026",
+          "home_team": "Independiente del Valle",
+          "away_team": "Rosario Central",
+          "kickoff_at": "2026-05-27T23:00:00Z",
+          "venue": null
+        },
+        {
+          "position": 6,
+          "competition": "Copa Libertadores",
+          "country": "South America",
+          "season": "2026",
+          "home_team": "Bolivar",
+          "away_team": "Independiente Rivadavia",
+          "kickoff_at": "2026-05-28T01:00:00Z",
+          "venue": null
+        },
+        {
+          "position": 7,
+          "competition": "Copa Libertadores",
+          "country": "South America",
+          "season": "2026",
+          "home_team": "Boca Juniors",
+          "away_team": "Universidad Catolica",
+          "kickoff_at": "2026-05-28T01:30:00Z",
+          "venue": null
+        },
+        {
+          "position": 8,
+          "competition": "Copa Libertadores",
+          "country": "South America",
+          "season": "2026",
+          "home_team": "Gremio",
+          "away_team": "City Torque",
+          "kickoff_at": "2026-05-28T23:00:00Z",
+          "venue": null
+        },
+        {
+          "position": 9,
+          "competition": "Copa Sudamericana",
+          "country": "South America",
+          "season": "2026",
+          "home_team": "Caracas",
+          "away_team": "Botafogo",
+          "kickoff_at": "2026-05-29T01:00:00Z",
+          "venue": null
+        }
+      ],
+      "availability_reports": [],
+      "historical_results": [],
+      "team_stats": [],
+      "match_stats": []
+    },
+    {
+      "title": "Crystal Palace vs Rayo Vallecano - contexto Progol MS 797",
+      "source_url": "https://www.loterianacional.gob.mx/Documentos/juegos/Concursosysorteos/progol_media_guia_quiniela/guiamedia.pdf?v=15052026181109",
+      "competition": "UEFA Conference League",
+      "teams": ["Crystal Palace", "Rayo Vallecano"],
+      "summary": "Crystal Palace vs Rayo Vallecano (Conference League semifinal).",
+      "context_summary": "Partido 1 del Progol MS 797. Final de la Conference League. Crystal Palace enfrento en semifinales a Shakhtar y gano 5-2 en el global. Rayo Vallecano enfrento en semifinales a Estrasburgo y gano 2-0 en el global.",
+      "availability_reports": [],
+      "historical_results": []
+    },
+    {
+      "title": "Lanus vs Mirassol - contexto Progol MS 797",
+      "source_url": "https://www.loterianacional.gob.mx/Documentos/juegos/Concursosysorteos/progol_media_guia_quiniela/guiamedia.pdf?v=15052026181109",
+      "competition": "Copa Libertadores",
+      "teams": ["Lanus", "Mirassol"],
+      "summary": "Lanus vs Mirassol (Copa Libertadores Grupo G, jornada 6).",
+      "context_summary": "Partido 2 del Progol MS 797. Lanus se encuentra en 3er lugar con 6 puntos, perdio como visitante 2-0 contra LDU Quito. Mirassol se encuentra en 1er lugar con 12 unidades, gano como visitante 2 a 1 a Always Ready. Ultimo resultado: Mirassol 1-0 Lanus.",
+      "availability_reports": [],
+      "historical_results": []
+    },
+    {
+      "title": "Estudiantes vs Independiente Medellin - contexto Progol MS 797",
+      "source_url": "https://www.loterianacional.gob.mx/Documentos/juegos/Concursosysorteos/progol_media_guia_quiniela/guiamedia.pdf?v=15052026181109",
+      "competition": "Copa Libertadores",
+      "teams": ["Estudiantes", "Independiente Medellin"],
+      "summary": "Estudiantes vs Independiente Medellin (Copa Libertadores Grupo A, jornada 6).",
+      "context_summary": "Partido 3 del Progol MS 797. Estudiantes se ubica en 3er lugar con 6 unidades, perdio como visitante 1-0 contra Flamengo. Independiente Medellin se encuentra en 2do lugar con 7 puntos, gano como visitante 3-2 a Cusco. Ultimo resultado: I. Medellin 1-1 Estudiantes.",
+      "availability_reports": [],
+      "historical_results": []
+    },
+    {
+      "title": "Universitario vs Tolima - contexto Progol MS 797",
+      "source_url": "https://www.loterianacional.gob.mx/Documentos/juegos/Concursosysorteos/progol_media_guia_quiniela/guiamedia.pdf?v=15052026181109",
+      "competition": "Copa Libertadores",
+      "teams": ["Universitario", "Tolima"],
+      "summary": "Universitario vs Tolima (Copa Libertadores Grupo B, jornada 6).",
+      "context_summary": "Partido 4 del Progol MS 797. Universitario se encuentra en 3er lugar con 5 puntos, empato como visitante 0-0 contra Tolima. Tolima se ubica en 2do lugar con 7 puntos, perdio como visitante 3-0 contra Coquimbo. Ultimo resultado: Tolima 0-0 Universitario.",
+      "availability_reports": [],
+      "historical_results": []
+    },
+    {
+      "title": "Independiente del Valle vs Rosario Central - contexto Progol MS 797",
+      "source_url": "https://www.loterianacional.gob.mx/Documentos/juegos/Concursosysorteos/progol_media_guia_quiniela/guiamedia.pdf?v=15052026181109",
+      "competition": "Copa Libertadores",
+      "teams": ["Independiente del Valle", "Rosario Central"],
+      "summary": "Independiente del Valle vs Rosario Central (Copa Libertadores Grupo H, jornada 6).",
+      "context_summary": "Partido 5 del Progol MS 797. Independiente del Valle se ubica en 2do lugar con 10 unidades, gano como local 4-1 a Universidad Central. Rosario Central se encuentra en 1er lugar con 13 puntos, gano como local 4-0 a Universidad Central. Ultimo resultado: Rosario Central 0-0 IDV.",
+      "availability_reports": [],
+      "historical_results": []
+    },
+    {
+      "title": "Bolivar vs Independiente Rivadavia - contexto Progol MS 797",
+      "source_url": "https://www.loterianacional.gob.mx/Documentos/juegos/Concursosysorteos/progol_media_guia_quiniela/guiamedia.pdf?v=15052026181109",
+      "competition": "Copa Libertadores",
+      "teams": ["Bolivar", "Independiente Rivadavia"],
+      "summary": "Bolivar vs Independiente Rivadavia (Copa Libertadores Grupo C, jornada 6).",
+      "context_summary": "Partido 6 del Progol MS 797. Bolivar se encuentra en 2do lugar con 5 puntos, perdio como visitante 2-1 contra Fluminense. Independiente Rivadavia se ubica en 1er lugar con 13 unidades, gano como visitante 4-2 a La Guaira. Ultimo resultado: I. Rivadavia 1-0 Bolivar.",
+      "availability_reports": [],
+      "historical_results": []
+    },
+    {
+      "title": "Boca Juniors vs Universidad Catolica - contexto Progol MS 797",
+      "source_url": "https://www.loterianacional.gob.mx/Documentos/juegos/Concursosysorteos/progol_media_guia_quiniela/guiamedia.pdf?v=15052026181109",
+      "competition": "Copa Libertadores",
+      "teams": ["Boca Juniors", "Universidad Catolica"],
+      "summary": "Boca Juniors vs Universidad Catolica (Copa Libertadores Grupo D, jornada 6).",
+      "context_summary": "Partido 7 del Progol MS 797. Boca Jrs se ubica en 3er lugar con 7 puntos, empato como local 1 a 1 contra Cruzeiro. Universidad Catolica se encuentra en 1er lugar con 10 puntos, gano como local 2 a 1 a Barcelona SC. Ultimo resultado: U. Catolica 1-2 Boca Jrs.",
+      "availability_reports": [],
+      "historical_results": []
+    },
+    {
+      "title": "Gremio vs City Torque - contexto Progol MS 797",
+      "source_url": "https://www.loterianacional.gob.mx/Documentos/juegos/Concursosysorteos/progol_media_guia_quiniela/guiamedia.pdf?v=15052026181109",
+      "competition": "Copa Libertadores",
+      "teams": ["Gremio", "City Torque"],
+      "summary": "Gremio vs City Torque (Copa Libertadores Grupo F, jornada 6).",
+      "context_summary": "Partido 8 del Progol MS 797. Gremio se encuentra en 2do lugar con 10 unidades, empato como local 2 a 2 contra Palestino. Montevideo City Torque se encuentra en 1er lugar con 12 puntos, gano como local 4 a 1 a Deportivo Riestra. Ultimo resultado: City Torque 1-0 Gremio.",
+      "availability_reports": [],
+      "historical_results": []
+    },
+    {
+      "title": "Caracas vs Botafogo - contexto Progol MS 797",
+      "source_url": "https://www.loterianacional.gob.mx/Documentos/juegos/Concursosysorteos/progol_media_guia_quiniela/guiamedia.pdf?v=15052026181109",
+      "competition": "Copa Sudamericana",
+      "teams": ["Caracas", "Botafogo"],
+      "summary": "Caracas vs Botafogo (Copa Sudamericana Grupo E, jornada 6).",
+      "context_summary": "Partido 9 del Progol MS 797. Caracas se ubica en 2do lugar con 9 puntos, empato como visitante 2-2 contra Racing. Botafogo se encuentra en 1er lugar con 13 unidades, gano como visitante 3 a 0 a Independiente de Bolivia. Ultimo resultado: Botafogo 1-1 Caracas.",
+      "availability_reports": [],
+      "historical_results": []
+    }
+  ],
+  "generated_at": "2026-05-25T01:30:00.000000+00:00",
+  "coverage": {
+    "progol_draw": 797,
+    "contest_type": "progol_media_semana",
+    "fixtures": 9,
+    "context_items_added": 9,
+    "context_items_total": 9
+  }
+}

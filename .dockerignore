@@ -1,0 +1,16 @@
+.git
+.venv
+__pycache__
+.pytest_cache
+.ruff_cache
+*.pyc
+*.pyo
+*.pyd
+*.db
+*.sqlite
+*.sqlite3
+*.migration.lock
+backend/data
+backend/tests
+backend/proai_backend.egg-info
+.env

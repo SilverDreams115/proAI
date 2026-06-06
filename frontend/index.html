@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!--
+      Fase 4.2: Defense-in-depth on top of escapeHtml. If a future render
+      function forgets to escape a string the model returns, this policy
+      still blocks any injected script tag from executing.
+    -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; form-action 'self'; base-uri 'self'; frame-ancestors 'none'; object-src 'none'" />
+    <meta http-equiv="X-Content-Type-Options" content="nosniff" />
+    <meta name="referrer" content="strict-origin-when-cross-origin" />
+    <title>proAI Progol Desk</title>
+    <link rel="stylesheet" href="./styles.css?v=__ASSET_VERSION__" />
+  </head>
+  <body>
+    <main class="shell">
+      <section class="masthead">
+        <div>
+          <p class="eyebrow">proAI x Progol</p>
+          <h1>Escritorio de quiniela inteligente</h1>
+          <p class="lede">
+            Papeleta sugerida con fijos, dobles y trazabilidad completa de cada decisión.
+          </p>
+        </div>
+        <form class="toolbar" id="login-form">
+          <label class="secret-field" for="auth-password">
+            <span>Password</span>
+            <input id="auth-password" type="password" autocomplete="current-password" placeholder="Password de acceso" />
+          </label>
+          <button id="login-button" type="submit">Entrar</button>
+          <button id="logout-button" type="button" class="ghost-button">Salir</button>
+          <button id="refresh" type="button">Actualizar</button>
+          <button id="load-demo" type="button">Cargar demo</button>
+          <button id="run-worker" type="button">Correr scheduler</button>
+          <div class="auth-feedback" id="auth-feedback" role="status"></div>
+        </form>
+      </section>
+      <div id="global-error"></div>
+
+      <section class="ops-panel panel" id="ops-panel"></section>
+
+      <div class="transition-banner" id="transition-banner" hidden></div>
+
+      <section class="next-contest panel" id="next-contest-card" hidden></section>
+
+      <section class="layout">
+        <aside class="sidebar panel">
+          <div class="panel-head">
+            <h2>Boletas</h2>
+            <p class="meta-copy">Fin de semana y revancha</p>
+          </div>
+          <div id="aside-slates"></div>
+
+          <div class="panel-head compact-head">
+            <h2>Jugadas modelo</h2>
+            <p class="meta-copy" id="aside-subtitle">Lista rápida de la papeleta activa</p>
+          </div>
+          <div id="match-menu"></div>
+        </aside>
+
+        <section class="board">
+          <article class="ticket panel">
+            <div class="ticket-head">
+              <div>
+                <p class="ticket-label" id="ticket-label">Sin quiniela activa</p>
+                <h2 id="ticket-code">Cargando...</h2>
+                <p class="ticket-countdown" id="ticket-countdown"></p>
+                <div class="slate-switcher" id="slate-switcher"></div>
+              </div>
+              <div class="ticket-summary" id="ticket-summary"></div>
+            </div>
+            <div class="ticket-tabs" id="ticket-tabs"></div>
+            <div class="ticket-tools">
+              <div class="legend">
+                <span class="legend-chip fixed">Fijo</span>
+                <span class="legend-chip double">Doble</span>
+                <span class="legend-chip triple">Triple</span>
+                <span class="legend-chip manual">Manual</span>
+              </div>
+              <div class="ticket-actions">
+                <label class="filter-field" for="quality-filter">
+                  <span>Filtro</span>
+                  <select id="quality-filter"></select>
+                </label>
+                <button id="copy-ticket" class="ghost-button" type="button">Copiar jugada</button>
+                <button id="download-ticket" class="ghost-button" type="button">TXT</button>
+                <button id="reset-picks" class="ghost-button" type="button">Resetear a modelo</button>
+              </div>
+            </div>
+            <div class="validation-summary" id="validation-summary"></div>
+            <div class="ticket-grid" id="ticket-grid"></div>
+          </article>
+
+          <article class="explain panel">
+            <div class="panel-head">
+              <h2>Explicación del partido</h2>
+              <p class="meta-copy">Razones del modelo, señales y respaldo</p>
+            </div>
+            <div id="analysis"></div>
+          </article>
+        </section>
+      </section>
+    </main>
+    <script src="./config.js?v=__ASSET_VERSION__" defer></script>
+    <script src="./ui-utils.js?v=__ASSET_VERSION__" defer></script>
+    <script src="./api-client.js?v=__ASSET_VERSION__" defer></script>
+    <!-- app.js is the orchestrator and is now an ES module so it can
+         pull pure helpers from helpers.js. The other three files stay
+         as classic scripts because they only expose globals on
+         `window` — modules share the same window so the imports
+         work alongside them. -->
+    <script type="module" src="./app.js?v=__ASSET_VERSION__"></script>
+  </body>
+  </html>
