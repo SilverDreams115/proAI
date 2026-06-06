@@ -475,8 +475,12 @@ function buildMatchCard(match) {
         .filter(Boolean)
         .join(" ");
 
+      const isSelected = decision.picks.includes(key);
+      const outcomeNames = { "1": "Local", X: "Empate", "2": "Visita" };
       return `
-        <button class="${classes}" data-option-pick="${key}" data-option-match="${matchId}">
+        <button class="${classes}" data-option-pick="${key}" data-option-match="${matchId}"
+          aria-label="${outcomeNames[key]} (${displayOutcome(key)}) ${formatPercent(value)}"
+          aria-pressed="${isSelected}">
           <strong>${displayOutcome(key)}</strong>
           <span>${formatPercent(value)}</span>
         </button>
@@ -488,7 +492,9 @@ function buildMatchCard(match) {
     decision.type === "double" ? "Doble" : decision.type === "triple" ? "Triple" : "Fijo";
 
   return `
-    <article class="pick-row${activeClass}${manualClass}${reviewClass}" data-match-card="${matchId}">
+    <article class="pick-row${activeClass}${manualClass}${reviewClass}" data-match-card="${matchId}"
+      role="button" tabindex="0"
+      aria-label="Partido ${escapeHtml(match.position)}: ${escapeHtml(match.prediction.home_team_name)} vs ${escapeHtml(match.prediction.away_team_name)}">
       <div class="pick-index">
         <span class="mini-copy">Partido</span>
         <strong>${escapeHtml(match.position)}</strong>
@@ -1024,8 +1030,8 @@ function renderSidebar() {
     : `
       <div class="empty-state">
         <p>No hay partidos para este filtro.</p>
-        <p class="mini-copy">Cambia el filtro o carga una demo para revisar la interfaz.</p>
-        <button id="empty-load-demo" class="ghost-button">Cargar demo</button>
+        <p class="mini-copy">Cambia el filtro de calidad para ver más partidos.</p>
+        ${state.health?.environment !== "production" ? `<button id="empty-load-demo" class="ghost-button">Cargar demo</button>` : ""}
       </div>
     `;
 }
@@ -1071,10 +1077,10 @@ function renderBoard() {
     if (codeNode) codeNode.textContent = "Carga una papeleta";
     if (slateSwitcherNode) slateSwitcherNode.innerHTML = "";
     if (tabsNode) tabsNode.innerHTML = renderTicketTabs();
-    if (summaryNode) summaryNode.innerHTML = renderEmpty("No hay pronósticos disponibles.");
+    if (summaryNode) summaryNode.innerHTML = renderEmpty("El worker descargará la quiniela activa en la próxima ejecución automática.");
     if (validationSummaryNode) validationSummaryNode.innerHTML = "";
-    if (gridNode) gridNode.innerHTML = renderEmpty("No hay partidos listos para mostrar.");
-    if (analysisNode) analysisNode.innerHTML = renderEmpty("Selecciona una quiniela para empezar.");
+    if (gridNode) gridNode.innerHTML = renderEmpty("No se encontró una quiniela activa. El sistema la cargará automáticamente cuando esté disponible.");
+    if (analysisNode) analysisNode.innerHTML = renderEmpty("El análisis aparecerá aquí una vez que la quiniela esté disponible.");
     return;
   }
 
@@ -1207,6 +1213,13 @@ async function _handleDelegatedClick(event) {
 function attachEvents() {
   if (_eventsAttached) return;
   document.addEventListener("click", _handleDelegatedClick);
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    const card = event.target.closest("[data-match-card]");
+    if (!card) return;
+    event.preventDefault();
+    card.click();
+  });
   _eventsAttached = true;
 }
 
@@ -1316,7 +1329,11 @@ function updateAuthControls() {
   if (logoutButton) logoutButton.disabled = !state.authenticated;
   if (passwordInput) passwordInput.disabled = state.authenticated;
   if (refreshButton) refreshButton.disabled = !state.authenticated || state.isLoading;
-  if (demoButton) demoButton.disabled = !state.authenticated || state.isLoading;
+  if (demoButton) {
+    const isProduction = state.health?.environment === "production";
+    demoButton.hidden = isProduction;
+    demoButton.disabled = !state.authenticated || state.isLoading;
+  }
   if (workerButton) workerButton.disabled = !state.authenticated || !state.worker || state.isLoading;
   if (copyButton) copyButton.disabled = !state.authenticated || !state.matches.length || state.isLoading;
   if (downloadButton) downloadButton.disabled = !state.authenticated || !state.matches.length || state.isLoading;

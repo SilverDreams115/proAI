@@ -1,17 +1,28 @@
 :root {
   --bg: #0b0b0f;
+  --bg-surface: #101017;
   --paper: #15141a;
   --paper-strong: #1d1b23;
   --line: #32303a;
   --line-strong: #7dd3fc;
   --ink: #f2f4f8;
   --muted: #a4a8b3;
+  --text-muted: #a4a8b3;
   --accent: #ff5c7a;
   --accent-2: #35d0ba;
   --accent-soft: #281822;
   --win: #9be36a;
   --warn: #ffd166;
   --bad: #ff7a90;
+  --bad-soft: #ff9a83;
+  --bad-muted: #ffb2a1;
+  --loss: #ff5c7a;
+  --urgent: #c1480f;
+  --closed: #6b6b6b;
+  --banner-bg: #e8f5ff;
+  --banner-bg-end: #d3eaff;
+  --banner-border: #91c5e9;
+  --banner-ink: #134169;
   --shadow: 0 14px 34px rgba(0, 0, 0, 0.36);
 }
 
@@ -26,7 +37,7 @@ body {
   background:
     linear-gradient(180deg, rgba(125, 211, 252, 0.08), transparent 26%),
     linear-gradient(135deg, rgba(255, 92, 122, 0.08), transparent 38%),
-    linear-gradient(180deg, #101017 0%, var(--bg) 100%);
+    linear-gradient(180deg, var(--bg-surface) 0%, var(--bg) 100%);
   font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
 }
 
@@ -413,11 +424,11 @@ button:disabled {
 }
 
 .ticket-countdown--urgent {
-  color: #c1480f;
+  color: var(--urgent);
 }
 
 .ticket-countdown--closed {
-  color: #6b6b6b;
+  color: var(--closed);
   font-style: italic;
 }
 
@@ -425,9 +436,9 @@ button:disabled {
   margin: 14px 0;
   padding: 14px 18px;
   border-radius: 12px;
-  background: linear-gradient(135deg, #e8f5ff, #d3eaff);
-  border: 1px solid #91c5e9;
-  color: #134169;
+  background: linear-gradient(135deg, var(--banner-bg), var(--banner-bg-end));
+  border: 1px solid var(--banner-border);
+  color: var(--banner-ink);
   font-weight: 600;
   font-size: 0.92rem;
 }
@@ -463,13 +474,13 @@ button:disabled {
 
 .next-contest-meta {
   font-size: 0.85rem;
-  color: var(--text-muted, #666);
+  color: var(--text-muted);
   font-variant-numeric: tabular-nums;
 }
 
 .next-contest-source {
   font-size: 0.78rem;
-  color: var(--text-muted, #777);
+  color: var(--text-muted);
 }
 
 .next-contest-fixtures {
@@ -498,7 +509,7 @@ button:disabled {
 .next-contest-pair em {
   font-style: italic;
   font-weight: 500;
-  color: var(--text-muted, #999);
+  color: var(--text-muted);
   padding: 0 4px;
 }
 
@@ -812,7 +823,7 @@ button:disabled {
 
 .quality-mini.bad,
 .match-menu-item small.bad {
-  color: #ff9a83;
+  color: var(--bad-soft);
 }
 
 .pick-meta h3 {
@@ -1035,7 +1046,7 @@ button:disabled {
 
 .alert-state {
   border-color: rgba(215, 74, 52, 0.48);
-  color: #ffb2a1;
+  color: var(--bad-muted);
   background: rgba(80, 25, 20, 0.32);
 }
 
@@ -1196,6 +1207,17 @@ button:disabled {
   }
 }
 
+@media (max-width: 900px) {
+  .summary-band {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .pick-row {
+    gap: 10px;
+    padding: 12px 14px;
+  }
+}
+
 @media (max-width: 780px) {
   .ops-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1239,5 +1261,20 @@ button:disabled {
 
   .summary-band {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton-block {
+    animation: none;
+    background: rgba(30, 56, 48, 0.65);
+  }
+
+  button {
+    transition: none;
+  }
+
+  button:hover {
+    transform: none;
   }
 }
