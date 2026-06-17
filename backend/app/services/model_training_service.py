@@ -255,16 +255,16 @@ class ModelTrainingService(ModelTrainingArtifactsMixin):
             # NUNCA se marcan "ready". La forma de selecciones nacionales
             # oscila demasiado (rosters cambian partido a partido) para
             # tratarlos como benchmark listo. Quedan en `context_only`: el
-            # modelo los califica con contexto, pero no como fijo seguro.
-            # La capa de seguridad (sanity_service) sigue dando headroom de
-            # probabilidad solo cuando la evidencia del partido es ALTA.
+            # modelo los califica con contexto, pero no como jugada simple
+            # segura. La capa de seguridad (sanity_service) sigue dando
+            # headroom de probabilidad solo cuando la evidencia es ALTA.
             "competition_readiness": "context_only",
             "live_pick_allowed": False,
             "policy_reason": (
                 "Amistoso internacional: TheSportsDB International Friendlies "
                 "history (2024-2026) cargada, pero la forma de selecciones "
                 "nacionales varía mucho. Se califica con contexto, no como "
-                "fijo seguro; la capa de seguridad penaliza incertidumbre."
+                "jugada simple segura; la capa de seguridad penaliza incertidumbre."
             ),
             # National-team friendlies are noisier than clubs: rosters change
             # match-by-match. Lean harder on per-team profile (recent form)

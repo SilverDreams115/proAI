@@ -336,6 +336,16 @@ export function isTechAccordionTarget(target) {
   return Boolean(target && typeof target.closest === "function" && target.closest(".card-tech"));
 }
 
+// CSP-safe probability-bar width. The page CSP is `style-src 'self'`, which
+// blocks ALL inline style attributes (including custom properties), so the
+// bar width must come from a discrete CSS class, not `style="width:X%"`.
+// Rounds to the nearest 5% (visual granularity only — the % TEXT stays exact).
+// Returns "w-0" … "w-100".
+export function probBarWidthClass(pct) {
+  const n = Math.max(0, Math.min(100, Math.round(Number(pct) || 0)));
+  return `w-${Math.round(n / 5) * 5}`;
+}
+
 // --- Product-first signals (Fase 3.2) --------------------------------------
 // Client decision/presentation logic must derive from PRODUCT fields, not the
 // raw model band. `confidence_band` survives ONLY as a clearly isolated legacy

@@ -332,7 +332,7 @@ class ModelTrainingArtifactsMixin:
                     "live_pick_allowed": False,
                     "policy_reason": (
                         "Fixture sin historial dedicado en la base; el modelo "
-                        "lo califica con contexto de quiniela. No usar como fijo."
+                        "lo califica con contexto de quiniela. No usar como jugada simple segura."
                     ),
                     "blend_weights": {"elo": 0.25, "poisson": 0.20, "profile": 0.55},
                     "draw_bias": 0.0,

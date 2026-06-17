@@ -207,6 +207,14 @@ async def test_frontend_shell_supports_eight_match_slate(client) -> None:
     assert "isTechAccordionTarget" in js_response.text
     assert 'confidence_band === "high"' not in js_response.text
     assert "Fijo defendible" not in js_response.text
+    # Fase 3.3: prob bars are CSP-safe — NO inline style attributes (style-src
+    # 'self' blocks them); width comes from a discrete .w-N class.
+    assert 'style="width:' not in js_response.text
+    assert 'style="margin-top' not in js_response.text
+    assert "probBarWidthClass" in js_response.text
+    # And the CSS provides the discrete width classes.
+    assert ".prob-bar-fill.w-60" in css_response.text
+    assert ".prob-bar-fill.w-100" in css_response.text
     assert "Calidad de datos" in js_response.text
     assert "Estado de producción" in js_response.text
     assert "rutas HTTP cerradas" in js_response.text

@@ -30,6 +30,7 @@ import {
   isTechAccordionTarget,
   effectiveConfidenceTier,
   predictionAllowsConfidentSingle,
+  probBarWidthClass,
 } from "./helpers.js";
 // NOTE: live-tracking is loaded via a guarded dynamic import in the
 // bootstrap (not a static import), so a failure to load/link that module
@@ -1265,7 +1266,7 @@ function buildAnalysis(match) {
         ].map(([k, v]) => {
           const pctNum = Math.round((Number(v) || 0) * 100);
           const isPick = basePick.letter === k;
-          return `<div class="prob-bar${isPick ? " is-pick" : ""}"><span class="prob-bar-label">${k}</span><span class="prob-bar-track"><span class="prob-bar-fill" style="width:${pctNum}%"></span></span><span class="prob-bar-value">${pctNum}%</span></div>`;
+          return `<div class="prob-bar${isPick ? " is-pick" : ""}"><span class="prob-bar-label">${k}</span><span class="prob-bar-track"><span class="prob-bar-fill ${probBarWidthClass(pctNum)}"></span></span><span class="prob-bar-value">${pctNum}%</span></div>`;
         }).join("");
         return `
       <div class="decision-hero tone-${heroTone}">
@@ -1425,7 +1426,7 @@ function renderBoard() {
       ? `Esta boleta (${escapeHtml(slateCode)}) no tiene predicciones generadas aún.`
       : "El sistema cargará la quiniela activa en la próxima ejecución.";
     const generateBtn = hasSlatePicked
-      ? `<button class="primary-button" id="generate-predictions-btn" data-slate-id="${escapeHtml(slateId)}" style="margin-top:12px">Generar predicción</button>`
+      ? `<button class="primary-button generate-cta" id="generate-predictions-btn" data-slate-id="${escapeHtml(slateId)}">Generar predicción</button>`
       : "";
     if (summaryNode) summaryNode.innerHTML = `<div class="empty-state">${noPredCopy}${generateBtn}</div>`;
     if (gridNode) gridNode.innerHTML = hasSlatePicked

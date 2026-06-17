@@ -26,6 +26,7 @@ import {
   isTechAccordionTarget,
   effectiveConfidenceTier,
   predictionAllowsConfidentSingle,
+  probBarWidthClass,
 } from "../helpers.js";
 
 describe("formatPercent", () => {
@@ -509,5 +510,24 @@ describe("product-first signals (Fase 3.2 — no raw confidence_band in decision
     expect(effectiveConfidenceTier({ confidence_band: "high" })).toBe("high");
     expect(effectiveConfidenceTier({ confidence_band: "blocked" })).toBe("blocked");
     expect(effectiveConfidenceTier({})).toBe("low");
+  });
+});
+
+describe("probBarWidthClass (CSP-safe prob bars — no inline style)", () => {
+  it("maps a percent to a discrete w-N class rounded to nearest 5", () => {
+    expect(probBarWidthClass(15)).toBe("w-15");
+    expect(probBarWidthClass(60)).toBe("w-60");
+    expect(probBarWidthClass(62)).toBe("w-60");
+    expect(probBarWidthClass(63)).toBe("w-65");
+    expect(probBarWidthClass(0)).toBe("w-0");
+    expect(probBarWidthClass(100)).toBe("w-100");
+  });
+
+  it("clamps out-of-range and coerces garbage", () => {
+    expect(probBarWidthClass(-10)).toBe("w-0");
+    expect(probBarWidthClass(150)).toBe("w-100");
+    expect(probBarWidthClass(null)).toBe("w-0");
+    expect(probBarWidthClass(undefined)).toBe("w-0");
+    expect(probBarWidthClass(NaN)).toBe("w-0");
   });
 });

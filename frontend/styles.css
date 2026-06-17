@@ -2381,13 +2381,42 @@ details.analysis-block summary h4 {
 .prob-bar-fill {
   display: block;
   height: 100%;
+  width: 0; /* CSP-safe: real width comes from a .w-N class, never inline */
   border-radius: 999px;
   background: var(--line);
+  transition: width 0.25s ease;
 }
 
 .prob-bar.is-pick .prob-bar-fill {
   background: rgba(125, 211, 252, 0.55);
 }
+
+/* CSP-safe discrete width classes for prob bars (style-src 'self' blocks
+   inline style attributes). Generated 0..100 step 5. */
+.prob-bar-fill.w-0 { width: 0%; }
+.prob-bar-fill.w-5 { width: 5%; }
+.prob-bar-fill.w-10 { width: 10%; }
+.prob-bar-fill.w-15 { width: 15%; }
+.prob-bar-fill.w-20 { width: 20%; }
+.prob-bar-fill.w-25 { width: 25%; }
+.prob-bar-fill.w-30 { width: 30%; }
+.prob-bar-fill.w-35 { width: 35%; }
+.prob-bar-fill.w-40 { width: 40%; }
+.prob-bar-fill.w-45 { width: 45%; }
+.prob-bar-fill.w-50 { width: 50%; }
+.prob-bar-fill.w-55 { width: 55%; }
+.prob-bar-fill.w-60 { width: 60%; }
+.prob-bar-fill.w-65 { width: 65%; }
+.prob-bar-fill.w-70 { width: 70%; }
+.prob-bar-fill.w-75 { width: 75%; }
+.prob-bar-fill.w-80 { width: 80%; }
+.prob-bar-fill.w-85 { width: 85%; }
+.prob-bar-fill.w-90 { width: 90%; }
+.prob-bar-fill.w-95 { width: 95%; }
+.prob-bar-fill.w-100 { width: 100%; }
+
+/* CSP-safe replacement for the old inline margin on the generate button. */
+.generate-cta { margin-top: 12px; }
 
 .prob-bar-value {
   text-align: right;
