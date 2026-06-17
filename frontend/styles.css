@@ -2251,3 +2251,233 @@ details.analysis-block summary h4 {
     animation: none;
   }
 }
+
+/* ============================================================== */
+/* Fase 3 UI/UX — semantic decision badges, calmer surfaces       */
+/* base_pick (Señal) / strategy (Estrategia) / risk / confidence  */
+/* ============================================================== */
+
+/* Tone tokens — subtle fills, muted borders. NOT alarm-bright.   */
+.tone-ok    { --tone: var(--win);        --tone-bg: rgba(155, 227, 106, 0.10); }
+.tone-warn  { --tone: var(--warn);       --tone-bg: rgba(255, 209, 102, 0.10); }
+.tone-bad   { --tone: var(--bad);        --tone-bg: rgba(255, 122, 144, 0.10); }
+
+.signal-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  margin: 8px 0 6px;
+}
+
+/* Señal base del modelo — brand-cyan accent, calm. */
+.badge-signal {
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.78rem;
+  font-weight: 600;
+  padding: 3px 9px;
+  border-radius: 999px;
+  color: var(--ink);
+  background: rgba(125, 211, 252, 0.12);
+  border: 1px solid rgba(125, 211, 252, 0.30);
+  letter-spacing: 0.01em;
+}
+
+/* Estrategia de boleta + Riesgo — tone-driven, flat fills. */
+.badge-strategy,
+.badge-risk {
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.78rem;
+  font-weight: 600;
+  padding: 3px 9px;
+  border-radius: 999px;
+  color: var(--tone, var(--muted));
+  background: var(--tone-bg, transparent);
+  border: 1px solid color-mix(in srgb, var(--tone, var(--line)) 35%, transparent);
+}
+
+.badge-muted {
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.72rem;
+  padding: 2px 8px;
+  border-radius: 999px;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid var(--line);
+}
+
+/* Motivos visibles — neutral chips, never red alarms. */
+.reason-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.reason-chip {
+  font-size: 0.74rem;
+  padding: 2px 8px;
+  border-radius: 6px;
+  color: var(--muted);
+  background: var(--paper-strong);
+  border: 1px solid var(--line);
+}
+
+/* Per-card technical accordion: closed by default, low visual weight. */
+.card-tech {
+  margin-top: 8px;
+  font-size: 0.76rem;
+}
+
+.card-tech > summary {
+  cursor: pointer;
+  color: var(--muted);
+  list-style: none;
+  user-select: none;
+  padding: 2px 0;
+}
+
+.card-tech > summary::-webkit-details-marker { display: none; }
+.card-tech > summary::before { content: "▸ "; color: var(--muted); }
+.card-tech[open] > summary::before { content: "▾ "; }
+
+.card-tech-flags {
+  margin: 6px 0;
+  padding-left: 16px;
+  color: var(--muted);
+}
+
+.card-tech-flags li { margin: 2px 0; }
+.card-tech-vectors { color: var(--muted); margin: 4px 0 0; }
+
+/* Clean probability bars (replaces the 6 competing boxes). */
+.prob-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.prob-bar {
+  display: grid;
+  grid-template-columns: 18px 1fr 44px;
+  align-items: center;
+  gap: 10px;
+}
+
+.prob-bar-label { font-weight: 600; color: var(--muted); }
+.prob-bar.is-pick .prob-bar-label { color: var(--ink); }
+
+.prob-bar-track {
+  height: 8px;
+  border-radius: 999px;
+  background: var(--paper-strong);
+  overflow: hidden;
+}
+
+.prob-bar-fill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--line);
+}
+
+.prob-bar.is-pick .prob-bar-fill {
+  background: rgba(125, 211, 252, 0.55);
+}
+
+.prob-bar-value {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+
+.prob-bar.is-pick .prob-bar-value { color: var(--ink); font-weight: 600; }
+
+/* Right-panel summary hero — labeled key/value, no "Fijo" type badge. */
+.decision-hero .dh-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+
+.dh-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.dh-key {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.conf-tag {
+  font-size: 0.78rem;
+  font-weight: 600;
+  padding: 2px 9px;
+  border-radius: 999px;
+  color: var(--tone, var(--muted));
+  background: var(--tone-bg, transparent);
+  border: 1px solid color-mix(in srgb, var(--tone, var(--line)) 35%, transparent);
+}
+
+.why-list {
+  margin: 4px 0 0;
+  padding-left: 18px;
+  color: var(--ink);
+}
+
+.why-list li { margin: 3px 0; }
+
+.action-copy { margin: 2px 0 0; color: var(--ink); line-height: 1.45; }
+
+.tech-accordion > summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-weight: 600;
+  list-style: none;
+}
+
+.tech-accordion > summary::-webkit-details-marker { display: none; }
+.tech-accordion > summary::before { content: "▸ "; }
+.tech-accordion[open] > summary::before { content: "▾ "; }
+.tech-flags-line { color: var(--muted); margin: 6px 0 0; word-break: break-word; }
+
+/* Calm down the legacy guardrail flag chip: amber, not red alarm. */
+.tag.flag-warn {
+  background: rgba(255, 209, 102, 0.10);
+  color: var(--warn);
+  border: 1px solid rgba(255, 209, 102, 0.25);
+}
+
+/* More vertical breathing room between stacked cards. */
+.pick-row { margin-bottom: 10px; }
+
+/* Soft, non-blocking inline notice (tracking, optional failures). */
+.soft-notice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.8rem;
+  color: var(--muted);
+  background: var(--paper-strong);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 12px;
+}
+
+.soft-notice button {
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--ink);
+  border-radius: 6px;
+  padding: 2px 10px;
+  cursor: pointer;
+  font-size: 0.78rem;
+}

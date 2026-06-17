@@ -66,10 +66,23 @@ class MatchPredictionResponse(BaseModel):
     )
     evidence_level: str = "low"
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    # UI-facing confidence label — authoritative, never contradicts flags.
+    # One of "alta" / "media" / "media-baja" / "baja". The client renders
+    # this directly and must NOT recompute "alta" from confidence_band.
+    visible_confidence: str = "baja"
+    # Up to 3 short reasons (also used as the card's visible "Motivos").
+    confidence_explanation: list[str] = Field(default_factory=list)
     risk_level: str = "high"
     # FIJO / LISTO / REVISAR / BLOQUEADO — the guardrailed status the UI
     # must render. Distinct from `confidence_band` (the model's own band).
     final_status: str = "REVISAR"
+    # Backend-authoritative boleta strategy — the UI renders this directly
+    # (never "Fijo"). One of SIMPLE / DOBLE_RECOMENDADO / TRIPLE_RECOMENDADO
+    # / NO_DEJAR_SIMPLE / EVITAR. The client may upgrade to TRIPLE only when
+    # the optimizer allocates a triple (coverage refinement, not a downgrade).
+    ticket_strategy: str = "NO_DEJAR_SIMPLE"
+    ticket_strategy_label: str = "No dejar simple"
+    ticket_strategy_reason: str = ""
     flags: list[str] = Field(default_factory=list)
     fallback_used: bool = False
     is_international_friendly: bool = False

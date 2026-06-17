@@ -19,6 +19,17 @@ import {
   buildQualityTooltip,
   drawRiskSummary,
   flagLabel,
+  basePickBadge,
+  resolveTicketStrategy,
+  riskLevelLabel,
+  riskTone,
+  visibleConfidenceLabel,
+  confidenceTone,
+  decisionStatusLabel,
+  limitChips,
+  isTechAccordionTarget,
+  effectiveConfidenceTier,
+  predictionAllowsConfidentSingle,
 } from "./helpers.js";
 // NOTE: live-tracking is loaded via a guarded dynamic import in the
 // bootstrap (not a static import), so a failure to load/link that module
@@ -110,10 +121,12 @@ function doublesModelDecision(prediction, matchId = null) {
   const best = outcomes[0];
   const second = outcomes[1];
   const bestGap = best.value - second.value;
-  const confidence = prediction.confidence_band || "low";
   const allowDouble = matchId && state.modelDoubleMatchIds.has(matchId);
 
-  if (best.value >= 0.58 && bestGap >= 0.12 && confidence !== "low") {
+  // Confident single only when the backend ticket_strategy is SIMPLE (product
+  // field). A band-high friendly with ticket_strategy NO_DEJAR_SIMPLE no
+  // longer shortcuts to a fixed. Legacy fallback lives inside the helper.
+  if (best.value >= 0.58 && bestGap >= 0.12 && predictionAllowsConfidentSingle(prediction)) {
     return {type: "fixed", picks: [best.key], source: "model"};
   }
   if (allowDouble) {
@@ -148,7 +161,11 @@ function modelDecision(prediction, matchId = null, mode = state.ticketMode) {
 function uncertaintyProfile(match) {
   const outcomes = sortedOutcomes(match.prediction);
   const [best, second, third] = outcomes;
-  const confidence = match.prediction.confidence_band || "low";
+  // Product-first: derive the confidence tier from the guardrailed
+  // final_status (which already folds in flags + risk). Legacy band only as
+  // fallback. This is the client risk model used when no backend ticket
+  // recommendation is loaded yet (validationProfile prefers backend data).
+  const confidence = effectiveConfidenceTier(match.prediction);
   const readiness = match.prediction.competition_readiness || "unclassified";
   const evidenceCount = linkedEvidenceCount(match);
   const entropy = outcomes.reduce((total, item) => {
@@ -305,7 +322,7 @@ function validationProfile(match) {
   }
 
   let level = "low";
-  let label = "Fijo defendible";
+  let label = "Defendible (simple)";
   let recommendation = "Puede quedar simple si no hay presupuesto para cobertura.";
   // Backend already issued a calibrated band (post knockout E=0
   // redistribution where applicable). Trust it: if it landed medium
@@ -367,7 +384,9 @@ function qualityIssueProfile(match) {
   const sanityFlags = Array.isArray(prediction.flags) ? prediction.flags : [];
   const blocked =
     backendStatus === "BLOQUEADO" ||
-    prediction.confidence_band === "blocked" ||
+    // Legacy fallback only: when there is no product final_status, fall back
+    // to the raw model band for the blocked classification.
+    (!backendStatus && prediction.confidence_band === "blocked") ||
     readiness === "unclassified";
   const benchmarkWeak = readiness === "not_ready";
   const cautionOnly = readiness === "covered" || readiness === "context_only" || prediction.live_pick_allowed === false;
@@ -583,58 +602,79 @@ function buildMatchCard(match) {
     })
     .join("");
 
-  const decisionLabel =
-    decision.type === "double" ? "Doble" : decision.type === "triple" ? "Triple" : "Fijo";
-  // For low-confidence predictions that are not fully blocked, add a
-  // secondary badge that names the cause without alarming the analyst.
-  const anchorBadge = match.prediction.confidence_band === "low" && !issue.blocked
-    ? `<span class="tag anchor-gap" title="El modelo predice pero necesita más datos recientes para anclar la confianza">Baja evidencia</span>`
-    : "";
-  // Sanity guardrail chips: surface the explicit reasons the displayed
-  // probability / status was degraded (capped friendly, extreme without
-  // evidence, fallback heuristic, ...). Drawn from the backend `flags`.
-  const sanityFlags = Array.isArray(match.prediction.flags) ? match.prediction.flags : [];
-  const flagBadges = sanityFlags
-    .map(
-      (flag) =>
-        `<span class="tag flag-warn" title="Capa de seguridad: ${escapeHtml(flagLabel(flag))}">${escapeHtml(flagLabel(flag))}</span>`,
-    )
+  // --- Semantic separation (Fase 3): base pick / strategy / risk -----------
+  const pred = match.prediction;
+  const basePick = basePickBadge(pred.recommended_outcome);
+  const strategy = resolveTicketStrategy({
+    prediction: pred,
+    validationLevel: validation.level,
+    decisionType: decision.type,
+  });
+  const riskLevel = pred.risk_level || "high";
+  const visibleConf = pred.visible_confidence || "baja";
+
+  // Visible "Motivos": prefer the backend confidence_explanation (already
+  // <=3, already deduped); fall back to flag labels. Hard cap at 3 + "+N".
+  const explanation = Array.isArray(pred.confidence_explanation) && pred.confidence_explanation.length
+    ? pred.confidence_explanation
+    : (Array.isArray(pred.flags) ? pred.flags.map(flagLabel) : []);
+  const { visible: reasonChips, hiddenCount } = limitChips(explanation, 3);
+  const reasonMarkup = reasonChips
+    .map((r) => `<span class="reason-chip">${escapeHtml(r)}</span>`)
     .join("");
+
+  // Full flag list lives in the per-card accordion (technical), never lost.
+  const allFlags = Array.isArray(pred.flags) ? pred.flags : [];
+  const flagDetailMarkup = allFlags.length
+    ? allFlags.map((f) => `<li>${escapeHtml(flagLabel(f))} <span class="mono">${escapeHtml(f)}</span></li>`).join("")
+    : "<li>Sin flags de la capa de seguridad.</li>";
+  const detailsToggle = (hiddenCount > 0 || allFlags.length > 0)
+    ? `<details class="card-tech">
+         <summary>${hiddenCount > 0 ? `+${hiddenCount} detalles` : "Detalles técnicos"}</summary>
+         <ul class="card-tech-flags">${flagDetailMarkup}</ul>
+         <p class="mono card-tech-vectors">raw L/E/V ${fmtVec(pred.raw_probabilities)} · decisión ${fmtVec(pred.decision_probabilities || pred.probabilities)}</p>
+       </details>`
+    : "";
 
   return `
     <article class="pick-row${activeClass}${manualClass}${reviewClass}${cautionClass}${pickOkClass}" data-match-card="${matchId}"
       role="button" tabindex="0"
-      aria-label="Partido ${escapeHtml(match.position)}: ${escapeHtml(match.prediction.home_team_name)} vs ${escapeHtml(match.prediction.away_team_name)}">
+      aria-label="Partido ${escapeHtml(match.position)}: ${escapeHtml(pred.home_team_name)} vs ${escapeHtml(pred.away_team_name)}">
       <div class="pick-index">
         <strong>#${escapeHtml(match.position)}</strong>
         <small class="quality-mini ${issue.tone}">${issue.score !== null ? escapeHtml(issue.score) : "SD"}</small>
       </div>
       <div class="pick-meta">
-        <div class="pick-tags">
-          <span class="tag ${decision.type}">
-            ${decisionLabel}
-          </span>
-          ${decision.source === "manual" ? `<span class="tag manual">Manual</span>` : ""}
-          ${match.prediction.is_knockout ? `<span class="tag knockout" title="Eliminatoria: empate descartado">Eliminatoria</span>` : ""}
-          <span class="tag">${escapeHtml(translateCompetition(match.prediction.competition_name || ""))}</span>
-          <span class="tag quality-${issue.tone}" title="${escapeHtml(issue.reasons.join(' · ') || issue.label)}">${escapeHtml(issue.label)}</span>
-          ${anchorBadge}
-          ${flagBadges}
+        <h3>${escapeHtml(pred.home_team_name)} vs ${escapeHtml(pred.away_team_name)}</h3>
+        <p class="pick-sub">${escapeHtml(formatDate(match.kickoff_at))} · ${escapeHtml(translateCompetition(pred.competition_name || ""))}<span class="freshness-tag" title="Cuándo se calculó esta probabilidad">Actualizado ${escapeHtml(formatRelativeAge(pred.generated_at))}</span></p>
+        <div class="signal-row">
+          <span class="badge-signal" title="Señal base del modelo">${escapeHtml(basePick.label)}</span>
+          <span class="badge-strategy tone-${strategy.tone}" title="Estrategia de boleta recomendada">${escapeHtml(strategy.label)}</span>
+          <span class="badge-risk tone-${riskTone(riskLevel)}" title="Riesgo del partido para la quiniela">Riesgo ${escapeHtml(riskLevelLabel(riskLevel))}</span>
+          ${decision.source === "manual" ? `<span class="badge-muted">Manual</span>` : ""}
+          ${pred.is_knockout ? `<span class="badge-muted" title="Eliminatoria: empate descartado">Eliminatoria</span>` : ""}
         </div>
-        <h3>${escapeHtml(match.prediction.home_team_name)} vs ${escapeHtml(match.prediction.away_team_name)}</h3>
-        <p class="pick-sub">${escapeHtml(formatDate(match.kickoff_at))} ${match.venue ? `· ${escapeHtml(match.venue)}` : ""}<span class="freshness-tag" title="Cuándo se calculó esta probabilidad">Actualizado ${escapeHtml(formatRelativeAge(match.prediction.generated_at))}</span></p>
+        ${reasonMarkup ? `<div class="reason-row">${reasonMarkup}</div>` : ""}
+        ${detailsToggle}
       </div>
       <div class="pick-options">
         <div class="options-grid">${optionsMarkup}</div>
         <div class="double-row">
           <div class="double-tag">
-            ${decision.source === "manual" ? "Selección manual" : "Sugerencia del modelo"}:
-            ${escapeHtml(displayPicks(decision.picks))}
+            ${decision.source === "manual" ? "Selección manual" : "Sugerencia"}:
+            ${escapeHtml(displayPicks(decision.picks))} · Confianza ${escapeHtml(visibleConfidenceLabel(visibleConf))}
           </div>
         </div>
       </div>
     </article>
   `;
+}
+
+// Compact "55/26/19" formatter for an {L,E,V} vector (accordion display).
+function fmtVec(vec) {
+  if (!vec || typeof vec !== "object") return "—";
+  const pct = (v) => (Number.isFinite(Number(v)) ? Math.round(Number(v) * 100) : "—");
+  return `${pct(vec.L)}/${pct(vec.E)}/${pct(vec.V)}`;
 }
 
 function buildMatchMenuItem(match) {
@@ -717,15 +757,27 @@ function renderAsideSlates() {
 
 function renderValidationSummary() {
   if (!state.authenticated || !state.matches.length) return "";
-  const issues = state.matches.map((match) => ({match, issue: qualityIssueProfile(match), decision: effectiveDecision(match)}));
+  const issues = state.matches.map((match) => {
+    const decision = effectiveDecision(match);
+    return {
+      match,
+      issue: qualityIssueProfile(match),
+      decision,
+      strategy: resolveTicketStrategy({
+        prediction: match.prediction,
+        validationLevel: validationProfile(match).level,
+        decisionType: decision.type,
+      }),
+    };
+  });
   const review = issues.filter((item) => item.issue.review);
   const caution = issues.filter((item) => item.issue.caution);
   const thin = issues.filter((item) => item.issue.thin);
   const blocked = issues.filter((item) => item.issue.blocked);
-  const bandHigh = issues.filter((item) => item.match.prediction?.confidence_band === "high");
-  const bandMedium = issues.filter((item) => item.match.prediction?.confidence_band === "medium");
-  const bandLow = issues.filter((item) => item.match.prediction?.confidence_band === "low");
-  const bandBlocked = issues.filter((item) => item.match.prediction?.confidence_band === "blocked");
+  // Counters use PRODUCT fields, never raw confidence_band: a "defendible"
+  // is only a match whose backend ticket_strategy is SIMPLE. This stops the
+  // summary from calling a risky/flagged friendly "fijo defendible".
+  const defensibleSimple = issues.filter((item) => item.strategy.key === "SIMPLE");
   const manual = issues.filter((item) => item.decision.source === "manual");
   const doubles = issues.filter((item) => item.decision.type === "double");
   const triples = issues.filter((item) => item.decision.type === "triple");
@@ -782,7 +834,7 @@ function renderValidationSummary() {
     <div class="summary-band">
       <div>
         <span>Jugada actual</span>
-        <strong>${fixed.length} fijos · ${doubles.length} dobles · ${triples.length} triples</strong>
+        <strong>${fixed.length} simples · ${doubles.length} dobles · ${triples.length} triples</strong>
       </div>
       <div class="${jackpotTone}">
         <span>Jackpot ${slateSize}/${slateSize}</span>
@@ -792,21 +844,21 @@ function renderValidationSummary() {
         <span>Cobertura ~50%</span>
         <strong>${escapeHtml(ticketsLabel)}</strong>
       </div>
-      <div class="${bandHigh.length ? "ok" : ""}">
-        <span>Fijo defendible</span>
-        <strong>${escapeHtml(bandHigh.length)}</strong>
+      <div class="${defensibleSimple.length ? "ok" : ""}" title="Partidos cuya estrategia de boleta es SIMPLE (señal defendible)">
+        <span>Defendible (simple)</span>
+        <strong>${escapeHtml(defensibleSimple.length)}</strong>
       </div>
-      <div class="${bandLow.length ? "bad" : "ok"}">
+      <div class="${review.length ? "bad" : "ok"}">
         <span>A revisar</span>
-        <strong>${escapeHtml(bandLow.length)}</strong>
+        <strong>${escapeHtml(review.length)}</strong>
       </div>
-      <div class="${bandMedium.length ? "warn" : "ok"}">
+      <div class="${caution.length ? "warn" : "ok"}">
         <span>Con cautela</span>
-        <strong>${escapeHtml(bandMedium.length)}</strong>
+        <strong>${escapeHtml(caution.length)}</strong>
       </div>
-      <div class="${bandBlocked.length ? "bad" : "ok"}">
+      <div class="${blocked.length ? "bad" : "ok"}">
         <span>Sin datos</span>
-        <strong>${escapeHtml(bandBlocked.length)}</strong>
+        <strong>${escapeHtml(blocked.length)}</strong>
       </div>
       <div class="${manual.length ? "ok" : ""}">
         <span>Ajustados</span>
@@ -908,7 +960,10 @@ function renderResultFallback(featurePayload, match) {
 // anchor condition fails due to insufficient recent results or H2H.
 // Uses structured feature data — no string parsing of rationale text.
 function renderLowConfidenceBlock(prediction, featurePayload) {
-  if (!prediction || prediction.confidence_band !== "low") return "";
+  // Product-first: show the "por qué revisar" block when the guardrailed tier
+  // is low (final_status REVISAR), falling back to the raw band for old
+  // responses. BLOQUEADO maps to "blocked", so it is handled elsewhere.
+  if (!prediction || effectiveConfidenceTier(prediction) !== "low") return "";
   const homeRecent = Number(featurePayload.home_recent_matches || 0);
   const awayRecent = Number(featurePayload.away_recent_matches || 0);
   // The features endpoint returns `head_to_head_matches`; the quality
@@ -929,7 +984,7 @@ function renderLowConfidenceBlock(prediction, featurePayload) {
   return `
     <section class="analysis-block anchor-gap-block">
       <h4>Por qué revisar</h4>
-      <p class="anchor-gap-lead">El modelo elige un resultado, pero no lo clasifica como fijo defendible porque falta evidencia reciente suficiente para anclar la confianza.</p>
+      <p class="anchor-gap-lead">El modelo elige un resultado, pero no lo trata como señal defendible porque falta evidencia reciente suficiente para anclar la confianza.</p>
       ${bullets.length ? `<ul class="anchor-gap-list">${bullets.join("")}</ul>` : ""}
       <p class="mini-copy">Las calificatorias recientes pueden quedar fuera de la ventana activa del modelo. Esto no es un error sino una limitación de cobertura temporal: el pronóstico es válido pero la confianza queda en baja hasta que haya más partidos disponibles.</p>
     </section>
@@ -1117,7 +1172,9 @@ function buildAnalysis(match) {
   // are not fully blocked — data-gap matches are cautionary, not catastrophic.
   const heroTone = (() => {
     const baseTone = { low: "ok", medium: "warn", high: "bad" }[validation.level] || "ok";
-    if (baseTone === "bad" && match.prediction.confidence_band === "low") return "warn";
+    // Soften red→amber for low-tier (data-gap) matches — product-first, legacy
+    // band only as fallback inside effectiveConfidenceTier.
+    if (baseTone === "bad" && effectiveConfidenceTier(match.prediction) === "low") return "warn";
     return baseTone;
   })();
   const evidenceMarkup = evidenceList.length
@@ -1188,47 +1245,69 @@ function buildAnalysis(match) {
           · ${decision.source === "manual" ? "ajustada manualmente" : "sugerida por el modelo"}
         </p>
       </div>
+      ${(() => {
+        const pred = match.prediction;
+        const basePick = basePickBadge(pred.recommended_outcome);
+        const strategy = resolveTicketStrategy({
+          prediction: pred,
+          validationLevel: validation.level,
+          decisionType: decision.type,
+        });
+        const riskLevel = pred.risk_level || "high";
+        const visibleConf = pred.visible_confidence || "baja";
+        const reasons = (Array.isArray(pred.confidence_explanation) && pred.confidence_explanation.length
+          ? pred.confidence_explanation
+          : (Array.isArray(pred.flags) ? pred.flags.map(flagLabel) : [])).slice(0, 3);
+        const probBars = [
+          ["L", pred.home_probability],
+          ["E", pred.draw_probability],
+          ["V", pred.away_probability],
+        ].map(([k, v]) => {
+          const pctNum = Math.round((Number(v) || 0) * 100);
+          const isPick = basePick.letter === k;
+          return `<div class="prob-bar${isPick ? " is-pick" : ""}"><span class="prob-bar-label">${k}</span><span class="prob-bar-track"><span class="prob-bar-fill" style="width:${pctNum}%"></span></span><span class="prob-bar-value">${pctNum}%</span></div>`;
+        }).join("");
+        return `
       <div class="decision-hero tone-${heroTone}">
-        <div class="dh-badge">
-          <span class="dh-badge-pick">${escapeHtml(displayOutcome(decision.picks[0] || "1"))}</span>
-          <span class="dh-badge-type">${decision.type === "double" ? "Doble" : decision.type === "triple" ? "Triple" : "Fijo"}</span>
-        </div>
-        <div class="dh-info">
-          <div class="dh-risk">${escapeHtml(validation.label)}</div>
-          <div class="dh-action">${escapeHtml(validation.recommendation)}</div>
-          <div class="dh-meta">Confianza ${escapeHtml(confidenceLabel(validation.profile.confidence))} · Referencia ${escapeHtml(readinessLabel(validation.profile.readiness))}</div>
+        <div class="dh-summary">
+          <div class="dh-line"><span class="dh-key">Señal base</span><span class="badge-signal">${escapeHtml(basePick.label)}</span></div>
+          <div class="dh-line"><span class="dh-key">Estrategia</span><span class="badge-strategy tone-${strategy.tone}">${escapeHtml(strategy.label)}</span></div>
+          <div class="dh-line"><span class="dh-key">Riesgo</span><span class="badge-risk tone-${riskTone(riskLevel)}">${escapeHtml(riskLevelLabel(riskLevel))}</span></div>
+          <div class="dh-line"><span class="dh-key">Confianza visible</span><span class="conf-tag tone-${confidenceTone(visibleConf)}">${escapeHtml(visibleConfidenceLabel(visibleConf))}</span></div>
         </div>
       </div>
       <div class="analysis-grid">
         <section class="analysis-block">
           <h4>Probabilidades</h4>
-          <div class="facts-grid">
-            <div class="fact" title="Local (equipo de casa)"><strong>L</strong><span>${formatPercent(match.prediction.home_probability)}</span></div>
-            <div class="fact" title="Empate"><strong>E</strong><span>${formatPercent(match.prediction.draw_probability)}</span></div>
-            <div class="fact" title="Visitante (equipo de visita)"><strong>V</strong><span>${formatPercent(match.prediction.away_probability)}</span></div>
-            <div class="fact"><strong>Jugada</strong><span>${escapeHtml(displayPicks(decision.picks))}</span></div>
-          </div>
+          <div class="prob-bars">${probBars}</div>
         </section>
         ${renderDrawCoverageBlock(drawRisk)}
-        <section class="analysis-block validation-block ${validation.className}">
-          <h4>Riesgo del partido</h4>
-          <div class="facts-grid">
-            <div class="fact"><strong>Recomendación</strong><span>${escapeHtml(validation.label)}</span></div>
-            <div class="fact"><strong>Acción</strong><span>${escapeHtml(validation.recommendation)}</span></div>
-            <div class="fact"><strong>Confianza</strong><span>${escapeHtml(confidenceLabel(validation.profile.confidence))}</span></div>
-            <div class="fact"><strong>Referencia</strong><span>${escapeHtml(readinessLabel(validation.profile.readiness))}</span></div>
-          </div>
-          <details class="tech-note">
-            <summary>Nota técnica</summary>
-            <div class="facts-grid">
-              <div class="fact"><strong>Brecha top 2</strong><span>${escapeHtml(displayOutcome(validation.profile.bestOutcome))}/${escapeHtml(displayOutcome(validation.profile.secondOutcome))} · ${formatPercent(validation.profile.topGap)}</span></div>
-              <div class="fact"><strong>3er resultado</strong><span>${escapeHtml(displayOutcome(validation.profile.thirdOutcome))} · ${formatPercent(validation.profile.thirdProbability)}</span></div>
-              <div class="fact"><strong>Evidencia ligada</strong><span>${escapeHtml(evidenceCount)}</span></div>
-              <div class="fact"><strong>Incertidumbre</strong><span>${Math.round(validation.profile.entropy * 100)}%</span></div>
-            </div>
-            <p class="validation-copy">${validation.reasons.map(escapeHtml).join(" · ")}</p>
-          </details>
+        <section class="analysis-block">
+          <h4>Por qué</h4>
+          ${reasons.length
+            ? `<ul class="why-list">${reasons.map((r) => `<li>${escapeHtml(r)}</li>`).join("")}</ul>`
+            : `<p class="mini-copy">Sin señales de riesgo destacadas; el modelo no marcó flags para este partido.</p>`}
         </section>
+        <section class="analysis-block">
+          <h4>Acción recomendada</h4>
+          <p class="action-copy"><strong>${escapeHtml(strategy.label)}.</strong> ${escapeHtml(validation.recommendation)}</p>
+        </section>
+        <details class="analysis-block tech-accordion">
+          <summary>Detalles técnicos</summary>
+          <div class="facts-grid">
+            <div class="fact"><strong>raw L/E/V</strong><span>${fmtVec(pred.raw_probabilities)}</span></div>
+            <div class="fact"><strong>display L/E/V</strong><span>${fmtVec(pred.display_probabilities || pred.probabilities)}</span></div>
+            <div class="fact"><strong>decisión L/E/V</strong><span>${fmtVec(pred.decision_probabilities || pred.probabilities)}</span></div>
+            <div class="fact"><strong>optimizer L/E/V</strong><span>${fmtVec(pred.decision_probabilities || pred.probabilities)}</span></div>
+            <div class="fact"><strong>Banda modelo</strong><span>${escapeHtml(confidenceLabel(pred.confidence_band))}</span></div>
+            <div class="fact"><strong>Referencia</strong><span>${escapeHtml(readinessLabel(pred.competition_readiness))}</span></div>
+            <div class="fact"><strong>Estado</strong><span>${escapeHtml(decisionStatusLabel(pred.final_status))}</span></div>
+            <div class="fact"><strong>Fallback</strong><span>${pred.fallback_used ? "sí" : "no"}</span></div>
+          </div>
+          <p class="mono tech-flags-line">flags: ${(Array.isArray(pred.flags) && pred.flags.length ? pred.flags.map(escapeHtml).join(", ") : "ninguno")}</p>
+          <p class="mono tech-flags-line">brecha top2 ${escapeHtml(displayOutcome(validation.profile.bestOutcome))}/${escapeHtml(displayOutcome(validation.profile.secondOutcome))} · ${formatPercent(validation.profile.topGap)} · evidencia ${escapeHtml(evidenceCount)} · incertidumbre ${Math.round(validation.profile.entropy * 100)}%</p>
+        </details>`;
+      })()}
         ${renderLowConfidenceBlock(match.prediction, featurePayload)}
         <section class="analysis-block">
           <h4>Análisis de la decisión</h4>
@@ -1361,30 +1440,41 @@ function renderBoard() {
   if (slateSwitcherNode) slateSwitcherNode.innerHTML = renderSlateSwitcher();
   if (tabsNode) tabsNode.innerHTML = renderTicketTabs();
   if (summaryNode) {
-    const allIssues = state.matches.map((m) => ({
-      issue: qualityIssueProfile(m),
-      decision: effectiveDecision(m),
-    }));
+    const allIssues = state.matches.map((m) => {
+      const decision = effectiveDecision(m);
+      return {
+        issue: qualityIssueProfile(m),
+        decision,
+        strategy: resolveTicketStrategy({
+          prediction: m.prediction,
+          validationLevel: validationProfile(m).level,
+          decisionType: decision.type,
+        }),
+      };
+    });
     const fixedCount = allIssues.filter((i) => i.decision.type === "fixed").length;
     const doublesCount = allIssues.filter((i) => i.decision.type === "double").length;
     const triplesCount = allIssues.filter((i) => i.decision.type === "triple").length;
-    const bandHigh = state.matches.filter((m) => m.prediction?.confidence_band === "high").length;
-    const bandMedium = state.matches.filter((m) => m.prediction?.confidence_band === "medium").length;
-    const bandLow = state.matches.filter((m) => m.prediction?.confidence_band === "low").length;
-    const bandBlocked = state.matches.filter((m) => m.prediction?.confidence_band === "blocked").length;
+    // PRODUCT-field buckets (not confidence_band): a "defendible" is a match
+    // whose backend ticket_strategy is SIMPLE; review/caution/blocked come
+    // from final_status via qualityIssueProfile.
+    const defensibleCount = allIssues.filter((i) => i.strategy.key === "SIMPLE").length;
+    const reviewCount = allIssues.filter((i) => i.issue.review).length;
+    const cautionCount = allIssues.filter((i) => i.issue.caution).length;
+    const blockedCount = allIssues.filter((i) => i.issue.blocked).length;
     const weekTypeLabel = { weekend: "Fin de semana", revancha: "Revancha", midweek: "Media semana" }[activeSlate.week_type] || activeSlate.week_type;
     const modeLabel = ticketModes.find((m) => m.key === state.ticketMode)?.label || state.ticketMode;
     const heroChips = [];
-    if (bandBlocked) heroChips.push(`<span class="hero-chip bad">${bandBlocked} sin datos</span>`);
-    if (bandLow) heroChips.push(`<span class="hero-chip bad">${bandLow} a revisar</span>`);
-    if (bandMedium) heroChips.push(`<span class="hero-chip warn">${bandMedium} con cautela</span>`);
-    if (bandHigh) heroChips.push(`<span class="hero-chip ok">${bandHigh} fijo${bandHigh !== 1 ? "s" : ""} defendible${bandHigh !== 1 ? "s" : ""}</span>`);
-    if (!bandBlocked && !bandLow && !bandMedium && !bandHigh) heroChips.push(`<span class="hero-chip ok">Jugada lista</span>`);
+    if (blockedCount) heroChips.push(`<span class="hero-chip bad">${blockedCount} sin datos</span>`);
+    if (reviewCount) heroChips.push(`<span class="hero-chip bad">${reviewCount} a revisar</span>`);
+    if (cautionCount) heroChips.push(`<span class="hero-chip warn">${cautionCount} con cautela</span>`);
+    if (defensibleCount) heroChips.push(`<span class="hero-chip ok">${defensibleCount} defendible${defensibleCount !== 1 ? "s" : ""}</span>`);
+    if (!blockedCount && !reviewCount && !cautionCount && !defensibleCount) heroChips.push(`<span class="hero-chip ok">Jugada lista</span>`);
     if (doublesCount) heroChips.push(`<span class="hero-chip">${doublesCount} doble${doublesCount !== 1 ? "s" : ""}</span>`);
     if (triplesCount) heroChips.push(`<span class="hero-chip">${triplesCount} triple${triplesCount !== 1 ? "s" : ""}</span>`);
     summaryNode.innerHTML = `
       <div class="ticket-hero">
-        <div class="ticket-hero-main">${fixedCount}F · ${doublesCount}D · ${triplesCount}T</div>
+        <div class="ticket-hero-main">${fixedCount}S · ${doublesCount}D · ${triplesCount}T</div>
         <div class="ticket-hero-meta">${escapeHtml(weekTypeLabel)} · ${state.matches.length} partidos · ${escapeHtml(modeLabel)}</div>
         <div class="ticket-hero-chips">${heroChips.join("")}</div>
       </div>
@@ -1472,6 +1562,13 @@ async function _handleDelegatedClick(event) {
       renderSidebar();
       renderBoard();
     }
+    return;
+  }
+
+  // The per-card technical accordion lives inside the card. Let the native
+  // <details> toggle happen without selecting the card or swapping the
+  // right panel — bail before the card-selection branch.
+  if (isTechAccordionTarget(target)) {
     return;
   }
 

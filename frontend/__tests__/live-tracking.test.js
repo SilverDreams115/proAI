@@ -216,7 +216,7 @@ describe("initLiveTracking isolation", () => {
     expect(initLiveTracking({ container: mockContainer(), fetchJson: null })).toBeUndefined();
   });
 
-  it("renders a controlled error state when the dashboard fetch fails (never throws)", async () => {
+  it("shows a soft, non-blocking notice when the dashboard fetch fails (never a hard error)", async () => {
     const container = mockContainer();
     const api = initLiveTracking({
       container,
@@ -224,10 +224,26 @@ describe("initLiveTracking isolation", () => {
       fetchJson: () => Promise.reject(new Error("boom")),
     });
     await api.refresh();
-    expect(container.innerHTML).toContain("No se pudo cargar el seguimiento");
+    // Fase 3: a tracking failure must NOT render as a big error-copy that
+    // looks like the whole app crashed — only a small soft-notice + retry.
+    expect(container.innerHTML).toContain("soft-notice");
+    expect(container.innerHTML).toContain("Reintentar");
+    expect(container.innerHTML).not.toContain("error-copy");
   });
 
-  it("renders the dashboard when the fetch succeeds", async () => {
+  it("shows a soft notice (not a hard error) when fetchJson returns null (e.g. 401)", async () => {
+    const container = mockContainer();
+    const api = initLiveTracking({
+      container,
+      detailContainer: null,
+      fetchJson: () => Promise.resolve(null),
+    });
+    await api.refresh();
+    expect(container.innerHTML).toContain("soft-notice");
+    expect(container.innerHTML).not.toContain("error-copy");
+  });
+
+  it("shows a friendly empty-state (not an error) when there is nothing to track", async () => {
     const container = mockContainer();
     const api = initLiveTracking({
       container,
@@ -235,10 +251,27 @@ describe("initLiveTracking isolation", () => {
       fetchJson: () => Promise.resolve({ closed: [], open: [] }),
     });
     await api.refresh();
+    expect(container.innerHTML).toContain("Sin partidos en seguimiento");
+    expect(container.innerHTML).not.toContain("error-copy");
+    expect(container.innerHTML).not.toContain("soft-notice");
+  });
+
+  it("renders the dashboard when the fetch succeeds with data", async () => {
+    const container = mockContainer();
+    const api = initLiveTracking({
+      container,
+      detailContainer: null,
+      fetchJson: () =>
+        Promise.resolve({
+          closed: [],
+          open: [{ completed_count: 0, live_count: 0, pending_count: 9, empates_reales: 0 }],
+        }),
+    });
+    await api.refresh();
     expect(container.innerHTML).toContain("Seguimiento de quinielas");
   });
 
-  it("shows a controlled error in the detail pane when live-results fails", async () => {
+  it("shows a soft notice in the detail pane when live-results fails", async () => {
     const container = mockContainer();
     const detailContainer = { innerHTML: "", scrollIntoView: () => {} };
     const api = initLiveTracking({
@@ -247,7 +280,8 @@ describe("initLiveTracking isolation", () => {
       fetchJson: () => Promise.reject(new Error("boom")),
     });
     await api.showDetail("slate-1");
-    expect(detailContainer.innerHTML).toContain("No se pudo cargar el detalle");
+    expect(detailContainer.innerHTML).toContain("soft-notice");
+    expect(detailContainer.innerHTML).not.toContain("error-copy");
   });
 });
 

@@ -110,6 +110,163 @@ SLATE_MAX_SUSPICIOUS_SHARE = 0.30
 SLATE_MIN_MATCHES_FOR_ALARM = 6
 
 
+# --- Visible confidence (Fase 3 UI/UX): authoritative, never contradicts ----
+#
+# The model band ("high") is NOT what the UI should advertise: a high band
+# on a low-evidence international friendly scored by the heuristic fallback
+# must NOT read "Confianza alta". `visible_confidence` is the single field
+# the UI renders. It is computed here so the rule lives in one place and is
+# unit-testable, instead of being re-derived (inconsistently) in the client.
+#
+# Ordered low -> high so we can take the minimum (most cautious) level.
+VISIBLE_CONFIDENCE_ORDER = ("baja", "media-baja", "media", "alta")
+
+
+# Flags that, when present, forbid advertising more than "media-baja".
+_CONFIDENCE_CAP_MEDIA_BAJA_FLAGS = {
+    SanityFlag.LOW_EVIDENCE,
+    SanityFlag.FALLBACK_USED,
+    SanityFlag.EXTREME_PROBABILITY_WITHOUT_EVIDENCE,
+    SanityFlag.SUSPICIOUS_CLASS_PROBABILITY,
+    SanityFlag.BLOCKED_INSUFFICIENT_DATA,
+}
+
+# Human, short explanations for the dominant flags — reused as the card's
+# visible "Motivos" (max 3). Ordered by importance so the top 3 are the
+# most decision-relevant.
+_CONFIDENCE_EXPLANATION_BY_FLAG: list[tuple[SanityFlag, str]] = [
+    (SanityFlag.BLOCKED_INSUFFICIENT_DATA, "Sin datos suficientes"),
+    (SanityFlag.SUSPICIOUS_CLASS_PROBABILITY, "Clase sospechosa"),
+    (SanityFlag.EXTREME_PROBABILITY_WITHOUT_EVIDENCE, "Probabilidad extrema sin respaldo"),
+    (SanityFlag.LOW_EVIDENCE, "Evidencia limitada"),
+    (SanityFlag.INTERNATIONAL_FRIENDLY, "Amistoso internacional"),
+    (SanityFlag.FALLBACK_USED, "Modelo heurístico"),
+]
+_MAX_CONFIDENCE_EXPLANATIONS = 3
+
+
+def _min_confidence(current: str, cap: str) -> str:
+    """Return the more cautious (lower) of two visible-confidence levels."""
+    return VISIBLE_CONFIDENCE_ORDER[
+        min(VISIBLE_CONFIDENCE_ORDER.index(current), VISIBLE_CONFIDENCE_ORDER.index(cap))
+    ]
+
+
+def compute_visible_confidence(
+    *,
+    final_status: FinalStatus,
+    risk_level: RiskLevel,
+    flags: list[SanityFlag],
+) -> tuple[str, list[str]]:
+    """Return ``(visible_confidence, explanation)`` — the UI-facing
+    confidence label and up to 3 short reasons.
+
+    Invariants enforced here (so the client can never contradict them):
+      * BLOQUEADO -> "baja"; REVISAR -> at most "media-baja".
+      * LOW_EVIDENCE / FALLBACK_USED / EXTREME_*/ SUSPICIOUS_* /
+        INSUFFICIENT_DATA -> at most "media-baja".
+      * INTERNATIONAL_FRIENDLY -> at most "media".
+      * risk_level HIGH -> at most "media-baja".
+    Therefore "alta" survives only for a FIJO, low-risk, flag-free match.
+    """
+    if final_status is FinalStatus.BLOQUEADO:
+        base = "baja"
+    elif final_status is FinalStatus.REVISAR:
+        base = "media-baja"
+    elif final_status is FinalStatus.LISTO:
+        base = "media"
+    elif final_status is FinalStatus.FIJO:
+        base = "alta"
+    else:  # pragma: no cover - defensive
+        base = "media-baja"
+
+    flag_set = set(flags)
+    if flag_set & _CONFIDENCE_CAP_MEDIA_BAJA_FLAGS:
+        base = _min_confidence(base, "media-baja")
+    if SanityFlag.INTERNATIONAL_FRIENDLY in flag_set:
+        base = _min_confidence(base, "media")
+    if risk_level is RiskLevel.HIGH:
+        base = _min_confidence(base, "media-baja")
+    if final_status is FinalStatus.BLOQUEADO:
+        base = "baja"
+
+    explanation = [
+        text for flag, text in _CONFIDENCE_EXPLANATION_BY_FLAG if flag in flag_set
+    ][:_MAX_CONFIDENCE_EXPLANATIONS]
+    return base, explanation
+
+
+# --- Ticket strategy (Fase 3.1): backend-authoritative ----------------------
+#
+# The boleta strategy is a PRODUCT concept, distinct from the model signal
+# (L/E/V) and from the per-mode optimizer pick. It must never be SIMPLE for a
+# risky match. Computing it here (one place, unit-tested) stops the client
+# from re-deriving it inconsistently. The frontend renders this field and only
+# upgrades DOBLE/NO_DEJAR_SIMPLE -> TRIPLE_RECOMENDADO when the optimizer
+# actually allocates a triple (a coverage refinement, never a safety downgrade).
+TICKET_STRATEGY_SIMPLE = "SIMPLE"
+TICKET_STRATEGY_DOBLE = "DOBLE_RECOMENDADO"
+TICKET_STRATEGY_TRIPLE = "TRIPLE_RECOMENDADO"
+TICKET_STRATEGY_NO_SIMPLE = "NO_DEJAR_SIMPLE"
+TICKET_STRATEGY_EVITAR = "EVITAR"
+
+_TICKET_STRATEGY_LABELS = {
+    TICKET_STRATEGY_SIMPLE: "Simple",
+    TICKET_STRATEGY_DOBLE: "Doble recomendado",
+    TICKET_STRATEGY_TRIPLE: "Triple recomendado",
+    TICKET_STRATEGY_NO_SIMPLE: "No dejar simple",
+    TICKET_STRATEGY_EVITAR: "Evitar",
+}
+
+# Flags that forbid leaving a match as a confident SIMPLE single.
+_STRATEGY_BLOCKING_FLAGS = {
+    SanityFlag.LOW_EVIDENCE,
+    SanityFlag.FALLBACK_USED,
+    SanityFlag.EXTREME_PROBABILITY_WITHOUT_EVIDENCE,
+    SanityFlag.SUSPICIOUS_CLASS_PROBABILITY,
+    SanityFlag.BLOCKED_INSUFFICIENT_DATA,
+}
+
+
+def ticket_strategy_label(strategy: str) -> str:
+    return _TICKET_STRATEGY_LABELS.get(strategy, "No dejar simple")
+
+
+def compute_ticket_strategy(
+    *,
+    final_status: FinalStatus,
+    risk_level: RiskLevel,
+    flags: list[SanityFlag],
+) -> tuple[str, str, str]:
+    """Return ``(strategy, label, reason)``.
+
+    Precedence (most cautious first):
+      * BLOQUEADO                         -> EVITAR
+      * REVISAR  or  risk HIGH            -> NO_DEJAR_SIMPLE
+      * any single-blocking flag          -> at least DOBLE_RECOMENDADO
+      * LISTO (medium, usable)            -> DOBLE_RECOMENDADO
+      * clean FIJO, low/medium risk       -> SIMPLE
+    The optimizer's TRIPLE refinement is applied client-side on top.
+    """
+    flag_set = set(flags)
+    if final_status is FinalStatus.BLOQUEADO:
+        strategy, reason = TICKET_STRATEGY_EVITAR, "Sin datos suficientes / bloqueado"
+    elif final_status is FinalStatus.REVISAR:
+        strategy, reason = TICKET_STRATEGY_NO_SIMPLE, "Marcado para revisión por la capa de seguridad"
+    elif risk_level is RiskLevel.HIGH:
+        strategy, reason = TICKET_STRATEGY_NO_SIMPLE, "Riesgo alto"
+    elif flag_set & _STRATEGY_BLOCKING_FLAGS:
+        first = next(
+            text for flag, text in _CONFIDENCE_EXPLANATION_BY_FLAG if flag in flag_set
+        )
+        strategy, reason = TICKET_STRATEGY_DOBLE, first
+    elif final_status is FinalStatus.LISTO:
+        strategy, reason = TICKET_STRATEGY_DOBLE, "Señal usable; cubrir si hay presupuesto"
+    else:  # FIJO, no blocking flags, risk not high
+        strategy, reason = TICKET_STRATEGY_SIMPLE, "Señal defendible"
+    return strategy, ticket_strategy_label(strategy), reason
+
+
 @dataclass
 class SanityResult:
     """The full, auditable output of the sanity layer for one match."""
@@ -125,6 +282,15 @@ class SanityResult:
     recommendation_before_sanity: str
     recommendation_after_sanity: str
     flags: list[SanityFlag] = field(default_factory=list)
+    # UI-facing confidence label ("alta"/"media"/"media-baja"/"baja") and
+    # up to 3 short reasons. Authoritative: the client renders these, never
+    # re-derives "alta" from the model band.
+    visible_confidence: str = "baja"
+    confidence_explanation: list[str] = field(default_factory=list)
+    # Backend-authoritative boleta strategy (never SIMPLE when risky).
+    ticket_strategy: str = TICKET_STRATEGY_NO_SIMPLE
+    ticket_strategy_label: str = "No dejar simple"
+    ticket_strategy_reason: str = ""
 
     @property
     def final_status(self) -> FinalStatus:
@@ -300,6 +466,12 @@ def apply_sanity_layer(
         fallback_used=fallback_used,
     )
     risk_level = _risk_level(status_after, evidence_level, flags)
+    visible_confidence, confidence_explanation = compute_visible_confidence(
+        final_status=status_after, risk_level=risk_level, flags=flags
+    )
+    strategy, strategy_label, strategy_reason = compute_ticket_strategy(
+        final_status=status_after, risk_level=risk_level, flags=flags
+    )
 
     final_top_label = _argmax_label(final)
     recommendation_after = _describe_recommendation(
@@ -318,6 +490,11 @@ def apply_sanity_layer(
         recommendation_before_sanity=recommendation_before,
         recommendation_after_sanity=recommendation_after,
         flags=flags,
+        visible_confidence=visible_confidence,
+        confidence_explanation=confidence_explanation,
+        ticket_strategy=strategy,
+        ticket_strategy_label=strategy_label,
+        ticket_strategy_reason=strategy_reason,
     )
 
 

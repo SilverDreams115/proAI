@@ -355,6 +355,24 @@ export function renderLiveDashboard(data) {
 export function initLiveTracking({ container, detailContainer, fetchJson }) {
   if (!container || typeof fetchJson !== "function") return;
 
+  // Tracking is a SECONDARY, best-effort feature. `fetchJson` returns null
+  // on any non-OK response — most commonly a 401 when the session lapses, or
+  // a transient network blip — not a real outage. So a null result must NOT
+  // render as a hard "error-copy" that looks like the whole app crashed.
+  // Instead we show a small, dismissible notice with a Reintentar action.
+  function softNotice(targetContainer, label, onRetry) {
+    targetContainer.innerHTML = `
+      <div class="soft-notice" role="status">
+        <span>${label}</span>
+        <button type="button" class="track-retry">Reintentar</button>
+      </div>`;
+    const button =
+      typeof targetContainer.querySelector === "function"
+        ? targetContainer.querySelector(".track-retry")
+        : null;
+    if (button) button.addEventListener("click", onRetry);
+  }
+
   async function showDetail(slateId) {
     if (!detailContainer) return;
     try {
@@ -363,20 +381,27 @@ export function initLiveTracking({ container, detailContainer, fetchJson }) {
       detailContainer.innerHTML = renderComparisonDetail(data);
       detailContainer.scrollIntoView({ behavior: "smooth", block: "nearest" });
     } catch (err) {
-      detailContainer.innerHTML = `<p class="error-copy">No se pudo cargar el detalle.</p>`;
+      softNotice(detailContainer, "Detalle de seguimiento no disponible", () => showDetail(slateId));
     }
   }
 
   async function refresh() {
     try {
       const data = await fetchJson("/slates/live/dashboard");
-      if (!data) throw new Error("empty");
+      if (!data) throw new Error("unavailable");
+      const open = Array.isArray(data.open) ? data.open : [];
+      const closed = Array.isArray(data.closed) ? data.closed : [];
+      if (open.length === 0 && closed.length === 0) {
+        // OK response, just nothing to track yet — not an error.
+        container.innerHTML = `<p class="mini-copy">Sin partidos en seguimiento por ahora.</p>`;
+        return;
+      }
       container.innerHTML = renderLiveDashboard(data);
       container.querySelectorAll(".track-detail-btn").forEach((btn) => {
         btn.addEventListener("click", () => showDetail(btn.dataset.slate));
       });
     } catch (err) {
-      container.innerHTML = `<p class="error-copy">No se pudo cargar el seguimiento.</p>`;
+      softNotice(container, "Seguimiento no disponible", () => refresh());
     }
   }
 

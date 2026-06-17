@@ -488,7 +488,10 @@ class TicketRecommendationService:
         )
 
         level = "low"
-        label = "Fijo defendible"
+        # Avoid the loaded word "Fijo" (Fase 3.1): the boleta strategy badge
+        # is the source of truth for SIMPLE vs coverage. This label is the
+        # ticket-validation bucket, not a model signal.
+        label = "Defendible (simple)"
         recommendation = "Puede quedar simple si no hay presupuesto para cobertura."
         if (
             sanity_forces_high

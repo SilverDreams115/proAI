@@ -187,14 +187,26 @@ async def test_frontend_shell_supports_eight_match_slate(client) -> None:
     assert "function safeFetch" in api_client_response.text
     assert "function loginWithPassword" in api_client_response.text
     assert js_response.status_code == 200
-    assert "<strong>L</strong>" in js_response.text
-    assert "<strong>E</strong>" in js_response.text
-    assert "<strong>V</strong>" in js_response.text
+    # Outcomes are rendered as L/E/V via displayOutcome, never positional 1/X/2.
+    assert "displayOutcome(key)" in js_response.text
     assert "<strong>1</strong>" not in js_response.text
     assert "doubleLimitForSlate" in js_response.text
     assert "chooseModelDoubleMatchIds" in js_response.text
     assert "ticketRecommendationFor" in js_response.text
-    assert "Riesgo del partido" in js_response.text
+    # Fase 3 UI/UX: semantic decision panel. Señal base / Estrategia / Riesgo
+    # are distinct; the ambiguous "Fijo" type badge is gone; clean prob bars.
+    assert "badge-signal" in js_response.text
+    assert "prob-bar" in js_response.text
+    assert "Acción recomendada" in js_response.text
+    assert "Confianza visible" in js_response.text
+    assert "dh-badge-type" not in js_response.text
+    # Fase 3.1: strategy comes from the backend field (resolveTicketStrategy);
+    # counters use product fields, NOT raw confidence_band; the per-card tech
+    # accordion has a guard so it never selects the card.
+    assert "resolveTicketStrategy" in js_response.text
+    assert "isTechAccordionTarget" in js_response.text
+    assert 'confidence_band === "high"' not in js_response.text
+    assert "Fijo defendible" not in js_response.text
     assert "Calidad de datos" in js_response.text
     assert "Estado de producción" in js_response.text
     assert "rutas HTTP cerradas" in js_response.text

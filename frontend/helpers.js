@@ -217,6 +217,154 @@ export function flagLabel(flag) {
   return SANITY_FLAG_LABELS[flag] || String(flag).toLowerCase().replace(/_/g, " ");
 }
 
+// --- Semantic separation (Fase 3 UI/UX) ------------------------------------
+// base_pick (señal del modelo) / ticket_strategy (estrategia de boleta) /
+// risk_level / visible_confidence are DISTINCT concepts. These pure helpers
+// are the single source of truth so the card and the right panel can never
+// contradict each other (e.g. "Fijo" while the panel says "No dejar simple").
+
+// Señal base del modelo: L / E / V. Replaces the old "Fijo" badge, which
+// conflated the model signal with the ticket strategy.
+export function basePickBadge(outcomeCode) {
+  const letter = { "1": "L", X: "E", "2": "V" }[outcomeCode] || outcomeCode || "?";
+  return { letter, label: `Señal ${letter}` };
+}
+
+// Estrategia de boleta — NEVER "Fijo". Rule: only SIMPLE renders as a plain
+// single; everything else is an explicit coverage instruction.
+export function ticketStrategyFrom({ finalStatus, validationLevel, decisionType } = {}) {
+  const status = String(finalStatus || "").toUpperCase();
+  if (status === "BLOQUEADO") return { key: "EVITAR", label: "Evitar", tone: "bad" };
+  if (decisionType === "triple") return { key: "TRIPLE", label: "Triple recomendado", tone: "warn" };
+  if (decisionType === "double") return { key: "DOBLE", label: "Doble recomendado", tone: "warn" };
+  if (validationLevel === "high" || status === "REVISAR") {
+    return { key: "NO_SIMPLE", label: "No dejar simple", tone: "bad" };
+  }
+  if (validationLevel === "medium") return { key: "DOBLE", label: "Doble recomendado", tone: "warn" };
+  return { key: "SIMPLE", label: "Simple", tone: "ok" };
+}
+
+const TICKET_STRATEGY_LABELS = {
+  SIMPLE: "Simple",
+  DOBLE_RECOMENDADO: "Doble recomendado",
+  TRIPLE_RECOMENDADO: "Triple recomendado",
+  NO_DEJAR_SIMPLE: "No dejar simple",
+  EVITAR: "Evitar",
+};
+
+export function ticketStrategyLabelFromKey(key) {
+  return TICKET_STRATEGY_LABELS[key] || "No dejar simple";
+}
+
+export function ticketStrategyToneFromKey(key) {
+  if (key === "SIMPLE") return "ok";
+  if (key === "DOBLE_RECOMENDADO" || key === "TRIPLE_RECOMENDADO") return "warn";
+  return "bad"; // NO_DEJAR_SIMPLE / EVITAR
+}
+
+// Single entry point the UI uses to render the boleta strategy. PREFERS the
+// backend-authoritative `prediction.ticket_strategy`; only upgrades to a
+// TRIPLE when the optimizer actually allocated a triple (coverage refinement,
+// never a safety downgrade). Falls back to the legacy client derivation only
+// for old responses that predate the backend field.
+export function resolveTicketStrategy({ prediction, validationLevel, decisionType } = {}) {
+  const pred = prediction || {};
+  const backendKey = typeof pred.ticket_strategy === "string" ? pred.ticket_strategy : "";
+  if (backendKey) {
+    let key = backendKey;
+    if (decisionType === "triple" && (key === "DOBLE_RECOMENDADO" || key === "NO_DEJAR_SIMPLE")) {
+      key = "TRIPLE_RECOMENDADO";
+    }
+    const label =
+      key === backendKey && pred.ticket_strategy_label
+        ? pred.ticket_strategy_label
+        : ticketStrategyLabelFromKey(key);
+    return { key, label, tone: ticketStrategyToneFromKey(key), reason: pred.ticket_strategy_reason || "" };
+  }
+  // Fallback: old responses without ticket_strategy.
+  return ticketStrategyFrom({ finalStatus: pred.final_status, validationLevel, decisionType });
+}
+
+export function riskLevelLabel(level) {
+  return { low: "Bajo", medium: "Medio", high: "Alto" }[String(level || "").toLowerCase()] || "—";
+}
+
+export function riskTone(level) {
+  const v = String(level || "").toLowerCase();
+  if (v === "low") return "ok";
+  if (v === "medium") return "warn";
+  return "bad";
+}
+
+// Authoritative visible confidence — consumes the backend `visible_confidence`
+// field. Display-cased. Never recompute "Alta" from confidence_band here.
+export function visibleConfidenceLabel(value) {
+  return (
+    { alta: "Alta", media: "Media", "media-baja": "Media-baja", baja: "Baja" }[
+      String(value || "").toLowerCase()
+    ] || "Baja"
+  );
+}
+
+export function confidenceTone(value) {
+  const v = String(value || "").toLowerCase();
+  if (v === "alta") return "ok";
+  if (v === "media") return "warn";
+  return "bad";
+}
+
+// Decision status bucket for the chip/tab vocabulary.
+export function decisionStatusLabel(finalStatus) {
+  return (
+    { FIJO: "Listo", LISTO: "Listo", CAUTELA: "Cautela", REVISAR: "Revisar", BLOQUEADO: "Bloqueado" }[
+      String(finalStatus || "").toUpperCase()
+    ] || "Revisar"
+  );
+}
+
+// Keep at most `max` chips visible; report how many were hidden so the UI
+// can render a "+N detalles" affordance into the accordion.
+export function limitChips(items, max = 3) {
+  const list = Array.isArray(items) ? items.filter(Boolean) : [];
+  return { visible: list.slice(0, max), hiddenCount: Math.max(0, list.length - max) };
+}
+
+// True when a click target is inside a card's technical accordion. The card
+// click handler uses this to bail BEFORE selecting the card, so opening
+// "Detalles técnicos" never swaps the right panel or re-selects the match.
+export function isTechAccordionTarget(target) {
+  return Boolean(target && typeof target.closest === "function" && target.closest(".card-tech"));
+}
+
+// --- Product-first signals (Fase 3.2) --------------------------------------
+// Client decision/presentation logic must derive from PRODUCT fields, not the
+// raw model band. `confidence_band` survives ONLY as a clearly isolated legacy
+// fallback (pre-sanity responses) and as a technical "Banda modelo" display.
+
+const FINAL_STATUS_TO_TIER = { FIJO: "high", LISTO: "medium", REVISAR: "low", BLOQUEADO: "blocked" };
+
+// A high/medium/low/blocked "tier" derived from the guardrailed final_status
+// (which already folds in flags + risk). Falls back to the raw confidence_band
+// only when no product status exists (old responses).
+export function effectiveConfidenceTier(prediction) {
+  const pred = prediction || {};
+  const fs = String(pred.final_status || "").toUpperCase();
+  if (fs && FINAL_STATUS_TO_TIER[fs]) return FINAL_STATUS_TO_TIER[fs];
+  return pred.confidence_band || "low"; // legacy fallback
+}
+
+// Whether a match may be left as a confident single (fijo/simple) in the
+// model's ticket math. The backend ticket_strategy is authoritative: only
+// SIMPLE qualifies. Legacy fallback uses the old confidence_band heuristic.
+export function predictionAllowsConfidentSingle(prediction) {
+  const pred = prediction || {};
+  if (typeof pred.ticket_strategy === "string" && pred.ticket_strategy) {
+    return pred.ticket_strategy === "SIMPLE";
+  }
+  const band = pred.confidence_band || "low"; // legacy fallback
+  return band !== "low" && band !== "blocked";
+}
+
 export function linkedEvidenceCount(match) {
   // The legacy implementation reads three independent signals (the
   // raw evidence_items count on the feature payload, the length of

@@ -15,6 +15,17 @@ import {
   buildQualityTooltip,
   drawRiskSummary,
   flagLabel,
+  basePickBadge,
+  ticketStrategyFrom,
+  resolveTicketStrategy,
+  ticketStrategyToneFromKey,
+  riskLevelLabel,
+  visibleConfidenceLabel,
+  confidenceTone,
+  limitChips,
+  isTechAccordionTarget,
+  effectiveConfidenceTier,
+  predictionAllowsConfidentSingle,
 } from "../helpers.js";
 
 describe("formatPercent", () => {
@@ -321,5 +332,182 @@ describe("drawRiskSummary", () => {
     const risk = drawRiskSummary(pred(0.41, 0.27, 0.32), { full: false }, provided);
     expect(risk.pDraw).toBe(0.27);
     expect(risk.coveredFull).toBe(true); // backend wins over fallback
+  });
+});
+
+describe("semantic separation (Fase 3 UI/UX)", () => {
+  it("base pick badge renders 'Señal X', never 'Fijo'", () => {
+    expect(basePickBadge("1")).toEqual({ letter: "L", label: "Señal L" });
+    expect(basePickBadge("X")).toEqual({ letter: "E", label: "Señal E" });
+    expect(basePickBadge("2")).toEqual({ letter: "V", label: "Señal V" });
+    expect(basePickBadge("1").label).not.toContain("Fijo");
+  });
+
+  it("ticket strategy never returns 'Fijo' and maps coverage correctly", () => {
+    // Test 1: strategy != SIMPLE must not be a plain single labelled "Fijo".
+    const blocked = ticketStrategyFrom({ finalStatus: "BLOQUEADO" });
+    expect(blocked.key).toBe("EVITAR");
+    const revisar = ticketStrategyFrom({ finalStatus: "REVISAR", validationLevel: "low", decisionType: "fixed" });
+    expect(revisar.key).toBe("NO_SIMPLE");
+    expect(revisar.label).toBe("No dejar simple");
+    const high = ticketStrategyFrom({ finalStatus: "LISTO", validationLevel: "high", decisionType: "fixed" });
+    expect(high.key).toBe("NO_SIMPLE");
+    expect(ticketStrategyFrom({ validationLevel: "low", decisionType: "double" }).key).toBe("DOBLE");
+    expect(ticketStrategyFrom({ validationLevel: "low", decisionType: "triple" }).key).toBe("TRIPLE");
+    // Only a clean simple becomes SIMPLE.
+    const simple = ticketStrategyFrom({ finalStatus: "FIJO", validationLevel: "low", decisionType: "fixed" });
+    expect(simple.key).toBe("SIMPLE");
+    expect(simple.label).toBe("Simple");
+    // None of the labels is ever the ambiguous word "Fijo".
+    for (const status of ["FIJO", "LISTO", "REVISAR", "BLOQUEADO"]) {
+      for (const level of ["low", "medium", "high"]) {
+        for (const type of ["fixed", "double", "triple"]) {
+          const s = ticketStrategyFrom({ finalStatus: status, validationLevel: level, decisionType: type });
+          expect(s.label).not.toContain("Fijo");
+        }
+      }
+    }
+  });
+
+  it("visible confidence is rendered from backend, capped tones", () => {
+    expect(visibleConfidenceLabel("alta")).toBe("Alta");
+    expect(visibleConfidenceLabel("media-baja")).toBe("Media-baja");
+    expect(visibleConfidenceLabel("baja")).toBe("Baja");
+    expect(confidenceTone("alta")).toBe("ok");
+    expect(confidenceTone("media")).toBe("warn");
+    expect(confidenceTone("media-baja")).toBe("bad");
+    expect(confidenceTone("baja")).toBe("bad");
+  });
+
+  it("risk label maps low/medium/high to Spanish", () => {
+    expect(riskLevelLabel("low")).toBe("Bajo");
+    expect(riskLevelLabel("medium")).toBe("Medio");
+    expect(riskLevelLabel("high")).toBe("Alto");
+  });
+
+  it("limitChips caps at 3 and reports hidden count (Test 3)", () => {
+    const eight = ["a", "b", "c", "d", "e", "f", "g", "h"];
+    const { visible, hiddenCount } = limitChips(eight, 3);
+    expect(visible).toHaveLength(3);
+    expect(hiddenCount).toBe(5);
+    // Fewer than max -> nothing hidden.
+    expect(limitChips(["x"], 3)).toEqual({ visible: ["x"], hiddenCount: 0 });
+    // Non-array safe.
+    expect(limitChips(null, 3)).toEqual({ visible: [], hiddenCount: 0 });
+  });
+});
+
+describe("resolveTicketStrategy (backend-authoritative, Fase 3.1)", () => {
+  it("renders strategy from the backend field, not the client derivation", () => {
+    const s = resolveTicketStrategy({
+      prediction: { ticket_strategy: "NO_DEJAR_SIMPLE", ticket_strategy_label: "No dejar simple", final_status: "REVISAR" },
+      validationLevel: "low",
+      decisionType: "fixed",
+    });
+    expect(s.key).toBe("NO_DEJAR_SIMPLE");
+    expect(s.label).toBe("No dejar simple");
+    expect(s.tone).toBe("bad");
+  });
+
+  it("upgrades to TRIPLE only when the optimizer allocates a triple (coverage refinement)", () => {
+    const s = resolveTicketStrategy({
+      prediction: { ticket_strategy: "DOBLE_RECOMENDADO" },
+      decisionType: "triple",
+    });
+    expect(s.key).toBe("TRIPLE_RECOMENDADO");
+    expect(s.label).toBe("Triple recomendado");
+  });
+
+  it("never downgrades EVITAR even if optimizer says triple", () => {
+    const s = resolveTicketStrategy({ prediction: { ticket_strategy: "EVITAR" }, decisionType: "triple" });
+    expect(s.key).toBe("EVITAR");
+  });
+
+  it("falls back to client derivation for old responses without the field", () => {
+    const s = resolveTicketStrategy({
+      prediction: { final_status: "REVISAR" },
+      validationLevel: "low",
+      decisionType: "fixed",
+    });
+    // Legacy ticketStrategyFrom maps REVISAR -> NO_SIMPLE label "No dejar simple".
+    expect(s.label).toBe("No dejar simple");
+  });
+
+  it("never produces the word 'Fijo' in any label", () => {
+    for (const key of ["SIMPLE", "DOBLE_RECOMENDADO", "TRIPLE_RECOMENDADO", "NO_DEJAR_SIMPLE", "EVITAR"]) {
+      const s = resolveTicketStrategy({ prediction: { ticket_strategy: key } });
+      expect(s.label).not.toContain("Fijo");
+    }
+  });
+
+  it("ticketStrategyToneFromKey: SIMPLE ok, doble/triple warn, no-simple/evitar bad", () => {
+    expect(ticketStrategyToneFromKey("SIMPLE")).toBe("ok");
+    expect(ticketStrategyToneFromKey("DOBLE_RECOMENDADO")).toBe("warn");
+    expect(ticketStrategyToneFromKey("TRIPLE_RECOMENDADO")).toBe("warn");
+    expect(ticketStrategyToneFromKey("NO_DEJAR_SIMPLE")).toBe("bad");
+    expect(ticketStrategyToneFromKey("EVITAR")).toBe("bad");
+  });
+});
+
+describe("isTechAccordionTarget (accordion must not select card)", () => {
+  it("returns true when the click is inside a .card-tech accordion", () => {
+    document.body.innerHTML = `
+      <article data-match-card="m1">
+        <details class="card-tech"><summary id="sum">+3 detalles</summary><ul><li id="li">x</li></ul></details>
+      </article>`;
+    expect(isTechAccordionTarget(document.getElementById("sum"))).toBe(true);
+    expect(isTechAccordionTarget(document.getElementById("li"))).toBe(true);
+  });
+
+  it("returns false for a normal card click outside the accordion", () => {
+    document.body.innerHTML = `<article data-match-card="m1"><h3 id="title">A vs B</h3></article>`;
+    expect(isTechAccordionTarget(document.getElementById("title"))).toBe(false);
+  });
+
+  it("is null-safe", () => {
+    expect(isTechAccordionTarget(null)).toBe(false);
+    expect(isTechAccordionTarget({})).toBe(false);
+  });
+});
+
+describe("product-first signals (Fase 3.2 — no raw confidence_band in decisions)", () => {
+  it("predictionAllowsConfidentSingle: ticket_strategy beats confidence_band=high", () => {
+    // confidence_band high but strategy NO_DEJAR_SIMPLE -> NOT a confident single.
+    expect(
+      predictionAllowsConfidentSingle({ confidence_band: "high", ticket_strategy: "NO_DEJAR_SIMPLE" }),
+    ).toBe(false);
+    // SIMPLE -> allowed.
+    expect(
+      predictionAllowsConfidentSingle({ confidence_band: "low", ticket_strategy: "SIMPLE" }),
+    ).toBe(true);
+  });
+
+  it("predictionAllowsConfidentSingle: LOW_EVIDENCE+FALLBACK (via DOBLE strategy) beats band high", () => {
+    // The sanity layer turns flags into a non-SIMPLE strategy; a band-high
+    // friendly with those flags must not be a confident single.
+    expect(
+      predictionAllowsConfidentSingle({ confidence_band: "high", ticket_strategy: "DOBLE_RECOMENDADO" }),
+    ).toBe(false);
+  });
+
+  it("predictionAllowsConfidentSingle: legacy fallback when no ticket_strategy", () => {
+    expect(predictionAllowsConfidentSingle({ confidence_band: "high" })).toBe(true);
+    expect(predictionAllowsConfidentSingle({ confidence_band: "low" })).toBe(false);
+    expect(predictionAllowsConfidentSingle({ confidence_band: "blocked" })).toBe(false);
+    expect(predictionAllowsConfidentSingle({})).toBe(false); // safest default
+  });
+
+  it("effectiveConfidenceTier: final_status overrides confidence_band", () => {
+    // Band high but REVISAR -> low tier (product wins).
+    expect(effectiveConfidenceTier({ confidence_band: "high", final_status: "REVISAR" })).toBe("low");
+    expect(effectiveConfidenceTier({ confidence_band: "high", final_status: "BLOQUEADO" })).toBe("blocked");
+    expect(effectiveConfidenceTier({ confidence_band: "low", final_status: "FIJO" })).toBe("high");
+    expect(effectiveConfidenceTier({ confidence_band: "low", final_status: "LISTO" })).toBe("medium");
+  });
+
+  it("effectiveConfidenceTier: legacy fallback to confidence_band when no final_status", () => {
+    expect(effectiveConfidenceTier({ confidence_band: "high" })).toBe("high");
+    expect(effectiveConfidenceTier({ confidence_band: "blocked" })).toBe("blocked");
+    expect(effectiveConfidenceTier({})).toBe("low");
   });
 });

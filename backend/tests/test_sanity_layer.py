@@ -21,6 +21,8 @@ from app.services.sanity_service import (
     SlateMatchObservation,
     apply_sanity_layer,
     build_slate_distribution_report,
+    compute_ticket_strategy,
+    compute_visible_confidence,
 )
 
 
@@ -221,6 +223,146 @@ def test_blocked_band_stays_bloqueado() -> None:
     assert result.final_status is FinalStatus.BLOQUEADO
     assert SanityFlag.BLOCKED_INSUFFICIENT_DATA in result.flags
     assert result.risk_level is RiskLevel.HIGH
+
+
+def test_visible_confidence_is_never_alta_with_risk_flags() -> None:
+    for flag in (
+        SanityFlag.LOW_EVIDENCE,
+        SanityFlag.FALLBACK_USED,
+        SanityFlag.EXTREME_PROBABILITY_WITHOUT_EVIDENCE,
+        SanityFlag.SUSPICIOUS_CLASS_PROBABILITY,
+        SanityFlag.BLOCKED_INSUFFICIENT_DATA,
+    ):
+        level, _ = compute_visible_confidence(
+            final_status=FinalStatus.FIJO, risk_level=RiskLevel.LOW, flags=[flag]
+        )
+        assert level != "alta", flag
+
+
+def test_visible_confidence_friendly_capped_at_media() -> None:
+    level, reasons = compute_visible_confidence(
+        final_status=FinalStatus.FIJO,
+        risk_level=RiskLevel.LOW,
+        flags=[SanityFlag.INTERNATIONAL_FRIENDLY],
+    )
+    assert level == "media"
+    assert "Amistoso internacional" in reasons
+
+
+def test_visible_confidence_bloqueado_is_baja_and_revisar_capped() -> None:
+    blocked, _ = compute_visible_confidence(
+        final_status=FinalStatus.BLOQUEADO, risk_level=RiskLevel.HIGH, flags=[]
+    )
+    assert blocked == "baja"
+    revisar, _ = compute_visible_confidence(
+        final_status=FinalStatus.REVISAR, risk_level=RiskLevel.HIGH, flags=[]
+    )
+    assert revisar in {"media-baja", "baja"}
+
+
+def test_visible_confidence_alta_only_for_clean_fijo() -> None:
+    level, reasons = compute_visible_confidence(
+        final_status=FinalStatus.FIJO, risk_level=RiskLevel.LOW, flags=[]
+    )
+    assert level == "alta"
+    assert reasons == []
+
+
+def test_confidence_explanation_capped_at_three() -> None:
+    _, reasons = compute_visible_confidence(
+        final_status=FinalStatus.REVISAR,
+        risk_level=RiskLevel.HIGH,
+        flags=[
+            SanityFlag.BLOCKED_INSUFFICIENT_DATA,
+            SanityFlag.SUSPICIOUS_CLASS_PROBABILITY,
+            SanityFlag.EXTREME_PROBABILITY_WITHOUT_EVIDENCE,
+            SanityFlag.LOW_EVIDENCE,
+            SanityFlag.INTERNATIONAL_FRIENDLY,
+            SanityFlag.FALLBACK_USED,
+        ],
+    )
+    assert len(reasons) == 3
+
+
+def test_apply_sanity_layer_exposes_visible_confidence() -> None:
+    result = apply_sanity_layer(
+        probabilities={"home": 0.12, "draw": 0.09, "away": 0.79},
+        confidence_band="high",
+        evidence_level=EvidenceLevel.LOW,
+        is_international_friendly=True,
+        fallback_used=True,
+        recommended_outcome="2",
+    )
+    assert result.visible_confidence != "alta"
+    assert isinstance(result.confidence_explanation, list)
+    assert len(result.confidence_explanation) <= 3
+
+
+def test_ticket_strategy_never_simple_with_risk_flags() -> None:
+    for flag in (
+        SanityFlag.LOW_EVIDENCE,
+        SanityFlag.FALLBACK_USED,
+        SanityFlag.EXTREME_PROBABILITY_WITHOUT_EVIDENCE,
+        SanityFlag.SUSPICIOUS_CLASS_PROBABILITY,
+        SanityFlag.BLOCKED_INSUFFICIENT_DATA,
+    ):
+        strategy, _, _ = compute_ticket_strategy(
+            final_status=FinalStatus.FIJO, risk_level=RiskLevel.MEDIUM, flags=[flag]
+        )
+        assert strategy != "SIMPLE", flag
+
+
+def test_ticket_strategy_high_risk_is_no_dejar_simple() -> None:
+    strategy, label, reason = compute_ticket_strategy(
+        final_status=FinalStatus.FIJO, risk_level=RiskLevel.HIGH, flags=[]
+    )
+    assert strategy == "NO_DEJAR_SIMPLE"
+    assert label == "No dejar simple"
+    assert reason
+
+
+def test_ticket_strategy_bloqueado_is_evitar() -> None:
+    strategy, label, _ = compute_ticket_strategy(
+        final_status=FinalStatus.BLOQUEADO, risk_level=RiskLevel.HIGH, flags=[]
+    )
+    assert strategy == "EVITAR"
+    assert label == "Evitar"
+
+
+def test_ticket_strategy_revisar_is_no_dejar_simple() -> None:
+    strategy, _, _ = compute_ticket_strategy(
+        final_status=FinalStatus.REVISAR, risk_level=RiskLevel.LOW, flags=[]
+    )
+    assert strategy == "NO_DEJAR_SIMPLE"
+
+
+def test_ticket_strategy_clean_can_be_simple() -> None:
+    strategy, label, _ = compute_ticket_strategy(
+        final_status=FinalStatus.FIJO, risk_level=RiskLevel.LOW, flags=[]
+    )
+    assert strategy == "SIMPLE"
+    assert label == "Simple"
+
+
+def test_ticket_strategy_label_never_contains_fijo() -> None:
+    for status in FinalStatus:
+        for risk in RiskLevel:
+            _, label, _ = compute_ticket_strategy(final_status=status, risk_level=risk, flags=[])
+            assert "Fijo" not in label
+
+
+def test_apply_sanity_layer_exposes_ticket_strategy() -> None:
+    result = apply_sanity_layer(
+        probabilities={"home": 0.12, "draw": 0.09, "away": 0.79},
+        confidence_band="high",
+        evidence_level=EvidenceLevel.LOW,
+        is_international_friendly=True,
+        fallback_used=True,
+        recommended_outcome="2",
+    )
+    assert result.ticket_strategy != "SIMPLE"
+    assert result.ticket_strategy_label
+    assert "Fijo" not in result.ticket_strategy_label
 
 
 def test_high_evidence_strong_pick_can_be_fijo() -> None:
