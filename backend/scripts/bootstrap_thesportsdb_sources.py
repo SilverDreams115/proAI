@@ -55,6 +55,24 @@ THESPORTSDB_LEAGUES: list[tuple[str, str, str, list[str]]] = [
     # Swedish Allsvenskan (top tier): covers Degerfors/Brommapojkarna and
     # other Nordic Progol fixtures. Calendar-year season.
     ("4347", "Swedish Allsvenskan", "Sweden", ["2024", "2025", "2026"]),
+    # World Cup Qualifying confederation leagues (Block 3 — evidence quality
+    # pass). These provide historical form data for national teams that
+    # rarely appear in International Friendlies (Brazil, Paraguay, Ecuador,
+    # African sides, Asian sides). The data predates the 211-day anchor
+    # window for PG-2336 kickoffs but enriches the analysis panel with
+    # real match history. All competition names normalize to
+    # "international-friendlies" via COMPETITION_ALIAS_SLUGS.
+    # CONMEBOL WCQ 2026: last qualifier Sep 9 2025 — Brazil, Paraguay,
+    # Ecuador, Uruguay, etc.
+    ("5515", "World Cup Qualifying CONMEBOL", "South America", ["2026"]),
+    # CAF WCQ 2026: last qualifier Oct 13 2025 — Egypt, Ivory Coast,
+    # Senegal, Morocco, etc.
+    ("5514", "World Cup Qualifying CAF", "Africa", ["2026"]),
+    # AFC WCQ 2026: last qualifier Jun 10 2025 — Japan, South Korea,
+    # Australia, etc.
+    ("5513", "World Cup Qualifying AFC", "Asia", ["2026"]),
+    # CONCACAF WCQ 2026: covers Canada, Mexico, USA qualifying rounds.
+    ("5516", "World Cup Qualifying CONCACAF", "CONCACAF", ["2026"]),
 ]
 
 

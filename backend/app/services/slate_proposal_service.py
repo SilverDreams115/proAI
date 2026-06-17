@@ -21,6 +21,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -40,6 +41,22 @@ from app.services.slate_service import SlateService
 
 logger = logging.getLogger("proai.slate_proposal")
 
+# Prefix used when building the draw_code for a promoted slate, keyed by
+# week_type. Must stay consistent with SlateDiscoveryService._default_draw_code.
+_WEEK_TYPE_PREFIX: dict[str, str] = {
+    "weekend": "PG",
+    "midweek": "PGM",
+    "revancha": "PGR",
+}
+
+
+@dataclass
+class PromotionResult:
+    """Returned by promote_proposal to distinguish fresh creation from
+    idempotent re-promotion of an already-active slate."""
+    slate: ProgolSlateModel
+    already_active: bool
+
 
 class SlateProposalService:
     """Reads the canonical LN Progol guide PDF and persists proposals.
@@ -55,10 +72,11 @@ class SlateProposalService:
         self._connector_factory = connector_factory
 
     def observe(self) -> ProgolSlateProposalModel | None:
-        """Fetch the live LN guide and record an observation. Returns the
-        stored proposal row, or None when the PDF didn't parse cleanly
-        (no draw_code or empty fixtures list). A None result is the
-        worker's signal that this cycle was a no-op — don't alert."""
+        """Fetch the live LN weekend guide and record an observation.
+
+        Returns the stored proposal row, or None when the PDF didn't parse
+        cleanly (no draw_code or < 14 fixtures). None is the worker's
+        signal that this cycle was a no-op — don't alert."""
         from app.connectors.progol_guia_pdf import ProgolGuiaPdfConnector
 
         factory = self._connector_factory or (
@@ -94,6 +112,50 @@ class SlateProposalService:
             payload=payload,
         )
 
+    def observe_ms(self) -> ProgolSlateProposalModel | None:
+        """Fetch the live LN Progol Media Semana guide and record an observation.
+
+        Mirrors observe() but targets the MS PDF (9 fixtures, midweek).
+        Returns None when the PDF yields fewer than 9 fixtures or no
+        draw_code — worker treats None as a silent no-op."""
+        from app.connectors.progol_guia_pdf import ProgolMsGuiaPdfConnector
+
+        factory = self._connector_factory or (
+            lambda: ProgolMsGuiaPdfConnector(name="progol-guia-ln-ms")
+        )
+        connector = factory()
+        try:
+            documents = connector.fetch()
+        except Exception as exc:  # pragma: no cover
+            logger.warning(
+                "progol MS guide fetch failed",
+                extra={"event": "guia_ms_fetch_failed", "error": str(exc)},
+            )
+            return None
+        if not documents:
+            return None
+        payload = documents[0].payload
+        draw_code = payload.get("draw_code")
+        fixtures = payload.get("fixtures") or []
+        if not draw_code or len(fixtures) < 9:
+            logger.info(
+                "progol MS guide observation rejected: incomplete parse",
+                extra={
+                    "event": "guia_ms_observation_rejected",
+                    "draw_code": draw_code,
+                    "fixture_count": len(fixtures),
+                },
+            )
+            return None
+        return self._record_observation(
+            draw_code=draw_code,
+            source_name=connector.name,
+            source_url=documents[0].source_url,
+            week_type="midweek",
+            closes_at_iso=payload.get("registration_closes_at"),
+            payload=payload,
+        )
+
     def list_proposals(self, status: str | None = None) -> list[ProgolSlateProposalModel]:
         stmt = select(ProgolSlateProposalModel).order_by(
             ProgolSlateProposalModel.last_seen_at.desc()
@@ -120,7 +182,7 @@ class SlateProposalService:
         proposal: ProgolSlateProposalModel,
         *,
         actor: str = "operator",
-    ) -> ProgolSlateModel:
+    ) -> PromotionResult:
         """Create a real progol_slates row from a validated proposal.
 
         Pair by pair: try to find a real upcoming match in the DB. When
@@ -129,6 +191,11 @@ class SlateProposalService:
         the model can score what it can. The `actor` parameter is
         recorded in logs so we can distinguish operator clicks from
         worker auto-promotions during incident review.
+
+        Returns a PromotionResult with already_active=True when a slate
+        for this draw_code already exists with the same composition_hash
+        — the proposal is still marked "promoted" (linked to the
+        existing slate) so repeated calls are idempotent.
 
         Raises ValueError when the proposal isn't in a promotable state
         — callers translate that into a 409 at the HTTP boundary.
@@ -231,15 +298,56 @@ class SlateProposalService:
                     )
                 )
 
+        prefix = _WEEK_TYPE_PREFIX.get(proposal.week_type, "PG")
+        formatted_draw_code = f"{prefix}-{proposal.draw_code}"
         create_payload = ProgolSlateCreate(
             label=f"Progol {proposal.draw_code}",
-            draw_code=f"PG-{proposal.draw_code}",
+            draw_code=formatted_draw_code,
             week_type=proposal.week_type,
             registration_closes_at=proposal.registration_closes_at,
             is_archived=False,
             matches=matches,
         )
-        slate_service = SlateService(SlateRepository(self.session))
+
+        # Guard: if a non-archived slate already exists for this draw_code,
+        # compare the RAW fixture signature of the current proposal against the
+        # signature of whichever proposal previously promoted that slate.
+        # Using the raw PDF signature (draw_code + ordered home/away names) avoids
+        # false hash mismatches caused by timezone-stripping in SQLite tests or by
+        # differences in fixture resolver output across calls.
+        slate_repo = SlateRepository(self.session)
+        existing_slate = slate_repo.find_by_draw_code(formatted_draw_code)
+        if existing_slate is not None and not existing_slate.is_archived:
+            current_sig = self._signature(payload)
+            existing_promoter = self.session.scalar(
+                select(ProgolSlateProposalModel)
+                .where(
+                    ProgolSlateProposalModel.promoted_slate_id == existing_slate.id,
+                    ProgolSlateProposalModel.status == "promoted",
+                )
+                .limit(1)
+            )
+            if existing_promoter is not None:
+                prior_sig = self._signature(json.loads(existing_promoter.payload_json))
+                if prior_sig == current_sig:
+                    proposal.status = "promoted"
+                    proposal.promoted_slate_id = existing_slate.id
+                    self.session.flush()
+                    logger.info(
+                        "progol proposal promote skipped: slate already active with same raw fixtures",
+                        extra={
+                            "event": "progol_proposal_already_active",
+                            "draw_code": proposal.draw_code,
+                            "actor": actor,
+                            "slate_id": existing_slate.id,
+                        },
+                    )
+                    return PromotionResult(
+                        slate=slate_repo.get_slate(existing_slate.id),  # type: ignore[arg-type]
+                        already_active=True,
+                    )
+
+        slate_service = SlateService(slate_repo)
         slate = slate_service.create_slate(create_payload)
 
         proposal.status = "promoted"
@@ -258,7 +366,7 @@ class SlateProposalService:
                 "slate_id": slate.id,
             },
         )
-        return slate
+        return PromotionResult(slate=slate, already_active=False)
 
     def _record_observation(
         self,

@@ -13,6 +13,8 @@ import {
   sortedOutcomes,
   linkedEvidenceCount,
   buildQualityTooltip,
+  drawRiskSummary,
+  flagLabel,
 } from "../helpers.js";
 
 describe("formatPercent", () => {
@@ -169,6 +171,39 @@ describe("sortedOutcomes", () => {
     // Order is stable when all values tie.
     expect(out.map((o) => o.key)).toEqual(["1", "X", "2"]);
   });
+
+  it("prefers the explicit sanity-layer L/E/V vector over legacy fields", () => {
+    // Raw model said V=0.79; the sanity layer capped the displayed V to
+    // 0.65. The renderer must show the FINAL (capped) value.
+    const prediction = {
+      home_probability: 0.13,
+      draw_probability: 0.08,
+      away_probability: 0.79,
+      probabilities: { L: 0.2, E: 0.15, V: 0.65 },
+    };
+    const out = sortedOutcomes(prediction);
+    expect(out[0].key).toBe("2");
+    expect(out[0].value).toBe(0.65);
+  });
+
+  it("falls back to legacy fields when the explicit vector is absent", () => {
+    const out = sortedOutcomes({ home_probability: 0.4, draw_probability: 0.35, away_probability: 0.25 });
+    expect(out.map((o) => o.key)).toEqual(["1", "X", "2"]);
+  });
+});
+
+describe("flagLabel", () => {
+  it("maps known sanity flags to Spanish labels", () => {
+    expect(flagLabel("LOW_EVIDENCE")).toBe("evidencia baja");
+    expect(flagLabel("INTERNATIONAL_FRIENDLY")).toBe("amistoso internacional");
+    expect(flagLabel("EXTREME_PROBABILITY_WITHOUT_EVIDENCE")).toBe(
+      "probabilidad extrema sin evidencia",
+    );
+  });
+
+  it("degrades gracefully for unknown flags", () => {
+    expect(flagLabel("SOME_NEW_FLAG")).toBe("some new flag");
+  });
 });
 
 describe("linkedEvidenceCount", () => {
@@ -228,5 +263,63 @@ describe("buildQualityTooltip", () => {
       },
     ];
     expect(buildQualityTooltip(matches)).toContain("delgada");
+  });
+});
+
+describe("drawRiskSummary", () => {
+  const pred = (home, draw, away) => ({
+    home_probability: home,
+    draw_probability: draw,
+    away_probability: away,
+  });
+
+  it("flags empate vivo at p_draw >= 0.25 (not fuerte)", () => {
+    const risk = drawRiskSummary(pred(0.5, 0.25, 0.25), {});
+    expect(risk.isLive).toBe(true);
+    expect(risk.isStrong).toBe(false);
+  });
+
+  it("flags empate fuerte at p_draw >= 0.30", () => {
+    const risk = drawRiskSummary(pred(0.03, 0.33, 0.64), {});
+    expect(risk.isLive).toBe(true);
+    expect(risk.isStrong).toBe(true);
+    expect(risk.drawRank).toBe(2); // behind away (0.64)
+  });
+
+  it("does not flag below the live threshold", () => {
+    const risk = drawRiskSummary(pred(0.52, 0.24, 0.24), {});
+    expect(risk.isLive).toBe(false);
+    expect(risk.isStrong).toBe(false);
+  });
+
+  it("ranks the draw third when it is least likely", () => {
+    const risk = drawRiskSummary(pred(0.52, 0.12, 0.37), {});
+    expect(risk.drawRank).toBe(3);
+  });
+
+  it("reads X coverage from the computed coverage map", () => {
+    const risk = drawRiskSummary(pred(0.59, 0.25, 0.16), {
+      simple: false,
+      doubles: true,
+      full: true,
+    });
+    expect(risk.coveredSimple).toBe(false);
+    expect(risk.coveredDoubles).toBe(true);
+    expect(risk.coveredFull).toBe(true);
+  });
+
+  it("prefers the backend-provided draw_risk block when present", () => {
+    const provided = {
+      p_draw: 0.27,
+      draw_rank: 2,
+      is_live_draw: true,
+      is_strong_draw: false,
+      covered_simple: false,
+      covered_doubles: true,
+      covered_full: true,
+    };
+    const risk = drawRiskSummary(pred(0.41, 0.27, 0.32), { full: false }, provided);
+    expect(risk.pDraw).toBe(0.27);
+    expect(risk.coveredFull).toBe(true); // backend wins over fallback
   });
 });

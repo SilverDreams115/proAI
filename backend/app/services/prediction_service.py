@@ -12,6 +12,11 @@ from app.repositories.evidence_dedupe import dedupe_evidence_items
 from app.repositories.result_repository import ResultRepository
 from app.services.feature_service import FeatureService
 from app.services.model_training_service import ModelTrainingService
+from app.services.sanity_service import (
+    SANITY_POLICY_VERSION,
+    EvidenceLevel,
+    apply_sanity_layer,
+)
 from app.schemas.prediction import MatchPredictionResponse
 
 
@@ -80,6 +85,20 @@ class PredictionService:
         if cached is not None:
             return cached
         responses: list[MatchPredictionResponse] = []
+
+        # Stable id of the artifact scoring this slate (same for every
+        # match), stamped into each audit row for traceability.
+        model_artifact_id: str | None = None
+        if self.training_service is not None:
+            artifact_id_fn = getattr(self.training_service, "current_model_artifact_id", None)
+            if artifact_id_fn is not None:
+                try:
+                    candidate = artifact_id_fn()
+                except Exception:  # pragma: no cover - never block scoring on audit metadata
+                    candidate = None
+                # Coerce to a plain str so the audit JSON stays serializable
+                # even when a test stubs the training service with a Mock.
+                model_artifact_id = candidate if isinstance(candidate, str) else None
 
         for slate_match in sorted(slate.matches, key=lambda item: item.position):
             match: MatchModel = slate_match.match
@@ -170,6 +189,49 @@ class PredictionService:
             )
             if knockout_note is not None:
                 rationale.insert(0, knockout_note)
+
+            # --- Fase 3/4: sanity guardrail layer --------------------------
+            # Runs over the model's post-processed vector and produces the
+            # auditable, guardrailed display fields. It never overwrites the
+            # raw numbers silently — both raw and final are surfaced.
+            evidence_level = self._evidence_level(feature_map, evidence_count)
+            is_friendly = self._is_international_friendly(competition_policy)
+            fallback_used = self._fallback_used(match)
+            sanity = apply_sanity_layer(
+                probabilities={
+                    "home": adjusted_home,
+                    "draw": adjusted_draw,
+                    "away": adjusted_away,
+                },
+                confidence_band=confidence_band,
+                evidence_level=evidence_level,
+                is_international_friendly=is_friendly,
+                fallback_used=fallback_used,
+                is_knockout=is_knockout,
+                recommended_outcome=recommended_outcome.value,
+            )
+            if sanity.flags:
+                rationale.append(
+                    "Capa de seguridad: "
+                    + ", ".join(sanity.flag_values())
+                    + f" -> estado {sanity.final_status.value} (riesgo {sanity.risk_level.value})."
+                )
+
+            # The single guardrailed (sanity-degraded) vector. It is the
+            # source of truth for BOTH what the UI displays and what the
+            # ticket optimizer decides on. The legacy positional fields
+            # below are set to these same safe values so no downstream
+            # consumer can be misled by raw model numbers — `raw_probabilities`
+            # keeps the original model output for traceability.
+            decision_home = sanity.final_probabilities["home"]
+            decision_draw = sanity.final_probabilities["draw"]
+            decision_away = sanity.final_probabilities["away"]
+            decision_vector = {"L": decision_home, "E": decision_draw, "V": decision_away}
+            raw_vector = {
+                "L": sanity.raw_probabilities["home"],
+                "E": sanity.raw_probabilities["draw"],
+                "V": sanity.raw_probabilities["away"],
+            }
             responses.append(
                 MatchPredictionResponse(
                     slate_id=slate.id,
@@ -179,9 +241,12 @@ class PredictionService:
                     home_team_name=match.home_team.name,
                     away_team_name=match.away_team.name,
                     generated_at=prediction.generated_at,
-                    home_probability=adjusted_home,
-                    draw_probability=adjusted_draw,
-                    away_probability=adjusted_away,
+                    # Legacy positional fields = guardrailed decision values
+                    # (not raw). This eliminates the contradiction where the
+                    # optimizer could consume raw probabilities via these.
+                    home_probability=decision_home,
+                    draw_probability=decision_draw,
+                    away_probability=decision_away,
                     recommended_outcome=recommended_outcome,
                     competition_readiness=str(competition_policy["competition_readiness"]),
                     live_pick_allowed=bool(competition_policy["live_pick_allowed"]),
@@ -189,14 +254,48 @@ class PredictionService:
                     confidence_band=confidence_band,
                     rationale=rationale,
                     is_knockout=is_knockout,
+                    probabilities=dict(decision_vector),
+                    display_probabilities=dict(decision_vector),
+                    decision_probabilities=dict(decision_vector),
+                    labels={"L": "Local", "E": "Empate", "V": "Visitante"},
+                    raw_probabilities=raw_vector,
+                    evidence_level=evidence_level.value,
+                    confidence=sanity.confidence,
+                    risk_level=sanity.risk_level.value,
+                    final_status=sanity.final_status.value,
+                    flags=sanity.flag_values(),
+                    fallback_used=fallback_used,
+                    is_international_friendly=is_friendly,
+                    sanity_recommendation=sanity.recommendation,
                 )
             )
+            # Full guardrail trace for the DB audit. `optimizer_probabilities`
+            # is the vector the ticket optimizer actually consumes — which is
+            # `decision_probabilities` (it reads `decision_vector()`), so they
+            # are equal by construction; we persist both explicitly so a
+            # future divergence is detectable from the audit alone.
+            sanity_audit = {
+                "raw_probabilities": dict(raw_vector),
+                "display_probabilities": dict(decision_vector),
+                "decision_probabilities": dict(decision_vector),
+                "optimizer_probabilities": dict(decision_vector),
+                "sanity_flags": sanity.flag_values(),
+                "risk_level": sanity.risk_level.value,
+                "evidence_level": evidence_level.value,
+                "final_status": sanity.final_status.value,
+                "sanity_policy_version": SANITY_POLICY_VERSION,
+                "model_artifact_id": model_artifact_id,
+                "fallback_used": fallback_used,
+                "is_international_friendly": is_friendly,
+            }
             self._persist_prediction_audit(
                 match_id=match.id,
                 slate_id=slate.id,
                 composition_hash=getattr(slate, "composition_hash", None),
                 slate_version=getattr(slate, "slate_version", None),
                 generated_at=prediction.generated_at,
+                # MODEL-adjusted values: the backtesting source of truth.
+                # NOT overwritten by the sanity decision (kept in the trace).
                 home_probability=adjusted_home,
                 draw_probability=adjusted_draw,
                 away_probability=adjusted_away,
@@ -204,6 +303,7 @@ class PredictionService:
                 confidence_band=confidence_band,
                 competition_readiness=str(competition_policy["competition_readiness"]),
                 feature_map=feature_map,
+                sanity_audit=sanity_audit,
             )
 
         _store_slate_predictions(slate.id, responses)
@@ -342,9 +442,17 @@ class PredictionService:
         confidence_band: str,
         competition_readiness: str,
         feature_map: dict[str, float],
+        sanity_audit: dict[str, Any] | None = None,
     ) -> None:
         """Persist a row to the predictions table so blocked / low-band
         decisions have a durable audit trail beyond log rotation.
+
+        ``home/draw/away_probability`` are the MODEL-adjusted values (the
+        backtesting source). ``sanity_audit`` carries the decision-time
+        guardrail trace (raw/display/decision/optimizer vectors, flags,
+        evidence/risk/status, policy version, artifact id, fallback) and is
+        serialized to ``sanity_audit_json`` WITHOUT touching the model
+        probability columns.
 
         The row is appended to the request-scoped session; the FastAPI
         managed_transaction context handles commit on response success
@@ -395,6 +503,9 @@ class PredictionService:
                     competition_readiness=competition_readiness,
                     blocked_reason=blocked_reason,
                     anchors_json=json.dumps(anchors),
+                    sanity_audit_json=(
+                        json.dumps(sanity_audit) if sanity_audit is not None else None
+                    ),
                 )
             )
             session.flush()
@@ -606,6 +717,33 @@ class PredictionService:
         rationale.append(
             f"Muestra de forma reciente: local {home_recent_matches} partidos, visita {away_recent_matches} partidos."
         )
+        h2h_count = int(float(feature_map.get("head_to_head_matches", 0.0)))
+        _anchored = (
+            evidence_count >= 1
+            or h2h_count >= 2
+            or (home_recent_matches >= 3 and away_recent_matches >= 3)
+        )
+        if not _anchored:
+            anchor_gaps: list[str] = []
+            if home_recent_matches < 3:
+                anchor_gaps.append(
+                    f"local tiene {home_recent_matches} resultado(s) reciente(s) (necesita 3)"
+                )
+            if away_recent_matches < 3:
+                anchor_gaps.append(
+                    f"visita tiene {away_recent_matches} resultado(s) reciente(s) (necesita 3)"
+                )
+            if h2h_count < 2:
+                anchor_gaps.append(
+                    f"historial directo insuficiente ({h2h_count} enfrentamiento(s), necesita 2)"
+                )
+            if anchor_gaps:
+                rationale.append(
+                    "Sin anclaje de confianza: "
+                    + "; ".join(anchor_gaps)
+                    + ". Calificatorias u otros partidos recientes pueden quedar fuera de la "
+                    "ventana de forma activa — esto limita la banda a low."
+                )
         rationale.append(
             f"Brecha de forma {form_gap:+.2f}, balance de goles {goal_gap:+.2f}, descanso {rest_gap:+.1f}d."
         )
@@ -652,6 +790,56 @@ class PredictionService:
                 context = f"{context[:257].rstrip()}..."
             notes.append(f"Contexto verificado: {context}")
         return notes
+
+    # Evidence-level thresholds. HIGH requires a genuinely deep sample on
+    # both sides (or a rich head-to-head); anything that only barely clears
+    # the anchoring gate is MEDIUM; an unanchored / data-insufficient
+    # vector is LOW. These are deliberately stricter than the confidence
+    # band so a national-team friendly with thin form never reads HIGH.
+    EVIDENCE_HIGH_RECENT_PER_SIDE = 5
+    EVIDENCE_HIGH_H2H = 5
+
+    def _evidence_level(self, feature_map: dict[str, float], evidence_count: int) -> EvidenceLevel:
+        if self._has_insufficient_data(feature_map):
+            return EvidenceLevel.LOW
+        h2h = float(feature_map.get("head_to_head_matches", 0.0))
+        home_recent = float(feature_map.get("home_recent_matches", 0.0))
+        away_recent = float(feature_map.get("away_recent_matches", 0.0))
+        anchored = (
+            evidence_count >= 1
+            or h2h >= 2
+            or (home_recent >= 3 and away_recent >= 3)
+        )
+        if not anchored:
+            return EvidenceLevel.LOW
+        deep_form = (
+            home_recent >= self.EVIDENCE_HIGH_RECENT_PER_SIDE
+            and away_recent >= self.EVIDENCE_HIGH_RECENT_PER_SIDE
+        )
+        deep_h2h = h2h >= self.EVIDENCE_HIGH_H2H
+        if (deep_form or deep_h2h) and evidence_count >= 1:
+            return EvidenceLevel.HIGH
+        if deep_form or deep_h2h:
+            return EvidenceLevel.MEDIUM
+        return EvidenceLevel.MEDIUM
+
+    @staticmethod
+    def _is_international_friendly(competition_policy: dict[str, object]) -> bool:
+        return str(competition_policy.get("competition_key", "")) == "international-friendlies"
+
+    def _fallback_used(self, match: MatchModel) -> bool:
+        """True when the prediction came from a non-ML heuristic fallback
+        rather than the trained XGBoost booster."""
+        if self.training_service is None:
+            return True
+        engine_fn = getattr(self.training_service, "prediction_engine_for_match", None)
+        if engine_fn is None:
+            return False
+        try:
+            return engine_fn(match) != "xgboost"
+        except Exception:  # pragma: no cover - defensive; never block a prediction
+            logger.exception("fallback engine lookup failed", extra={"match_id": match.id})
+            return False
 
     def _competition_policy_for_match(self, match: MatchModel) -> dict[str, object]:
         if self.training_service is None or not hasattr(self.training_service, "competition_operating_policy"):

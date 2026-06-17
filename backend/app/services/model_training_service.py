@@ -251,13 +251,20 @@ class ModelTrainingService(ModelTrainingArtifactsMixin):
             "draw_bias": 0.015,
         },
         "international-friendlies": {
-            "competition_readiness": "ready",
-            "live_pick_allowed": True,
+            # Fase 2 (2nd pass) — Opción B: los amistosos internacionales
+            # NUNCA se marcan "ready". La forma de selecciones nacionales
+            # oscila demasiado (rosters cambian partido a partido) para
+            # tratarlos como benchmark listo. Quedan en `context_only`: el
+            # modelo los califica con contexto, pero no como fijo seguro.
+            # La capa de seguridad (sanity_service) sigue dando headroom de
+            # probabilidad solo cuando la evidencia del partido es ALTA.
+            "competition_readiness": "context_only",
+            "live_pick_allowed": False,
             "policy_reason": (
-                "Operator-forced ready policy: TheSportsDB International Friendlies "
-                "history (2024-2026) loaded for national-team fixtures. No audited "
-                "walk-forward benchmark yet — national-team form swings more than "
-                "club football, treat picks with caution."
+                "Amistoso internacional: TheSportsDB International Friendlies "
+                "history (2024-2026) cargada, pero la forma de selecciones "
+                "nacionales varía mucho. Se califica con contexto, no como "
+                "fijo seguro; la capa de seguridad penaliza incertidumbre."
             ),
             # National-team friendlies are noisier than clubs: rosters change
             # match-by-match. Lean harder on per-team profile (recent form)

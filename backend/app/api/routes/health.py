@@ -3,10 +3,12 @@ from pathlib import Path
 from time import monotonic
 
 from fastapi import APIRouter
+from fastapi import Depends
 from fastapi import Request
 from fastapi import Response
 from fastapi.responses import PlainTextResponse
 
+from app.api.deps import require_worker_auth
 from app.core.metrics import metrics_store
 from app.core.settings import settings
 from app.db.health import get_database_health
@@ -149,13 +151,20 @@ async def metrics() -> PlainTextResponse:
 
 
 @router.get("/openapi-schema")
-async def openapi_schema(request: "Request") -> dict[str, object]:  # type: ignore[name-defined]
-    """Return the OpenAPI 3 schema regardless of `settings.docs_enabled`.
+async def openapi_schema(
+    request: Request,
+    _: None = Depends(require_worker_auth),
+) -> dict[str, object]:
+    """Return the OpenAPI 3 schema for authenticated operators.
 
     Production deployments turn off the public `/openapi.json` and the
     Swagger UI so the API surface isn't exposed unauthenticated. This
     endpoint reuses the same generator but stays behind the API key /
-    session auth, so an operator can still introspect available routes
-    without breaking the production hardening.
+    session auth (enforced by require_worker_auth), so an operator can
+    still introspect available routes without breaking the production
+    hardening.
+
+    In bare-dev (no credentials configured) the guard is a no-op and the
+    endpoint is open, consistent with the all-routes-open dev posture.
     """
     return request.app.openapi()

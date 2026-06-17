@@ -82,11 +82,20 @@ class _StubConnector:
     name = "progol-guia-ln-weekend"
     kind = "progol_guia_pdf"
 
-    def __init__(self, *, text: str | None = None, draw_code: str = "2335") -> None:
+    def __init__(
+        self,
+        *,
+        text: str | None = None,
+        draw_code: str = "2335",
+        week_type: str = "weekend",
+        source_url_override: str | None = None,
+    ) -> None:
         # Allow callers to override the parsed text to simulate fixture
         # drift between observations.
         self._text = text if text is not None else _fixture_text()
         self._draw_code = draw_code
+        self._week_type = week_type
+        self._source_url = source_url_override or "https://stub.local/progol/guia.pdf"
 
     def fetch(self) -> list[SourceDocument]:
         from app.connectors.progol_guia_pdf import parse_guia_text
@@ -97,13 +106,13 @@ class _StubConnector:
         return [
             SourceDocument(
                 source_name=self.name,
-                source_url="https://stub.local/progol/guia.pdf",
+                source_url=self._source_url,
                 captured_at=datetime.now(timezone.utc),
                 payload={
                     "title": f"Progol Guía concurso {draw_code}",
                     "summary": f"{len(fixtures)} fixtures parsed.",
                     "draw_code": draw_code,
-                    "week_type": "weekend",
+                    "week_type": self._week_type,
                     "registration_closes_at": closes_at.isoformat() if closes_at else None,
                     "fixtures": [
                         {"position": f.position, "home": f.home, "away": f.away}
@@ -257,9 +266,9 @@ async def test_promote_endpoint_requires_validated_status(client) -> None:
 
 @pytest.mark.anyio
 async def test_promote_endpoint_creates_slate_and_flips_proposal(client) -> None:
-    """Happy path: validated proposal → 201 with a serialized slate.
-    The proposal row also flips to `promoted` so a re-promote attempt
-    returns 409."""
+    """Happy path: validated proposal → 200 with PromoteProposalResponse.
+    already_active=False on first promote; the proposal flips to 'promoted'
+    so a re-promote attempt returns 409."""
     from app.db.session import SessionLocal
     from app.services.slate_proposal_service import SlateProposalService
 
@@ -274,8 +283,10 @@ async def test_promote_endpoint_creates_slate_and_flips_proposal(client) -> None
         session.close()
 
     response = await client.post(f"/api/slates/proposed/{proposal_id}/promote")
-    assert response.status_code == 201, response.text
-    slate = response.json()
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["already_active"] is False
+    slate = body["slate"]
     assert slate["draw_code"] == "PG-2335"
     assert len(slate["matches"]) == 14
     # Kickoffs are spread one hour apart starting cierre + 12h. Position 1
@@ -286,6 +297,102 @@ async def test_promote_endpoint_creates_slate_and_flips_proposal(client) -> None
         first_kickoff = first_kickoff.replace(tzinfo=None)
     assert first_kickoff == datetime(2026, 5, 31, 15, 0)
 
-    # And a second promote attempt should 409.
+    # And a second promote attempt on the SAME proposal should 409
+    # (status == "promoted" guard).
     second = await client.post(f"/api/slates/proposed/{proposal_id}/promote")
     assert second.status_code == 409
+
+
+@pytest.mark.anyio
+async def test_promote_already_active_returns_already_active_flag(client) -> None:
+    """If a second (different source_url) proposal for the same draw_code
+    is promoted while the first slate is still active and has the same
+    composition, the endpoint returns already_active=True and does NOT
+    create a duplicate slate row."""
+    from app.db.session import SessionLocal
+    from app.services.slate_proposal_service import SlateProposalService
+
+    # Seed two validated proposals for the same draw_code but from different
+    # source_urls so both can reach validated status independently.
+    session = SessionLocal()
+    try:
+        service = SlateProposalService(session, connector_factory=lambda: _StubConnector())
+        service.observe()
+        validated_a = service.observe()
+        assert validated_a.status == "validated"
+        first_id = validated_a.id
+
+        # Second proposal: same draw_code, different source_url.
+        service_b = SlateProposalService(
+            session,
+            connector_factory=lambda: _StubConnector(source_url_override="https://stub.local/mirror.pdf"),
+        )
+        service_b.observe()
+        validated_b = service_b.observe()
+        assert validated_b.status == "validated"
+        second_id = validated_b.id
+        assert first_id != second_id
+    finally:
+        session.close()
+
+    # Promote the first one — fresh slate created.
+    r1 = await client.post(f"/api/slates/proposed/{first_id}/promote")
+    assert r1.status_code == 200
+    assert r1.json()["already_active"] is False
+    slate_id_a = r1.json()["slate"]["id"]
+
+    # Promote the second one — same draw_code + same composition_hash.
+    r2 = await client.post(f"/api/slates/proposed/{second_id}/promote")
+    assert r2.status_code == 200
+    body2 = r2.json()
+    assert body2["already_active"] is True
+    # Must return the ORIGINAL slate, not a new one.
+    assert body2["slate"]["id"] == slate_id_a
+
+
+@pytest.mark.anyio
+async def test_proposed_list_shows_is_already_active(client) -> None:
+    """The proposal list endpoint annotates proposals that match an existing
+    active slate so the UI can render 'Ya activa / Ver boleta'."""
+    from app.db.session import SessionLocal
+    from app.services.slate_proposal_service import SlateProposalService
+
+    session = SessionLocal()
+    try:
+        service = SlateProposalService(session, connector_factory=lambda: _StubConnector())
+        service.observe()
+        validated = service.observe()
+        proposal_id = validated.id
+    finally:
+        session.close()
+
+    # Before promotion: is_already_active must be False.
+    before = await client.get("/api/slates/proposed?status=validated")
+    assert before.status_code == 200
+    proposals_before = before.json()
+    assert len(proposals_before) == 1
+    assert proposals_before[0]["is_already_active"] is False
+    assert proposals_before[0]["active_slate_id"] is None
+
+    # Promote the slate.
+    await client.post(f"/api/slates/proposed/{proposal_id}/promote")
+
+    # Seed a second (different source_url) validated proposal for the same draw_code.
+    session2 = SessionLocal()
+    try:
+        service2 = SlateProposalService(
+            session2,
+            connector_factory=lambda: _StubConnector(source_url_override="https://stub.local/mirror2.pdf"),
+        )
+        service2.observe()
+        service2.observe()
+    finally:
+        session2.close()
+
+    # After promotion: the second proposal should show is_already_active=True.
+    after = await client.get("/api/slates/proposed?status=validated")
+    assert after.status_code == 200
+    proposals_after = after.json()
+    assert len(proposals_after) == 1
+    assert proposals_after[0]["is_already_active"] is True
+    assert proposals_after[0]["active_slate_id"] is not None

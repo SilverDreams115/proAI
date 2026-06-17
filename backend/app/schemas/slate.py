@@ -35,6 +35,9 @@ class ProgolSlateResponse(BaseModel):
     is_closed: bool = False
     created_at: datetime
     matches: list[SlateMatchResponse]
+    has_predictions: bool = False
+    has_valid_snapshot: bool = False
+    status_label: str = "Sin predicción"
 
 
 class ActiveSlateResponse(BaseModel):
@@ -66,3 +69,19 @@ class SlateProposalResponse(BaseModel):
     last_seen_at: datetime
     fixtures: list[SlateProposalFixture]
     promoted_slate_id: str | None = None
+    # True when a non-archived slate already exists for this draw_code with
+    # the same composition — the UI should show "Ya activa / Ver boleta"
+    # instead of the "Usar esta boleta" promote button.
+    is_already_active: bool = False
+    active_slate_id: str | None = None
+
+
+class PromoteProposalResponse(BaseModel):
+    """Returned by POST /slates/proposed/{id}/promote.
+
+    already_active=True means a slate for this draw_code was already
+    active with the same fixture composition — no new slate was created.
+    already_active=False means a fresh slate (or updated slate) was promoted.
+    """
+    already_active: bool
+    slate: ProgolSlateResponse

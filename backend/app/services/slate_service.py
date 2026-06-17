@@ -25,13 +25,34 @@ class SlateService:
             return self.repository.upsert_slate(payload)
 
     def get_active_slate(self, now: datetime | None = None) -> ProgolSlateModel | None:
-        # The "active" slate is the open slate with the closest upcoming
-        # cierre. We reuse the sort key already used in list_slates so the
-        # selection rule stays single-source-of-truth.
+        # Returns the single most-urgent open slate across all week_types.
+        # Use get_active_slate_by_week_type when you need week_type isolation.
         now = now or datetime.now(timezone.utc)
         if now.tzinfo is None:
             now = now.replace(tzinfo=timezone.utc)
         slates = [slate for slate in self.repository.list_slates() if not self.is_closed(slate, now)]
+        if not slates:
+            return None
+        slates.sort(key=lambda slate: self._active_slate_sort_key(slate, now))
+        return slates[0]
+
+    def get_active_slate_by_week_type(
+        self, week_type: str, now: datetime | None = None
+    ) -> ProgolSlateModel | None:
+        """Return the most-urgent open slate for a specific week_type.
+
+        Used by auto-promote to check whether the SAME week_type concurso
+        is approaching cierre before promoting the next one of that type.
+        Weekend and midweek/MS slates are independent and must not block
+        each other's promotion.
+        """
+        now = now or datetime.now(timezone.utc)
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=timezone.utc)
+        slates = [
+            s for s in self.repository.list_slates()
+            if not self.is_closed(s, now) and s.week_type == week_type
+        ]
         if not slates:
             return None
         slates.sort(key=lambda slate: self._active_slate_sort_key(slate, now))

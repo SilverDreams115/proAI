@@ -17,7 +17,12 @@ import {
   dataQualityLabel,
   statusTone,
   buildQualityTooltip,
+  drawRiskSummary,
+  flagLabel,
 } from "./helpers.js";
+// NOTE: live-tracking is loaded via a guarded dynamic import in the
+// bootstrap (not a static import), so a failure to load/link that module
+// can never abort app.js and blank out the main selector.
 
 function currentSlate() {
   return state.slates.find((item) => item.id === state.activeSlateId) || null;
@@ -54,6 +59,50 @@ function decisionFromTicket(matchId, mode = state.ticketMode) {
     picks: decision.picks,
     source: decision.source || "model",
   };
+}
+
+function drawRiskFor(match) {
+  // Compute X coverage from the three ticket modes, then defer to the
+  // pure helper (which prefers the backend draw_risk block when present).
+  const matchId = match.match_id;
+  const prediction = match.prediction;
+  const covers = (mode) => {
+    const decision = decisionFromTicket(matchId, mode) || modelDecision(prediction, matchId, mode);
+    return Boolean(decision?.picks?.includes("X"));
+  };
+  const provided = ticketRecommendationFor(matchId)?.draw_risk || null;
+  return drawRiskSummary(
+    prediction,
+    { simple: covers("simple"), doubles: covers("doubles"), full: covers("full") },
+    provided,
+  );
+}
+
+function renderDrawChips(risk) {
+  if (risk.isStrong) {
+    return '<span class="chip chip-draw-strong" title="p(empate) ≥ 30%">Empate fuerte</span>';
+  }
+  if (risk.isLive) {
+    return '<span class="chip chip-draw-live" title="p(empate) ≥ 25%">Empate vivo</span>';
+  }
+  return "";
+}
+
+function renderDrawCoverageBlock(risk) {
+  const cell = (covered) =>
+    covered
+      ? '<span class="cover-yes">Sí</span>'
+      : '<span class="cover-no">No</span>';
+  return `
+    <section class="analysis-block draw-coverage">
+      <h4>Cobertura de X ${renderDrawChips(risk)}</h4>
+      <div class="facts-grid">
+        <div class="fact"><strong>p(empate)</strong><span>${formatPercent(risk.pDraw)} · ${risk.drawRank}º</span></div>
+        <div class="fact"><strong>Simple</strong><span>${cell(risk.coveredSimple)}</span></div>
+        <div class="fact"><strong>Dobles</strong><span>${cell(risk.coveredDoubles)}</span></div>
+        <div class="fact"><strong>Completa</strong><span>${cell(risk.coveredFull)}</span></div>
+      </div>
+    </section>`;
 }
 
 function doublesModelDecision(prediction, matchId = null) {
@@ -308,7 +357,18 @@ function qualityIssueProfile(match) {
   const evidence = Number(quality.evidence_count ?? linkedEvidenceCount(match) ?? 0);
   const recent = Number(quality.recent_results_count ?? match.features?.payload?.recent_results_count ?? 0);
   const h2h = Number(quality.head_to_head_results_count ?? match.features?.payload?.head_to_head_results_count ?? 0);
-  const blocked = prediction.confidence_band === "blocked" || readiness === "unclassified";
+  // The backend sanity layer (Fase 3/4) is the source of truth for the
+  // guardrailed status when it is present. `final_status` is one of
+  // FIJO / LISTO / REVISAR / BLOQUEADO and already folds in low-evidence,
+  // international-friendly and extreme-probability rules. We honour it
+  // directly and fall back to the legacy heuristics only for older
+  // payloads that predate the sanity fields.
+  const backendStatus = typeof prediction.final_status === "string" ? prediction.final_status : null;
+  const sanityFlags = Array.isArray(prediction.flags) ? prediction.flags : [];
+  const blocked =
+    backendStatus === "BLOQUEADO" ||
+    prediction.confidence_band === "blocked" ||
+    readiness === "unclassified";
   const benchmarkWeak = readiness === "not_ready";
   const cautionOnly = readiness === "covered" || readiness === "context_only" || prediction.live_pick_allowed === false;
   const thin = quality.quality_level === "thin" || (score !== null && score < 40);
@@ -317,16 +377,28 @@ function qualityIssueProfile(match) {
   // anchor — if any of the three is present, the partido has real data
   // behind it and doesn't need to be downgraded automatically.
   const anchored = evidence > 0 || recent > 0 || h2h > 0;
+
   // `review` aligns with the visual "Revisar" label (tone === "bad"): the
   // user must look at the match before signing the ticket. `caution` is
   // the warn-tone bucket — match is usable but with reduced confidence,
   // shown in its own filter so the "Revisar" tab does not swallow it.
-  const review = blocked || validation.level === "high";
-  const caution =
-    !review &&
-    (benchmarkWeak || cautionOnly || thin || !anchored || validation.level === "medium");
-  const reasons = [];
+  let review;
+  let caution;
+  if (backendStatus) {
+    review = backendStatus === "REVISAR" || backendStatus === "BLOQUEADO";
+    caution = !review && backendStatus === "LISTO" && sanityFlags.length > 0;
+  } else {
+    review = blocked || validation.level === "high";
+    caution =
+      !review &&
+      (benchmarkWeak || cautionOnly || thin || !anchored || validation.level === "medium");
+  }
 
+  const reasons = [];
+  // Surface the explicit sanity flags first — they name the precise reason
+  // the guardrail degraded the pick (LOW_EVIDENCE, INTERNATIONAL_FRIENDLY,
+  // EXTREME_PROBABILITY_WITHOUT_EVIDENCE, FALLBACK_USED, ...).
+  for (const flag of sanityFlags) reasons.push(flagLabel(flag));
   if (blocked) reasons.push("sin referencia confiable");
   if (benchmarkWeak) reasons.push("referencia débil");
   if (!blocked && !benchmarkWeak && cautionOnly) reasons.push("usar con cautela");
@@ -360,6 +432,8 @@ function qualityIssueProfile(match) {
     recent,
     h2h,
     reasons,
+    flags: sanityFlags,
+    finalStatus: backendStatus,
   };
 }
 
@@ -450,6 +524,22 @@ async function createDemoSlate() {
   });
 }
 
+const COMPETITION_NAMES = {
+  "International Friendlies": "Amistosos internacionales",
+  "World Cup": "Copa del Mundo",
+  "World Cup Qualifying UEFA": "Eliminatorias UEFA",
+  "World Cup Qualifying CONMEBOL": "Eliminatorias CONMEBOL",
+  "World Cup Qualifying CAF": "Eliminatorias CAF",
+  "World Cup Qualifying AFC": "Eliminatorias AFC",
+  "World Cup Qualifying CONCACAF": "Eliminatorias CONCACAF",
+  "World Cup Qualifying OFC": "Eliminatorias OFC",
+  "UEFA Nations League": "Liga de Naciones UEFA",
+  "UEFA Champions League": "Liga de Campeones UEFA",
+  "UEFA Europa League": "Liga Europa UEFA",
+  "UEFA Conference League": "Conference League UEFA",
+};
+const translateCompetition = (name) => COMPETITION_NAMES[name] || name;
+
 function buildMatchCard(match) {
   const decision = effectiveDecision(match);
   const validation = validationProfile(match);
@@ -457,6 +547,8 @@ function buildMatchCard(match) {
   const activeClass = state.selectedMatchId === match.match_id ? " active" : "";
   const manualClass = decision.source === "manual" ? " manual" : "";
   const reviewClass = issue.review ? " review" : "";
+  const cautionClass = !issue.review && issue.caution ? " caution" : "";
+  const pickOkClass = !issue.review && !issue.caution && issue.tone === "ok" ? " pick-ok" : "";
   const matchId = escapeHtml(match.match_id);
   const options = [
     ["1", match.prediction.home_probability],
@@ -466,8 +558,10 @@ function buildMatchCard(match) {
 
   const optionsMarkup = options
     .map(([key, value]) => {
+      const barTier = Math.min(90, Math.max(10, Math.round(Number(value) * 10) * 10));
       const classes = [
         "option-pill",
+        `bar-${barTier}`,
         match.prediction.recommended_outcome === key ? "active" : "",
         decision.picks.includes(key) && decision.source === "model" && decision.type !== "fixed" ? "secondary" : "",
         decision.picks.includes(key) && decision.source === "manual" ? "manual-choice" : "",
@@ -491,14 +585,28 @@ function buildMatchCard(match) {
 
   const decisionLabel =
     decision.type === "double" ? "Doble" : decision.type === "triple" ? "Triple" : "Fijo";
+  // For low-confidence predictions that are not fully blocked, add a
+  // secondary badge that names the cause without alarming the analyst.
+  const anchorBadge = match.prediction.confidence_band === "low" && !issue.blocked
+    ? `<span class="tag anchor-gap" title="El modelo predice pero necesita más datos recientes para anclar la confianza">Baja evidencia</span>`
+    : "";
+  // Sanity guardrail chips: surface the explicit reasons the displayed
+  // probability / status was degraded (capped friendly, extreme without
+  // evidence, fallback heuristic, ...). Drawn from the backend `flags`.
+  const sanityFlags = Array.isArray(match.prediction.flags) ? match.prediction.flags : [];
+  const flagBadges = sanityFlags
+    .map(
+      (flag) =>
+        `<span class="tag flag-warn" title="Capa de seguridad: ${escapeHtml(flagLabel(flag))}">${escapeHtml(flagLabel(flag))}</span>`,
+    )
+    .join("");
 
   return `
-    <article class="pick-row${activeClass}${manualClass}${reviewClass}" data-match-card="${matchId}"
+    <article class="pick-row${activeClass}${manualClass}${reviewClass}${cautionClass}${pickOkClass}" data-match-card="${matchId}"
       role="button" tabindex="0"
       aria-label="Partido ${escapeHtml(match.position)}: ${escapeHtml(match.prediction.home_team_name)} vs ${escapeHtml(match.prediction.away_team_name)}">
       <div class="pick-index">
-        <span class="mini-copy">Partido</span>
-        <strong>${escapeHtml(match.position)}</strong>
+        <strong>#${escapeHtml(match.position)}</strong>
         <small class="quality-mini ${issue.tone}">${issue.score !== null ? escapeHtml(issue.score) : "SD"}</small>
       </div>
       <div class="pick-meta">
@@ -508,8 +616,10 @@ function buildMatchCard(match) {
           </span>
           ${decision.source === "manual" ? `<span class="tag manual">Manual</span>` : ""}
           ${match.prediction.is_knockout ? `<span class="tag knockout" title="Eliminatoria: empate descartado">Eliminatoria</span>` : ""}
-          <span class="tag">${escapeHtml(match.prediction.competition_name)}</span>
+          <span class="tag">${escapeHtml(translateCompetition(match.prediction.competition_name || ""))}</span>
           <span class="tag quality-${issue.tone}" title="${escapeHtml(issue.reasons.join(' · ') || issue.label)}">${escapeHtml(issue.label)}</span>
+          ${anchorBadge}
+          ${flagBadges}
         </div>
         <h3>${escapeHtml(match.prediction.home_team_name)} vs ${escapeHtml(match.prediction.away_team_name)}</h3>
         <p class="pick-sub">${escapeHtml(formatDate(match.kickoff_at))} ${match.venue ? `· ${escapeHtml(match.venue)}` : ""}<span class="freshness-tag" title="Cuándo se calculó esta probabilidad">Actualizado ${escapeHtml(formatRelativeAge(match.prediction.generated_at))}</span></p>
@@ -558,15 +668,51 @@ function renderSlateSwitcher() {
 }
 
 function renderAsideSlates() {
-  return state.slates.length
-    ? state.slates.map((slate) => `
-        <button class="aside-slate ${slate.id === state.activeSlateId ? "active" : ""}" data-slate-id="${escapeHtml(slate.id)}">
-          <span>${escapeHtml(slate.week_type)}</span>
-          <strong>${escapeHtml(slate.draw_code)}</strong>
-          <small>${escapeHtml((slate.matches || []).length)} partidos</small>
-        </button>
-      `).join("")
-    : "";
+  const STATUS_CLASS = {
+    "Con ticket": "ok",
+    "Con predicciones": "ok",
+    "Sin predicción": "warn",
+    "Archivada": "muted",
+    "Cerrada": "muted",
+  };
+  const grouped = {};
+  for (const slate of state.slates) {
+    const wt = slate.week_type || "other";
+    if (!grouped[wt]) grouped[wt] = [];
+    grouped[wt].push(slate);
+  }
+  const renderSlateBtn = (slate) => {
+    const isActive = slate.id === state.activeSlateId;
+    const statusLabel = slate.status_label || (slate.is_archived ? "Archivada" : "Activa");
+    const statusCls = STATUS_CLASS[statusLabel] || "";
+    const matchCount = (slate.matches || []).length;
+    return `
+      <button class="aside-slate ${isActive ? "active" : ""}" data-slate-id="${escapeHtml(slate.id)}">
+        <strong>${escapeHtml(slate.draw_code)}</strong>
+        <span class="aside-slate-status ${statusCls}">${escapeHtml(statusLabel)}</span>
+        <small>${matchCount} partidos</small>
+      </button>
+    `;
+  };
+  const sections = [];
+  // Weekend — always shown.
+  const wkSlates = grouped["weekend"] || [];
+  const wkContent = wkSlates.length
+    ? wkSlates.map(renderSlateBtn).join("")
+    : `<p class="aside-empty-label">Sin quiniela fin de semana activa</p>`;
+  sections.push(`<div class="aside-week-group"><h3 class="aside-week-label">Fin de semana</h3>${wkContent}</div>`);
+  // Midweek/MS — always shown, empty state when no active MS.
+  const msSlates = grouped["midweek"] || [];
+  const msContent = msSlates.length
+    ? msSlates.map(renderSlateBtn).join("")
+    : `<p class="aside-empty-label">No hay Progol MS activo<br><span>Esperando guía de media semana</span></p>`;
+  sections.push(`<div class="aside-week-group"><h3 class="aside-week-label">Media semana</h3>${msContent}</div>`);
+  // Revancha — only when present.
+  const revSlates = grouped["revancha"] || [];
+  if (revSlates.length) {
+    sections.push(`<div class="aside-week-group"><h3 class="aside-week-label">Revancha</h3>${revSlates.map(renderSlateBtn).join("")}</div>`);
+  }
+  return sections.join("");
 }
 
 function renderValidationSummary() {
@@ -576,17 +722,35 @@ function renderValidationSummary() {
   const caution = issues.filter((item) => item.issue.caution);
   const thin = issues.filter((item) => item.issue.thin);
   const blocked = issues.filter((item) => item.issue.blocked);
+  const bandHigh = issues.filter((item) => item.match.prediction?.confidence_band === "high");
+  const bandMedium = issues.filter((item) => item.match.prediction?.confidence_band === "medium");
+  const bandLow = issues.filter((item) => item.match.prediction?.confidence_band === "low");
+  const bandBlocked = issues.filter((item) => item.match.prediction?.confidence_band === "blocked");
   const manual = issues.filter((item) => item.decision.source === "manual");
   const doubles = issues.filter((item) => item.decision.type === "double");
   const triples = issues.filter((item) => item.decision.type === "triple");
   const fixed = issues.filter((item) => item.decision.type === "fixed");
-  const topReview = review.slice(0, 4).map(({match, issue}) => `
-    <button class="review-item ${issue.tone}" data-match-menu-id="${escapeHtml(match.match_id)}">
-      <span>${escapeHtml(match.position)}</span>
-      <strong>${escapeHtml(match.prediction.home_team_name)} vs ${escapeHtml(match.prediction.away_team_name)}</strong>
-      <small>${escapeHtml(issue.reasons.slice(0, 2).join(" · ") || issue.label)}</small>
-    </button>
-  `).join("");
+  const reviewStrip = (() => {
+    const parts = [];
+    if (review.length) {
+      parts.push(`<span class="review-strip-label">Revisar:</span>`);
+      review.forEach(({match, issue}) => {
+        const isActive = state.selectedMatchId === match.match_id;
+        parts.push(`<button class="pos-chip ${issue.tone}${isActive ? " selected" : ""}" data-match-menu-id="${escapeHtml(match.match_id)}" title="${escapeHtml(match.prediction.home_team_name)} vs ${escapeHtml(match.prediction.away_team_name)}" aria-label="Partido ${escapeHtml(match.position)}: ${escapeHtml(issue.label)}" aria-pressed="${isActive}">${escapeHtml(match.position)}</button>`);
+      });
+    }
+    if (caution.length) {
+      if (review.length) parts.push(`<span class="review-strip-sep">·</span>`);
+      parts.push(`<span class="review-strip-label">Cautela:</span>`);
+      caution.forEach(({match}) => {
+        const isActive = state.selectedMatchId === match.match_id;
+        parts.push(`<button class="pos-chip warn${isActive ? " selected" : ""}" data-match-menu-id="${escapeHtml(match.match_id)}" title="${escapeHtml(match.prediction.home_team_name)} vs ${escapeHtml(match.prediction.away_team_name)}" aria-label="Partido ${escapeHtml(match.position)}: con cautela" aria-pressed="${isActive}">${escapeHtml(match.position)}</button>`);
+      });
+    }
+    return parts.length
+      ? `<div class="review-strip">${parts.join("")}</div>`
+      : `<div class="empty-state compact">Todos los partidos tienen cobertura suficiente.</div>`;
+  })();
 
   const coverage = (state.ticketPlan?.coverage || []).find((mode) => mode.mode === state.ticketMode);
   const slateSize = state.matches.length;
@@ -628,24 +792,28 @@ function renderValidationSummary() {
         <span>Cobertura ~50%</span>
         <strong>${escapeHtml(ticketsLabel)}</strong>
       </div>
-      <div class="${review.length ? "bad" : "ok"}">
+      <div class="${bandHigh.length ? "ok" : ""}">
+        <span>Fijo defendible</span>
+        <strong>${escapeHtml(bandHigh.length)}</strong>
+      </div>
+      <div class="${bandLow.length ? "bad" : "ok"}">
         <span>A revisar</span>
-        <strong>${escapeHtml(review.length)}</strong>
+        <strong>${escapeHtml(bandLow.length)}</strong>
       </div>
-      <div class="${caution.length ? "warn" : "ok"}">
+      <div class="${bandMedium.length ? "warn" : "ok"}">
         <span>Con cautela</span>
-        <strong>${escapeHtml(caution.length)}</strong>
+        <strong>${escapeHtml(bandMedium.length)}</strong>
       </div>
-      <div class="${blocked.length ? "bad" : "ok"}">
+      <div class="${bandBlocked.length ? "bad" : "ok"}">
         <span>Sin datos</span>
-        <strong>${escapeHtml(blocked.length)}</strong>
+        <strong>${escapeHtml(bandBlocked.length)}</strong>
       </div>
       <div class="${manual.length ? "ok" : ""}">
         <span>Ajustados</span>
         <strong>${escapeHtml(manual.length)}</strong>
       </div>
     </div>
-    ${topReview ? `<div class="review-list">${topReview}</div>` : `<div class="empty-state compact">No hay partidos críticos en este filtro.</div>`}
+    ${reviewStrip}
   `;
 }
 
@@ -735,6 +903,52 @@ function renderResultFallback(featurePayload, match) {
 
 // dataQualityLabel, buildQualityTooltip, statusTone moved to
 // helpers.js (S5.1) — see the import block at the top of this file.
+
+// Renders the "Por qué revisar" block for low-confidence matches where the
+// anchor condition fails due to insufficient recent results or H2H.
+// Uses structured feature data — no string parsing of rationale text.
+function renderLowConfidenceBlock(prediction, featurePayload) {
+  if (!prediction || prediction.confidence_band !== "low") return "";
+  const homeRecent = Number(featurePayload.home_recent_matches || 0);
+  const awayRecent = Number(featurePayload.away_recent_matches || 0);
+  // The features endpoint returns `head_to_head_matches`; the quality
+  // endpoint uses `head_to_head_results_count` — accept both.
+  const h2hCount = Number(featurePayload.head_to_head_results_count || featurePayload.head_to_head_matches || 0);
+  const needsAnchor = homeRecent < 3 || awayRecent < 3 || h2hCount < 2;
+  if (!needsAnchor) return "";
+  const bullets = [];
+  if (homeRecent < 3) {
+    bullets.push(`<li><strong>${escapeHtml(prediction.home_team_name)}:</strong> ${homeRecent} resultado(s) reciente(s) en ventana activa — necesita 3</li>`);
+  }
+  if (awayRecent < 3) {
+    bullets.push(`<li><strong>${escapeHtml(prediction.away_team_name)}:</strong> ${awayRecent} resultado(s) reciente(s) en ventana activa — necesita 3</li>`);
+  }
+  if (h2hCount < 2) {
+    bullets.push(`<li><strong>Historial directo:</strong> ${h2hCount} enfrentamiento(s) — necesita 2</li>`);
+  }
+  return `
+    <section class="analysis-block anchor-gap-block">
+      <h4>Por qué revisar</h4>
+      <p class="anchor-gap-lead">El modelo elige un resultado, pero no lo clasifica como fijo defendible porque falta evidencia reciente suficiente para anclar la confianza.</p>
+      ${bullets.length ? `<ul class="anchor-gap-list">${bullets.join("")}</ul>` : ""}
+      <p class="mini-copy">Las calificatorias recientes pueden quedar fuera de la ventana activa del modelo. Esto no es un error sino una limitación de cobertura temporal: el pronóstico es válido pero la confianza queda en baja hasta que haya más partidos disponibles.</p>
+    </section>
+  `;
+}
+
+// Renders the full backend rationale list in a collapsible tech-note section.
+function renderModelRationale(prediction) {
+  const lines = Array.isArray(prediction?.rationale) ? prediction.rationale : [];
+  if (!lines.length) return "";
+  return `
+    <details class="analysis-block">
+      <summary><h4>Nota técnica del modelo</h4></summary>
+      <ul class="rationale-list">
+        ${lines.map((line) => `<li>${escapeHtml(line)}</li>`).join("")}
+      </ul>
+    </details>
+  `;
+}
 
 function renderProductionStatus() {
   const node = getById("ops-panel");
@@ -888,6 +1102,7 @@ function buildAnalysis(match) {
   const featurePayload = match.features?.payload || {};
   const decision = effectiveDecision(match);
   const validation = validationProfile(match);
+  const drawRisk = drawRiskFor(match);
   const evidenceList = Array.isArray(match.evidence) ? match.evidence : [];
   const availabilityList = Array.isArray(match.availability) ? match.availability : [];
   const resultList = Array.isArray(match.results) ? match.results : [];
@@ -898,6 +1113,13 @@ function buildAnalysis(match) {
     Number(featurePayload.head_to_head_results_count || 0)
   );
   const decisionReasons = buildDecisionReasons(match, featurePayload, validation, evidenceCount, resultCount);
+  // Soften "bad" (red) → "warn" (amber) for low-confidence predictions that
+  // are not fully blocked — data-gap matches are cautionary, not catastrophic.
+  const heroTone = (() => {
+    const baseTone = { low: "ok", medium: "warn", high: "bad" }[validation.level] || "ok";
+    if (baseTone === "bad" && match.prediction.confidence_band === "low") return "warn";
+    return baseTone;
+  })();
   const evidenceMarkup = evidenceList.length
     ? evidenceList.slice(0, 5).map((item) => {
       const title = item.source_title || item.kind;
@@ -935,7 +1157,7 @@ function buildAnalysis(match) {
           <strong>${escapeHtml(item.context_label || (item.is_head_to_head ? "Antecedente directo" : "Forma reciente"))}: ${escapeHtml(displayOutcome(item.result_code))}</strong>
           <div>${escapeHtml(item.home_team_name || "Local")} vs ${escapeHtml(item.away_team_name || "Visitante")}</div>
           <div>${escapeHtml(item.home_goals)}-${escapeHtml(item.away_goals)}</div>
-          <div class="mono">${escapeHtml(item.competition_name || "")} · ${escapeHtml(formatDate(item.played_at))}</div>
+          <div class="mono">${escapeHtml(translateCompetition(item.competition_name || ""))} · ${escapeHtml(formatDate(item.played_at))}</div>
         </div>
       `).join("")
     : renderResultFallback(featurePayload, match);
@@ -960,11 +1182,22 @@ function buildAnalysis(match) {
   return `
     <div class="analysis-card">
       <div class="analysis-head">
-        <h3>${escapeHtml(match.prediction.home_team_name)} vs ${escapeHtml(match.prediction.away_team_name)}</h3>
+        <h3>${escapeHtml(match.prediction.home_team_name)} vs ${escapeHtml(match.prediction.away_team_name)} ${renderDrawChips(drawRisk)}</h3>
         <p class="meta-copy">
           Jugada: <strong>${escapeHtml(displayPicks(decision.picks))}</strong>
           · ${decision.source === "manual" ? "ajustada manualmente" : "sugerida por el modelo"}
         </p>
+      </div>
+      <div class="decision-hero tone-${heroTone}">
+        <div class="dh-badge">
+          <span class="dh-badge-pick">${escapeHtml(displayOutcome(decision.picks[0] || "1"))}</span>
+          <span class="dh-badge-type">${decision.type === "double" ? "Doble" : decision.type === "triple" ? "Triple" : "Fijo"}</span>
+        </div>
+        <div class="dh-info">
+          <div class="dh-risk">${escapeHtml(validation.label)}</div>
+          <div class="dh-action">${escapeHtml(validation.recommendation)}</div>
+          <div class="dh-meta">Confianza ${escapeHtml(confidenceLabel(validation.profile.confidence))} · Referencia ${escapeHtml(readinessLabel(validation.profile.readiness))}</div>
+        </div>
       </div>
       <div class="analysis-grid">
         <section class="analysis-block">
@@ -976,6 +1209,7 @@ function buildAnalysis(match) {
             <div class="fact"><strong>Jugada</strong><span>${escapeHtml(displayPicks(decision.picks))}</span></div>
           </div>
         </section>
+        ${renderDrawCoverageBlock(drawRisk)}
         <section class="analysis-block validation-block ${validation.className}">
           <h4>Riesgo del partido</h4>
           <div class="facts-grid">
@@ -983,13 +1217,19 @@ function buildAnalysis(match) {
             <div class="fact"><strong>Acción</strong><span>${escapeHtml(validation.recommendation)}</span></div>
             <div class="fact"><strong>Confianza</strong><span>${escapeHtml(confidenceLabel(validation.profile.confidence))}</span></div>
             <div class="fact"><strong>Referencia</strong><span>${escapeHtml(readinessLabel(validation.profile.readiness))}</span></div>
-            <div class="fact"><strong>Brecha top 2</strong><span>${escapeHtml(displayOutcome(validation.profile.bestOutcome))}/${escapeHtml(displayOutcome(validation.profile.secondOutcome))} · ${formatPercent(validation.profile.topGap)}</span></div>
-            <div class="fact"><strong>3er resultado</strong><span>${escapeHtml(displayOutcome(validation.profile.thirdOutcome))} · ${formatPercent(validation.profile.thirdProbability)}</span></div>
-            <div class="fact"><strong>Evidencia ligada</strong><span>${escapeHtml(evidenceCount)}</span></div>
-            <div class="fact"><strong>Incertidumbre</strong><span>${Math.round(validation.profile.entropy * 100)}%</span></div>
           </div>
-          <p class="validation-copy">${validation.reasons.map(escapeHtml).join(" · ")}</p>
+          <details class="tech-note">
+            <summary>Nota técnica</summary>
+            <div class="facts-grid">
+              <div class="fact"><strong>Brecha top 2</strong><span>${escapeHtml(displayOutcome(validation.profile.bestOutcome))}/${escapeHtml(displayOutcome(validation.profile.secondOutcome))} · ${formatPercent(validation.profile.topGap)}</span></div>
+              <div class="fact"><strong>3er resultado</strong><span>${escapeHtml(displayOutcome(validation.profile.thirdOutcome))} · ${formatPercent(validation.profile.thirdProbability)}</span></div>
+              <div class="fact"><strong>Evidencia ligada</strong><span>${escapeHtml(evidenceCount)}</span></div>
+              <div class="fact"><strong>Incertidumbre</strong><span>${Math.round(validation.profile.entropy * 100)}%</span></div>
+            </div>
+            <p class="validation-copy">${validation.reasons.map(escapeHtml).join(" · ")}</p>
+          </details>
         </section>
+        ${renderLowConfidenceBlock(match.prediction, featurePayload)}
         <section class="analysis-block">
           <h4>Análisis de la decisión</h4>
           <div>${decisionReasons.map((item) => `<p>${escapeHtml(item)}</p>`).join("")}</div>
@@ -1014,6 +1254,7 @@ function buildAnalysis(match) {
           <summary><h4>Datos estadísticos del modelo</h4></summary>
           <div class="signal-grid">${signalItems.map((item) => `<span class="signal-pill">${escapeHtml(item)}</span>`).join("")}</div>
         </details>
+        ${renderModelRationale(match.prediction)}
       </div>
     </div>
   `;
@@ -1093,13 +1334,24 @@ function renderBoard() {
   }
 
   if (!activeSlate || !state.matches.length) {
-    if (labelNode) labelNode.textContent = "Sin quiniela activa";
-    if (codeNode) codeNode.textContent = "Carga una papeleta";
-    if (slateSwitcherNode) slateSwitcherNode.innerHTML = "";
+    const hasSlatePicked = Boolean(activeSlate);
+    const slateCode = activeSlate?.draw_code || "";
+    const slateId = activeSlate?.id || "";
+    if (labelNode) labelNode.textContent = hasSlatePicked ? escapeHtml(slateCode) : "Sin quiniela activa";
+    if (codeNode) codeNode.textContent = hasSlatePicked ? "Sin predicciones" : "Carga una papeleta";
+    if (slateSwitcherNode) slateSwitcherNode.innerHTML = hasSlatePicked ? renderSlateSwitcher() : "";
     if (tabsNode) tabsNode.innerHTML = renderTicketTabs();
-    if (summaryNode) summaryNode.innerHTML = renderEmpty("El sistema cargará la quiniela activa en la próxima ejecución.");
     if (validationSummaryNode) validationSummaryNode.innerHTML = "";
-    if (gridNode) gridNode.innerHTML = renderEmpty("Sin quiniela activa. Selecciona una boleta en el panel izquierdo o espera a que el sistema la cargue.");
+    const noPredCopy = hasSlatePicked
+      ? `Esta boleta (${escapeHtml(slateCode)}) no tiene predicciones generadas aún.`
+      : "El sistema cargará la quiniela activa en la próxima ejecución.";
+    const generateBtn = hasSlatePicked
+      ? `<button class="primary-button" id="generate-predictions-btn" data-slate-id="${escapeHtml(slateId)}" style="margin-top:12px">Generar predicción</button>`
+      : "";
+    if (summaryNode) summaryNode.innerHTML = `<div class="empty-state">${noPredCopy}${generateBtn}</div>`;
+    if (gridNode) gridNode.innerHTML = hasSlatePicked
+      ? renderEmpty("Sin predicciones. Usa el botón para generarlas.")
+      : renderEmpty("Sin quiniela activa. Selecciona una boleta en el panel izquierdo o espera a que el sistema la cargue.");
     if (analysisNode) analysisNode.innerHTML = renderEmpty("Selecciona un partido para ver la explicación del modelo.");
     return;
   }
@@ -1109,20 +1361,33 @@ function renderBoard() {
   if (slateSwitcherNode) slateSwitcherNode.innerHTML = renderSlateSwitcher();
   if (tabsNode) tabsNode.innerHTML = renderTicketTabs();
   if (summaryNode) {
-    const doubles = state.matches.filter((item) => effectiveDecision(item).type === "double").length;
-    const triples = state.matches.filter((item) => effectiveDecision(item).type === "triple").length;
-    const rule = multipleRuleForSlate(activeSlate, state.matches.length);
-    const doubleLimit = doubleLimitForSlate(activeSlate, state.matches.length);
-    const doubleLabel = state.ticketMode === "full"
-      ? `dobles activos / límite ${rule.combinedDoubleMax}`
-      : `dobles activos / límite ${doubleLimit}`;
-    const tripleLabel = state.ticketMode === "full"
-      ? `triples activos / límite ${rule.combinedTripleMax}`
-      : "triples activos";
+    const allIssues = state.matches.map((m) => ({
+      issue: qualityIssueProfile(m),
+      decision: effectiveDecision(m),
+    }));
+    const fixedCount = allIssues.filter((i) => i.decision.type === "fixed").length;
+    const doublesCount = allIssues.filter((i) => i.decision.type === "double").length;
+    const triplesCount = allIssues.filter((i) => i.decision.type === "triple").length;
+    const bandHigh = state.matches.filter((m) => m.prediction?.confidence_band === "high").length;
+    const bandMedium = state.matches.filter((m) => m.prediction?.confidence_band === "medium").length;
+    const bandLow = state.matches.filter((m) => m.prediction?.confidence_band === "low").length;
+    const bandBlocked = state.matches.filter((m) => m.prediction?.confidence_band === "blocked").length;
+    const weekTypeLabel = { weekend: "Fin de semana", revancha: "Revancha", midweek: "Media semana" }[activeSlate.week_type] || activeSlate.week_type;
+    const modeLabel = ticketModes.find((m) => m.key === state.ticketMode)?.label || state.ticketMode;
+    const heroChips = [];
+    if (bandBlocked) heroChips.push(`<span class="hero-chip bad">${bandBlocked} sin datos</span>`);
+    if (bandLow) heroChips.push(`<span class="hero-chip bad">${bandLow} a revisar</span>`);
+    if (bandMedium) heroChips.push(`<span class="hero-chip warn">${bandMedium} con cautela</span>`);
+    if (bandHigh) heroChips.push(`<span class="hero-chip ok">${bandHigh} fijo${bandHigh !== 1 ? "s" : ""} defendible${bandHigh !== 1 ? "s" : ""}</span>`);
+    if (!bandBlocked && !bandLow && !bandMedium && !bandHigh) heroChips.push(`<span class="hero-chip ok">Jugada lista</span>`);
+    if (doublesCount) heroChips.push(`<span class="hero-chip">${doublesCount} doble${doublesCount !== 1 ? "s" : ""}</span>`);
+    if (triplesCount) heroChips.push(`<span class="hero-chip">${triplesCount} triple${triplesCount !== 1 ? "s" : ""}</span>`);
     summaryNode.innerHTML = `
-      <div class="summary-chip"><strong>${state.matches.length}</strong><div class="mono">partidos cargados</div></div>
-      <div class="summary-chip"><strong>${doubles}</strong><div class="mono">${escapeHtml(doubleLabel)}</div></div>
-      <div class="summary-chip"><strong>${triples}</strong><div class="mono">${escapeHtml(tripleLabel)}</div></div>
+      <div class="ticket-hero">
+        <div class="ticket-hero-main">${fixedCount}F · ${doublesCount}D · ${triplesCount}T</div>
+        <div class="ticket-hero-meta">${escapeHtml(weekTypeLabel)} · ${state.matches.length} partidos · ${escapeHtml(modeLabel)}</div>
+        <div class="ticket-hero-chips">${heroChips.join("")}</div>
+      </div>
     `;
   }
 
@@ -1227,6 +1492,21 @@ async function _handleDelegatedClick(event) {
     if (created) {
       await boot();
     }
+    return;
+  }
+
+  const genBtn = target.closest("#generate-predictions-btn");
+  if (genBtn) {
+    const slateId = genBtn.getAttribute("data-slate-id");
+    if (slateId) {
+      genBtn.disabled = true;
+      genBtn.textContent = "Generando…";
+      await safePost(`/predictions/slates/${slateId}/refresh`);
+      await loadSlateDetails(slateId);
+      renderSidebar();
+      renderBoard();
+    }
+    return;
   }
 }
 
@@ -1675,8 +1955,8 @@ async function promoteProposal(proposalId) {
   renderNextContestCard();
   const result = await safePost(`/slates/proposed/${proposalId}/promote`);
   state.proposalPromoting = false;
-  if (result && result.id) {
-    state.transitionBanner = `Concurso ${result.draw_code} promovido a slate activo.`;
+  if (result && result.slate?.id) {
+    state.transitionBanner = `Concurso ${result.slate.draw_code} promovido a slate activo.`;
     renderTransitionBanner();
     setTimeout(() => { state.transitionBanner = null; renderTransitionBanner(); }, 6000);
     const slates = await safeFetch("/slates");
@@ -1692,6 +1972,33 @@ checkSession().then(() => {
   boot().then(() => {
     pollActiveSlate();
     pollProposals();
+    // Live tracking is best-effort and fully isolated: a load/link error
+    // or a failing dashboard fetch must never break the main selector.
+    import("./live-tracking.js")
+      .then(({ initLiveTracking }) => {
+        initLiveTracking({
+          container: document.getElementById("live-tracking-panel"),
+          detailContainer: document.getElementById("live-tracking-detail"),
+          fetchJson: (path) => safeFetch(path, { optional: true }),
+        });
+      })
+      .catch((error) => {
+        console.error("live-tracking module failed to load", error);
+      });
+  }).catch((error) => {
+    // Last-resort guard: boot() should never leave the UI stuck on the
+    // static "Cargando…" placeholder. Clear loading and render whatever
+    // state we have (login prompt or empty selector).
+    console.error("boot failed", error);
+    state.isLoading = false;
+    state.authStatusMessage = "No se pudo cargar. Revisa la conexión o inicia sesión.";
+    try {
+      updateAuthControls();
+      renderSidebar();
+      renderBoard();
+    } catch (renderError) {
+      console.error("render after boot failure also failed", renderError);
+    }
   });
 });
 // 1 Hz local countdown ticker (cheap, only touches one DOM node).

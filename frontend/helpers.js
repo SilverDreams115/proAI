@@ -134,14 +134,87 @@ export function statusTone(value) {
   return "warn";
 }
 
+const HTML_ESCAPES = {
+  "&": "&amp;",
+  "<": "&lt;",
+  ">": "&gt;",
+  '"': "&quot;",
+  "'": "&#39;",
+};
+
+export function escapeHtml(value) {
+  return String(value ?? "").replace(/[&<>"']/g, (char) => HTML_ESCAPES[char]);
+}
+
+// Draw-reporting thresholds, mirrored from the backend
+// TicketRecommendationService. Reporting only — they never change picks
+// or confidence bands.
+export const DRAW_LIVE_THRESHOLD = 0.25;
+export const DRAW_STRONG_THRESHOLD = 0.3;
+
+export function drawRiskSummary(prediction, coverage = {}, provided = null) {
+  // Surface why draws may be hurting the boleta: how much draw mass the
+  // model assigned, its rank among the three outcomes, the empate vivo /
+  // fuerte flags, and whether X is actually covered per ticket mode.
+  // Prefers the backend-provided `draw_risk` block; falls back to a
+  // client computation so older snapshots (pre draw_risk) still render.
+  const pDraw = Number.isFinite(prediction?.draw_probability) ? prediction.draw_probability : 0;
+  const home = Number.isFinite(prediction?.home_probability) ? prediction.home_probability : 0;
+  const away = Number.isFinite(prediction?.away_probability) ? prediction.away_probability : 0;
+  const drawRank = provided?.draw_rank ?? 1 + (home > pDraw ? 1 : 0) + (away > pDraw ? 1 : 0);
+  return {
+    pDraw: provided?.p_draw ?? pDraw,
+    drawRank,
+    isLive: provided?.is_live_draw ?? pDraw >= DRAW_LIVE_THRESHOLD,
+    isStrong: provided?.is_strong_draw ?? pDraw >= DRAW_STRONG_THRESHOLD,
+    coveredSimple: provided?.covered_simple ?? Boolean(coverage.simple),
+    coveredDoubles: provided?.covered_doubles ?? Boolean(coverage.doubles),
+    coveredFull: provided?.covered_full ?? Boolean(coverage.full),
+  };
+}
+
 export function sortedOutcomes(prediction) {
   // Sort the three outcome probabilities high → low so the renderer
   // can pick "best / second / third" without re-sorting each call.
+  //
+  // Prefer the explicit, non-positional L/E/V vector emitted by the
+  // backend sanity layer (`prediction.probabilities`) — these are the
+  // FINAL, guardrailed numbers (e.g. a friendly capped at 65% instead of
+  // a raw 79%). Fall back to the legacy positional fields for payloads
+  // that predate the sanity layer.
+  const explicit = prediction?.probabilities;
+  const hasExplicit =
+    explicit &&
+    ["L", "E", "V"].every((k) => Number.isFinite(Number(explicit[k])));
+  if (hasExplicit) {
+    return [
+      { key: "1", value: Number(explicit.L) || 0 },
+      { key: "X", value: Number(explicit.E) || 0 },
+      { key: "2", value: Number(explicit.V) || 0 },
+    ].sort((a, b) => b.value - a.value);
+  }
   return [
     { key: "1", value: Number(prediction.home_probability) || 0 },
     { key: "X", value: Number(prediction.draw_probability) || 0 },
     { key: "2", value: Number(prediction.away_probability) || 0 },
   ].sort((a, b) => b.value - a.value);
+}
+
+// Human-readable Spanish labels for the backend sanity flags, used in the
+// quality tooltip / reasons so operators see *why* a pick was degraded.
+const SANITY_FLAG_LABELS = {
+  LOW_EVIDENCE: "evidencia baja",
+  INTERNATIONAL_FRIENDLY: "amistoso internacional",
+  FRIENDLY_UNCERTAINTY_PENALTY: "penalización por amistoso",
+  EXTREME_PROBABILITY_WITHOUT_EVIDENCE: "probabilidad extrema sin evidencia",
+  EXTREME_PROBABILITY_CAPPED: "probabilidad recortada",
+  SUSPICIOUS_CLASS_PROBABILITY: "clase con probabilidad sospechosa",
+  FALLBACK_USED: "modelo heurístico de respaldo",
+  BLOCKED_INSUFFICIENT_DATA: "sin datos suficientes",
+};
+
+export function flagLabel(flag) {
+  return SANITY_FLAG_LABELS[flag] || String(flag).toLowerCase().replace(/_/g, " ");
 }
 
 export function linkedEvidenceCount(match) {

@@ -152,6 +152,14 @@ class PredictionModel(Base):
     competition_readiness: Mapped[str | None] = mapped_column(String(32))
     blocked_reason: Mapped[str | None] = mapped_column(String(120))
     anchors_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    # v18 sanity-audit trace (JSON). Nullable: pre-sanity rows stay NULL
+    # rather than inventing a decision that was never taken. Holds the full
+    # raw/display/decision/optimizer vectors, flags, evidence/risk/status,
+    # sanity_policy_version, model_artifact_id, fallback_used and
+    # is_international_friendly so a row is self-describing after the fact.
+    # IMPORTANT: home/draw/away_probability above remain the MODEL-adjusted
+    # values (the backtesting source) — this column never overwrites them.
+    sanity_audit_json: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     match: Mapped["MatchModel"] = relationship(back_populates="predictions")
     slate: Mapped["ProgolSlateModel | None"] = relationship(back_populates="predictions")
@@ -229,6 +237,42 @@ class MatchResultModel(Base):
     result_code: Mapped[str] = mapped_column(String(1), nullable=False)
 
     match: Mapped["MatchModel"] = relationship(back_populates="results")
+
+
+class MatchLiveResultModel(Base):
+    """Latest live / partial / final observation per (match_id, source).
+
+    Kept SEPARATE from ``match_results`` so the canonical-final store and
+    ``CanonicalResultRepository`` are never polluted by in-progress
+    scores. Goals are nullable (a scheduled match has none yet);
+    ``result_code`` is only set once both goal fields are known. When an
+    observation reaches ``is_final`` the LiveResultService promotes it
+    into ``match_results`` as the canonical final result.
+    """
+
+    __tablename__ = "match_live_results"
+    __table_args__ = (
+        UniqueConstraint("match_id", "source_id", name="uq_match_live_identity"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_id)
+    match_id: Mapped[str] = mapped_column(ForeignKey("matches.id"), nullable=False, index=True)
+    source_id: Mapped[str] = mapped_column(ForeignKey("sources.id"), nullable=False, index=True)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="scheduled")
+    home_goals: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    away_goals: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    result_code: Mapped[str | None] = mapped_column(String(1), nullable=True)
+    minute: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    is_final: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    observed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
 
 
 class PlayerModel(Base):

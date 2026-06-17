@@ -1,12 +1,15 @@
 import json
 from datetime import datetime, timezone
 
+from app.models.tables import PredictionModel
 from app.models.tables import ProgolSlateModel
 from app.models.tables import ProgolSlateProposalModel
+from app.models.tables import TicketRecommendationSnapshotModel
 from fastapi import APIRouter
 from fastapi import Depends
 from fastapi import HTTPException
 from fastapi import Query
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db_session
@@ -16,6 +19,7 @@ from app.repositories.source_repository import SourceRepository
 from app.schemas.slate import ActiveSlateResponse
 from app.schemas.slate import ProgolSlateCreate
 from app.schemas.slate import ProgolSlateResponse
+from app.schemas.slate import PromoteProposalResponse
 from app.schemas.slate import SlateMatchResponse
 from app.schemas.slate import SlateProposalFixture
 from app.schemas.slate import SlateProposalResponse
@@ -34,7 +38,38 @@ from app.services.slate_service import SlateService
 router = APIRouter(prefix="/slates", tags=["slates"])
 
 
-def _serialize_slate(slate: ProgolSlateModel, service: SlateService) -> ProgolSlateResponse:
+def _serialize_slate(
+    slate: ProgolSlateModel,
+    service: SlateService,
+    session: Session | None = None,
+) -> ProgolSlateResponse:
+    has_predictions = False
+    has_valid_snapshot = False
+    if session is not None:
+        has_predictions = session.scalar(
+            select(PredictionModel.id)
+            .where(PredictionModel.slate_id == slate.id)
+            .limit(1)
+        ) is not None
+        has_valid_snapshot = session.scalar(
+            select(TicketRecommendationSnapshotModel.id)
+            .where(
+                TicketRecommendationSnapshotModel.slate_id == slate.id,
+                TicketRecommendationSnapshotModel.is_valid.is_(True),
+            )
+            .limit(1)
+        ) is not None
+    is_closed = service.is_closed(slate)
+    if slate.is_archived:
+        status_label = "Archivada"
+    elif is_closed:
+        status_label = "Cerrada"
+    elif has_valid_snapshot:
+        status_label = "Con ticket"
+    elif has_predictions:
+        status_label = "Con predicciones"
+    else:
+        status_label = "Sin predicción"
     return ProgolSlateResponse(
         id=slate.id,
         label=slate.label,
@@ -42,7 +77,7 @@ def _serialize_slate(slate: ProgolSlateModel, service: SlateService) -> ProgolSl
         week_type=slate.week_type,
         registration_closes_at=slate.registration_closes_at,
         is_archived=slate.is_archived,
-        is_closed=service.is_closed(slate),
+        is_closed=is_closed,
         created_at=slate.created_at,
         matches=[
             SlateMatchResponse(
@@ -56,6 +91,9 @@ def _serialize_slate(slate: ProgolSlateModel, service: SlateService) -> ProgolSl
             )
             for slate_match in sorted(slate.matches, key=lambda item: item.position)
         ],
+        has_predictions=has_predictions,
+        has_valid_snapshot=has_valid_snapshot,
+        status_label=status_label,
     )
 
 
@@ -65,7 +103,7 @@ async def list_slates(
     session: Session = Depends(get_db_session),
 ) -> list[ProgolSlateResponse]:
     service = SlateService(SlateRepository(session))
-    return [_serialize_slate(slate, service) for slate in service.list_slates(include_closed=include_closed)]
+    return [_serialize_slate(slate, service, session) for slate in service.list_slates(include_closed=include_closed)]
 
 
 @router.get("/active", response_model=ActiveSlateResponse)
@@ -90,7 +128,7 @@ async def get_active_slate(
             closes_at = closes_at.replace(tzinfo=timezone.utc)
         seconds_to_close = max(0, int((closes_at - now).total_seconds()))
     return ActiveSlateResponse(
-        slate=_serialize_slate(slate, service),
+        slate=_serialize_slate(slate, service, session),
         seconds_to_close=seconds_to_close,
         server_time=now,
     )
@@ -103,7 +141,7 @@ async def create_slate(
 ) -> ProgolSlateResponse:
     service = SlateService(SlateRepository(session))
     slate = service.create_slate(payload)
-    return _serialize_slate(slate, service)
+    return _serialize_slate(slate, service, session)
 
 
 @router.post("/{slate_id}/matches/{position}/knockout", status_code=204)
@@ -170,7 +208,11 @@ async def refresh_current_progol(
     return service.refresh_current(source_name=request.source_name, local_path=request.local_path)
 
 
-def _serialize_proposal(proposal: ProgolSlateProposalModel) -> SlateProposalResponse:
+def _serialize_proposal(
+    proposal: ProgolSlateProposalModel,
+    *,
+    active_slate_id: str | None = None,
+) -> SlateProposalResponse:
     try:
         payload = json.loads(proposal.payload_json or "{}")
     except json.JSONDecodeError:
@@ -196,7 +238,26 @@ def _serialize_proposal(proposal: ProgolSlateProposalModel) -> SlateProposalResp
         last_seen_at=proposal.last_seen_at,
         fixtures=fixtures,
         promoted_slate_id=proposal.promoted_slate_id,
+        is_already_active=active_slate_id is not None,
+        active_slate_id=active_slate_id,
     )
+
+
+def _find_active_slate_id_for_proposal(
+    proposal: ProgolSlateProposalModel,
+    session,
+) -> str | None:
+    """Return the slate_id if a non-archived slate already exists for this
+    proposal's draw_code, so the UI can surface 'Ya activa / Ver boleta'."""
+    from app.repositories.slate_repository import SlateRepository
+    from app.services.slate_proposal_service import _WEEK_TYPE_PREFIX
+
+    prefix = _WEEK_TYPE_PREFIX.get(proposal.week_type, "PG")
+    formatted_draw_code = f"{prefix}-{proposal.draw_code}"
+    slate = SlateRepository(session).find_by_draw_code(formatted_draw_code)
+    if slate is not None and not slate.is_archived:
+        return slate.id
+    return None
 
 
 @router.get("/proposed", response_model=list[SlateProposalResponse])
@@ -205,7 +266,13 @@ async def list_proposed_slates(
     session: Session = Depends(get_db_session),
 ) -> list[SlateProposalResponse]:
     service = SlateProposalService(session)
-    return [_serialize_proposal(item) for item in service.list_proposals(status=status)]
+    return [
+        _serialize_proposal(
+            item,
+            active_slate_id=_find_active_slate_id_for_proposal(item, session),
+        )
+        for item in service.list_proposals(status=status)
+    ]
 
 
 @router.post("/proposed/observe", response_model=SlateProposalResponse | None)
@@ -222,14 +289,20 @@ async def trigger_proposal_observation(
     return _serialize_proposal(proposal)
 
 
-@router.post("/proposed/{proposal_id}/promote", response_model=ProgolSlateResponse, status_code=201)
+@router.post("/proposed/{proposal_id}/promote", response_model=PromoteProposalResponse, status_code=200)
 async def promote_proposed_slate(
     proposal_id: str,
     session: Session = Depends(get_db_session),
-) -> ProgolSlateResponse:
+) -> PromoteProposalResponse:
     """Turn a validated proposal into a real slate.
 
-    Delegates the heavy lifting to `SlateProposalService.promote_proposal`
+    Returns already_active=True when a slate for this draw_code was
+    already active with the same fixture composition — in that case the
+    UI should show "Ya activa / Ver boleta" rather than treating it as a
+    fresh creation.  already_active=False means a new (or updated) slate
+    was created.
+
+    Delegates fixture matching to SlateProposalService.promote_proposal
     which (1) tries to match each (home, away) pair against real
     upcoming matches in the DB and (2) falls back to a synthetic
     placeholder fixture for pairs we don't have data for. The worker
@@ -240,12 +313,15 @@ async def promote_proposed_slate(
     if proposal is None:
         raise HTTPException(status_code=404, detail="Proposal not found.")
     try:
-        slate = proposal_service.promote_proposal(proposal, actor="operator")
+        result = proposal_service.promote_proposal(proposal, actor="operator")
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     session.commit()
     slate_service = SlateService(SlateRepository(session))
-    return _serialize_slate(slate, slate_service)
+    return PromoteProposalResponse(
+        already_active=result.already_active,
+        slate=_serialize_slate(result.slate, slate_service, session),
+    )
 
 
 # Declared last so it doesn't shadow the more specific `/proposed`,
@@ -257,4 +333,4 @@ async def get_slate(slate_id: str, session: Session = Depends(get_db_session)) -
     slate = service.get_slate(slate_id)
     if slate is None:
         raise HTTPException(status_code=404, detail="Slate not found.")
-    return _serialize_slate(slate, service)
+    return _serialize_slate(slate, service, session)

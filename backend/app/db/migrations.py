@@ -9,7 +9,7 @@ from sqlalchemy.engine import Engine
 
 from app.db.base import Base
 
-SCHEMA_VERSION = 15
+SCHEMA_VERSION = 18
 POSTGRES_MIGRATION_LOCK_ID = 791796
 ALEMBIC_VERSION_PATTERN = re.compile(r"^0*(?P<version>\d+)_.*\.py$")
 
@@ -116,6 +116,15 @@ def _run_migrations_unlocked(engine: Engine) -> None:
         if current_version < 15:
             _migrate_to_v15(connection)
             current_version = 15
+        if current_version < 16:
+            _migrate_to_v16(connection)
+            current_version = 16
+        if current_version < 17:
+            _migrate_to_v17(connection)
+            current_version = 17
+        if current_version < 18:
+            _migrate_to_v18(connection)
+            current_version = 18
         connection.execute(text("UPDATE schema_migrations SET version = :version"), {"version": current_version})
 
 
@@ -166,6 +175,9 @@ def _bootstrap_schema(engine: Engine) -> None:
         _migrate_to_v13(connection)
         _migrate_to_v14(connection)
         _migrate_to_v15(connection)
+        _migrate_to_v16(connection)
+        _migrate_to_v17(connection)
+        _migrate_to_v18(connection)
         connection.execute(text("CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER NOT NULL)"))
         has_row = connection.execute(text("SELECT 1 FROM schema_migrations LIMIT 1")).scalar_one_or_none()
         if has_row is None:
@@ -867,4 +879,90 @@ def _migrate_to_v15(connection) -> None:
             )
         """),
         {"canonical_comp_id": canonical_comp_id},
+    )
+
+
+def _migrate_to_v16(connection) -> None:
+    """Merge 'Re P. Corea' placeholder entity into canonical 'South Korea'.
+
+    Root cause: the Progol Media Semana PDF uses the abbreviated form
+    "Re P. Corea" for South Korea. Before this fix the normalization
+    service lacked an alias entry for the alias-key "re p corea", so the
+    entity resolver created a new placeholder TeamModel instead of linking
+    to the TSDB-ingested South Korea entity. The feature service then
+    found zero recent results for "Re P. Corea", triggering
+    confidence_band=blocked due to insufficient data anchors — even though
+    South Korea has valid recent history ingested under the canonical name.
+
+    This migration follows the same pattern as _migrate_to_v14: it
+    re-points match rows that reference the placeholder to the canonical
+    entity, then moves the placeholder's alias to the canonical so future
+    entity resolution resolves there directly.
+
+    The normalization_service alias fix ("re p corea" → "south-korea",
+    "rep corea" → "south-korea", "korea rep" → "south-korea") prevents new
+    placeholders from being created on re-ingestion.
+
+    Idempotent: the NOT EXISTS guards prevent double-updates.
+    No-op on fresh DB or when either entity does not exist.
+    """
+    _merge_national_team_placeholder(connection, "Re P. Corea", "South Korea")
+
+
+def _migrate_to_v18(connection) -> None:
+    """Add predictions.sanity_audit_json: the full guardrail trace.
+
+    One additive, nullable JSON column. Pre-sanity rows stay NULL (we do
+    not invent a decision that was never taken). The existing
+    home/draw/away_probability columns are untouched and remain the
+    MODEL-adjusted backtesting source — this column never overwrites them.
+
+    Idempotent via _add_column_if_missing.
+    """
+    _add_column_if_missing(
+        connection,
+        "predictions",
+        "sanity_audit_json",
+        "sanity_audit_json TEXT",
+    )
+
+
+def _migrate_to_v17(connection) -> None:
+    """Create match_live_results: live/partial/final observations per source.
+
+    Kept separate from match_results so the canonical-final store and
+    CanonicalResultRepository are never polluted by in-progress scores.
+    Idempotent via CREATE TABLE IF NOT EXISTS; no-op when already present.
+    """
+    connection.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS match_live_results (
+                id VARCHAR(36) PRIMARY KEY,
+                match_id VARCHAR(36) NOT NULL REFERENCES matches(id),
+                source_id VARCHAR(36) NOT NULL REFERENCES sources(id),
+                status VARCHAR(16) NOT NULL DEFAULT 'scheduled',
+                home_goals INTEGER,
+                away_goals INTEGER,
+                result_code VARCHAR(1),
+                minute INTEGER,
+                is_final BOOLEAN NOT NULL DEFAULT FALSE,
+                observed_at TIMESTAMPTZ NOT NULL,
+                updated_at TIMESTAMPTZ NOT NULL,
+                CONSTRAINT uq_match_live_identity UNIQUE (match_id, source_id)
+            )
+            """
+        )
+    )
+    connection.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_match_live_results_match_id "
+            "ON match_live_results (match_id)"
+        )
+    )
+    connection.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_match_live_results_source_id "
+            "ON match_live_results (source_id)"
+        )
     )

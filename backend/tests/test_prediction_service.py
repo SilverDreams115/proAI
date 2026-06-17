@@ -303,6 +303,38 @@ def test_prediction_blocks_when_no_data_anchors_the_match() -> None:
     assert any("ADVERTENCIA" in note and "sin anclaje" in note for note in response.rationale)
 
 
+def test_rationale_includes_anchor_gap_note_when_both_teams_have_only_2_recent() -> None:
+    """Block 3 — evidence quality pass: when each side has exactly 2 recent
+    results and no H2H, the rationale must explain *why* the match is low
+    (anchor condition not met) rather than leaving the analyst without a
+    diagnostic. Covers the typical PG-2336 national-team scenario where
+    WCQ data falls outside the recent-form window."""
+    service = PredictionService(StubTrainingService({"home": 0.55, "draw": 0.25, "away": 0.20}))
+    service.feature_service = StubFeatureService(
+        {
+            "evidence_count": 0.0,
+            "home_recent_matches": 2.0,
+            "away_recent_matches": 2.0,
+            "head_to_head_matches": 0.0,
+            "form_gap": 0.1,
+            "goal_balance_gap": 0.2,
+            "rest_gap_days": 2.0,
+        }
+    )
+
+    # Use Premier League so the stub policy returns "ready" and doesn't force
+    # the band to "blocked" via the unclassified-competition gate.
+    response = service.build_slate_predictions(build_slate("Premier League"))[0]
+
+    assert response.confidence_band == "low"
+    anchor_note = next(
+        (n for n in response.rationale if "Sin anclaje de confianza" in n), None
+    )
+    assert anchor_note is not None, f"Expected anchor gap note in rationale. Got: {response.rationale}"
+    assert "local tiene 2" in anchor_note
+    assert "visita tiene 2" in anchor_note
+
+
 def test_prediction_keeps_scored_confidence_for_covered_competition() -> None:
     service = PredictionService(StubTrainingService({"home": 0.47, "draw": 0.28, "away": 0.25}))
     service.feature_service = StubFeatureService({"evidence_count": 2.0, "home_recent_matches": 3.0, "away_recent_matches": 3.0})

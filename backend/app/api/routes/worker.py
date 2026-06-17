@@ -1,5 +1,6 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
+from app.api.deps import require_worker_auth
 from app.workers.scheduler_worker import get_worker_state
 from app.workers.scheduler_worker import worker
 
@@ -7,12 +8,12 @@ router = APIRouter(prefix="/worker", tags=["worker"])
 
 
 @router.post("/scheduler/run-once")
-async def run_scheduler_once() -> dict[str, int]:
+async def run_scheduler_once(_: None = Depends(require_worker_auth)) -> dict[str, int]:
     return {"executed_runs": worker.run_once()}
 
 
 @router.get("/scheduler/status")
-async def get_scheduler_status() -> dict[str, float | int | str | None]:
+async def get_scheduler_status(_: None = Depends(require_worker_auth)) -> dict[str, float | int | str | None]:
     state = get_worker_state()
     return {
         "executed_runs": state.executed_runs,

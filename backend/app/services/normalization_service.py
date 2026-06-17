@@ -71,6 +71,11 @@ class NormalizationService:
         # "Korea Republic" abbreviations; "corea del sur" already existed.
         "republica de corea": "south-korea",
         "korea republic": "south-korea",
+        # Progol Media Semana PDF uses abbreviated forms like "Re P. Corea",
+        # "Rep. Corea", and TSDB sometimes uses "Korea Rep" — all are South Korea.
+        "re p corea": "south-korea",
+        "rep corea": "south-korea",
+        "korea rep": "south-korea",
         "corea del norte": "north-korea",
         "corea": "south-korea",       # bare "Corea" in some PDF editions
         # "chequia" is the modern Spanish name for Czech Republic;
@@ -142,6 +147,22 @@ class NormalizationService:
         "uefa nations league c": "international-friendlies",
         "liga de naciones": "international-friendlies",
         "liga de naciones uefa": "international-friendlies",
+        # World Cup Qualifying confederation variants.
+        # TSDB stores these under separate league IDs (5513-5518); they
+        # follow the operating policy for international-friendlies until a
+        # dedicated WCQ benchmark is built.
+        "world cup qualifying": "international-friendlies",
+        "world cup qualifying uefa": "international-friendlies",
+        "world cup qualifying conmebol": "international-friendlies",
+        "world cup qualifying caf": "international-friendlies",
+        "world cup qualifying afc": "international-friendlies",
+        "world cup qualifying concacaf": "international-friendlies",
+        "world cup qualifying ofc": "international-friendlies",
+        "eliminatorias mundialistas": "international-friendlies",
+        "clasificatorio mundial": "international-friendlies",
+        "eliminatorias sudamericanas": "international-friendlies",
+        "eliminatorias conmebol": "international-friendlies",
+        "wcq": "international-friendlies",
     }
 
     def normalize_team_name(self, value: str) -> str:

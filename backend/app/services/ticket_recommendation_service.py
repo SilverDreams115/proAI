@@ -8,6 +8,7 @@ from app.db.session import managed_transaction
 from app.domain.entities import Outcome
 from app.models.tables import ProgolSlateModel
 from app.repositories.ticket_repository import TicketRecommendationRepository
+from app.schemas.prediction import DrawRiskResponse
 from app.schemas.prediction import MatchPredictionResponse
 from app.schemas.prediction import MatchTicketRecommendationResponse
 from app.schemas.prediction import TicketCoverageMode
@@ -26,6 +27,13 @@ class TicketRecommendationService:
     DEFAULT_COVERAGE_TARGET_FRACTION = 0.9
     DEFAULT_COVERAGE_TARGET_PROBABILITY = 0.8
     OUTCOME_ORDER = [Outcome.HOME, Outcome.DRAW, Outcome.AWAY]
+    # Draw-reporting thresholds (independent of confidence-band thresholds).
+    LIVE_DRAW_THRESHOLD = 0.25
+    STRONG_DRAW_THRESHOLD = 0.30
+    # Coverage levels per pick_type — used to enforce the nesting
+    # invariant simple ⊆ doubles ⊆ full (a higher mode must cover at
+    # least what the lower mode covers).
+    _COVERAGE_RANK = {"fixed": 1, "double": 2, "triple": 3}
     MULTIPLE_RULES = {
         "weekend": {"doubles_only_max": 8, "combined_double_max": 2, "combined_triple_max": 4},
         "midweek": {"doubles_only_max": 3, "combined_double_max": 3, "combined_triple_max": 2},
@@ -105,14 +113,9 @@ class TicketRecommendationService:
         if not predictions:
             return []
         prob_by_match = {
-            prediction.match_id: sorted(
-                [
-                    prediction.home_probability,
-                    prediction.draw_probability,
-                    prediction.away_probability,
-                ],
-                reverse=True,
-            )
+            # DECISION probabilities — coverage math must reflect what the
+            # boleta actually bets on, not the raw model output.
+            prediction.match_id: sorted(prediction.decision_vector(), reverse=True)
             for prediction in predictions
         }
         decisions_by_match = {rec.match_id: rec.decisions for rec in recommendations}
@@ -198,16 +201,86 @@ class TicketRecommendationService:
     ) -> MatchTicketRecommendationResponse:
         outcomes = self._sorted_outcomes(prediction)
         best, second, _third = outcomes
-        decisions = {
-            "simple": TicketDecisionResponse(pick_type="fixed", picks=[best[0]]),
-            "doubles": self._doubles_decision(prediction, best, second, double_ids),
-            "full": self._full_decision(prediction, best, second, full_double_ids, full_triple_ids),
-        }
+        simple = TicketDecisionResponse(pick_type="fixed", picks=[best[0]])
+        doubles = self._doubles_decision(prediction, best, second, double_ids)
+        full = self._full_decision(prediction, best, second, full_double_ids, full_triple_ids)
+        # Enforce coverage monotonicity (simple ⊆ doubles ⊆ full) so the
+        # most aggressive mode never covers LESS than a cheaper one. This
+        # is a pure combinatorial fix: it only ever *raises* coverage and
+        # touches neither probabilities nor confidence bands.
+        doubles, full = self._enforce_monotonic_coverage(simple, doubles, full, best, second)
+        decisions = {"simple": simple, "doubles": doubles, "full": full}
         return MatchTicketRecommendationResponse(
             position=prediction.position,
             match_id=prediction.match_id,
             decisions=decisions,
             validation=self._validation(profile),
+            draw_risk=self._draw_risk(prediction, decisions),
+        )
+
+    def _enforce_monotonic_coverage(
+        self,
+        simple: TicketDecisionResponse,
+        doubles: TicketDecisionResponse,
+        full: TicketDecisionResponse,
+        best: tuple[Outcome, float],
+        second: tuple[Outcome, float],
+    ) -> tuple[TicketDecisionResponse, TicketDecisionResponse]:
+        """Lift `doubles` and `full` so coverage is nested by mode.
+
+        Picks are strictly nested by pick_type ({best} ⊂ {best,second} ⊂
+        all three), so enforcing the coverage *rank* ordering guarantees
+        set containment. We only raise a mode's rank, never lower it, so
+        no coverage that the optimizer chose is ever removed.
+        """
+        simple_rank = self._COVERAGE_RANK[simple.pick_type]
+        doubles_rank = max(self._COVERAGE_RANK[doubles.pick_type], simple_rank)
+        full_rank = max(self._COVERAGE_RANK[full.pick_type], doubles_rank)
+        return (
+            self._decision_for_rank(doubles_rank, doubles.source, best, second),
+            self._decision_for_rank(full_rank, full.source, best, second),
+        )
+
+    def _decision_for_rank(
+        self,
+        rank: int,
+        source: str,
+        best: tuple[Outcome, float],
+        second: tuple[Outcome, float],
+    ) -> TicketDecisionResponse:
+        if rank >= 3:
+            return TicketDecisionResponse(
+                pick_type="triple", picks=list(self.OUTCOME_ORDER), source=source
+            )
+        if rank == 2:
+            return TicketDecisionResponse(
+                pick_type="double", picks=[best[0], second[0]], source=source
+            )
+        return TicketDecisionResponse(pick_type="fixed", picks=[best[0]], source=source)
+
+    def _draw_risk(
+        self,
+        prediction: MatchPredictionResponse,
+        decisions: dict[str, TicketDecisionResponse],
+    ) -> DrawRiskResponse:
+        """Per-match draw-risk projection (reporting only, never mutates picks)."""
+        home, p_draw, away = prediction.decision_vector()
+        # Rank of the draw among the three outcomes: how many of the other
+        # two strictly beat it. None beating → 1st, one → 2nd, both → 3rd.
+        draw_rank = 1 + sum(1 for p in (home, away) if p > p_draw)
+
+        def _covers_draw(mode: str) -> bool:
+            decision = decisions.get(mode)
+            return decision is not None and Outcome.DRAW in decision.picks
+
+        return DrawRiskResponse(
+            p_draw=round(p_draw, 4),
+            draw_rank=draw_rank,
+            is_live_draw=p_draw >= self.LIVE_DRAW_THRESHOLD,
+            is_strong_draw=p_draw >= self.STRONG_DRAW_THRESHOLD,
+            covered_simple=_covers_draw("simple"),
+            covered_doubles=_covers_draw("doubles"),
+            covered_full=_covers_draw("full"),
         )
 
     def _doubles_decision(
@@ -218,7 +291,16 @@ class TicketRecommendationService:
         double_ids: set[str],
     ) -> TicketDecisionResponse:
         best_gap = best[1] - second[1]
-        if best[1] >= 0.58 and best_gap >= 0.12 and prediction.confidence_band != "low":
+        # Confident-single shortcut: only when the model band is solid AND
+        # the sanity layer permits a FIJO. A low-evidence / friendly /
+        # fallback / extreme-without-evidence match falls through to the
+        # double logic even if the (degraded) top prob still looks high.
+        if (
+            best[1] >= 0.58
+            and best_gap >= 0.12
+            and prediction.confidence_band != "low"
+            and self._allows_confident_single(prediction)
+        ):
             return TicketDecisionResponse(pick_type="fixed", picks=[best[0]])
         if prediction.match_id in double_ids:
             return TicketDecisionResponse(pick_type="double", picks=[best[0], second[0]])
@@ -278,10 +360,8 @@ class TicketRecommendationService:
         probabilities descending so top1/top2/top3 are well-defined."""
         options: list[TicketOption] = []
         for prediction in predictions:
-            sorted_probs = sorted(
-                [prediction.home_probability, prediction.draw_probability, prediction.away_probability],
-                reverse=True,
-            )
+            # DECISION probabilities feed the optimizer DP — never raw.
+            sorted_probs = sorted(prediction.decision_vector(), reverse=True)
             options.append(
                 TicketOption(
                     match_id=prediction.match_id,
@@ -336,7 +416,18 @@ class TicketRecommendationService:
         )
         gap_risk = 0.14 if top_gap <= 0.08 else 0.08 if top_gap <= 0.14 else 0.03 if top_gap <= 0.22 else -0.04
         third_outcome_risk = 0.09 if third[1] >= 0.24 else 0.05 if third[1] >= 0.20 else 0.0
-        validation_risk = entropy + confidence_risk + readiness_risk + evidence_risk + gap_risk + third_outcome_risk
+        # Sanity-layer risk: the guardrail status / flags drive the ticket
+        # risk directly so the optimizer and UI never disagree on a match.
+        final_status = (prediction.final_status or "").upper()
+        sanity_flags = list(prediction.flags or [])
+        sanity_risk = 0.0
+        if final_status in self._REVIEW_STATUSES:
+            sanity_risk += 0.18
+        if any(flag in self._SINGLE_BLOCKING_FLAGS for flag in sanity_flags):
+            sanity_risk += 0.06
+        validation_risk = (
+            entropy + confidence_risk + readiness_risk + evidence_risk + gap_risk + third_outcome_risk + sanity_risk
+        )
         return {
             "entropy": round(entropy, 4),
             "top_gap": round(top_gap, 4),
@@ -354,6 +445,8 @@ class TicketRecommendationService:
             "recent_results_count": recent_results_count,
             "anchored_data_count": anchored_data_count,
             "validation_risk": round(validation_risk, 4),
+            "final_status": final_status,
+            "sanity_flags": sanity_flags,
             "double_score": round(validation_risk + second[1] * 0.7 - top_gap * 0.35, 4),
             "triple_score": round(validation_risk + third[1] * 1.45 - top_gap * 0.18 - second_gap * 0.1, 4),
         }
@@ -366,6 +459,8 @@ class TicketRecommendationService:
         anchored_data_count = int(profile.get("anchored_data_count", evidence_count))
         third_probability = float(profile["third_probability"])
         validation_risk = float(profile["validation_risk"])
+        final_status = str(profile.get("final_status", "")).upper()
+        sanity_flags = list(profile.get("sanity_flags", []) or [])
         reasons: list[str] = []
         if top_gap <= 0.08:
             reasons.append("brecha muy cerrada entre las dos primeras opciones")
@@ -381,11 +476,27 @@ class TicketRecommendationService:
         reasons.append(f"{evidence_count} evidencia(s) ligada(s)")
         if third_probability >= 0.22:
             reasons.append("el tercer resultado conserva peso")
+        if final_status in self._REVIEW_STATUSES:
+            reasons.append(f"capa de seguridad: {final_status.lower()}")
+
+        # The sanity layer is authoritative: a match it flagged REVISAR /
+        # BLOQUEADO, or that carries a single-blocking flag, can never
+        # validate as a defensible single — force the "no dejar simple"
+        # bucket so the ticket recommendation matches the UI guardrail.
+        sanity_forces_high = final_status in self._REVIEW_STATUSES or any(
+            flag in self._SINGLE_BLOCKING_FLAGS for flag in sanity_flags
+        )
 
         level = "low"
         label = "Fijo defendible"
         recommendation = "Puede quedar simple si no hay presupuesto para cobertura."
-        if top_gap <= 0.08 or validation_risk >= 1.16 or confidence == "low" or third_probability >= 0.24:
+        if (
+            sanity_forces_high
+            or top_gap <= 0.08
+            or validation_risk >= 1.16
+            or confidence == "low"
+            or third_probability >= 0.24
+        ):
             level = "high"
             label = "No dejar simple"
             recommendation = "Priorizar doble o triple en completa."
@@ -404,16 +515,50 @@ class TicketRecommendationService:
             label=label,
             recommendation=recommendation,
             reasons=reasons,
-            metrics={key: value for key, value in profile.items() if key not in {"double_score", "triple_score"}},
+            metrics={
+                key: value
+                for key, value in profile.items()
+                if key not in {"double_score", "triple_score", "sanity_flags"}
+            },
         )
 
     def _sorted_outcomes(self, prediction: MatchPredictionResponse) -> list[tuple[Outcome, float]]:
+        # DECISION probabilities, not raw. `decision_vector()` returns the
+        # guardrailed (sanity-degraded) vector and only falls back to the
+        # legacy positional fields for unpopulated fixtures.
+        home, draw, away = prediction.decision_vector()
         return sorted(
             [
-                (Outcome.HOME, prediction.home_probability),
-                (Outcome.DRAW, prediction.draw_probability),
-                (Outcome.AWAY, prediction.away_probability),
+                (Outcome.HOME, home),
+                (Outcome.DRAW, draw),
+                (Outcome.AWAY, away),
             ],
             key=lambda item: item[1],
             reverse=True,
         )
+
+    # Sanity flags / statuses that forbid leaving a match as a confident
+    # single (FIJO) in the ticket — it must be covered with at least a
+    # double. Mirrors the UI guardrail so optimizer and UI never disagree.
+    _SINGLE_BLOCKING_FLAGS = frozenset(
+        {
+            "LOW_EVIDENCE",
+            "FALLBACK_USED",
+            "EXTREME_PROBABILITY_WITHOUT_EVIDENCE",
+            "BLOCKED_INSUFFICIENT_DATA",
+            "SUSPICIOUS_CLASS_PROBABILITY",
+        }
+    )
+    _REVIEW_STATUSES = frozenset({"REVISAR", "BLOQUEADO"})
+
+    def _allows_confident_single(self, prediction: MatchPredictionResponse) -> bool:
+        """True only when the sanity layer permits this match to stay a
+        confident single (FIJO) in the ticket. LOW_EVIDENCE / FALLBACK /
+        EXTREME-without-evidence / REVISAR / BLOQUEADO all forbid it."""
+        status = (prediction.final_status or "").upper()
+        if status in self._REVIEW_STATUSES:
+            return False
+        flags = prediction.flags or []
+        if any(flag in self._SINGLE_BLOCKING_FLAGS for flag in flags):
+            return False
+        return True

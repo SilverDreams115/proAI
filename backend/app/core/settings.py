@@ -63,6 +63,16 @@ class Settings(BaseModel):
     # inside the last 2h before the current one closes".
     progol_auto_promote_enabled: bool = Field(default=True)
     progol_auto_promote_threshold_hours: float = Field(default=2.0)
+    # Live results observer: persist a final JornadaScore once a closed
+    # slate has all-final results. Interval is intentionally coarse — the
+    # observer is read-mostly and never fabricates a result.
+    live_results_observe_enabled: bool = Field(default=True)
+    live_results_observe_interval_minutes: int = Field(default=5)
+    # Automated LN results fetch in the worker. Off by default: with no
+    # configured URL the worker only finalizes already-ingested results.
+    # Set the URL (and enable) to auto-pull official marcadores.
+    live_results_fetch_enabled: bool = Field(default=False)
+    live_results_source_url: str | None = Field(default=None)
     allow_pickle_model_artifacts: bool = Field(default=False)
     live_pick_ready_competitions: list[str] = Field(default_factory=lambda: ["e0", "premier-league"])
     live_pick_blocked_competitions: list[str] = Field(default_factory=lambda: ["i1", "serie-a", "d1", "bundesliga"])
@@ -183,6 +193,12 @@ def load_settings() -> Settings:
         progol_auto_promote_threshold_hours=float(
             os.getenv("PROAI_PROGOL_AUTO_PROMOTE_THRESHOLD_HOURS", "2.0")
         ),
+        live_results_observe_enabled=_get_bool("PROAI_LIVE_RESULTS_OBSERVE_ENABLED", True),
+        live_results_observe_interval_minutes=int(
+            os.getenv("PROAI_LIVE_RESULTS_OBSERVE_INTERVAL_MINUTES", "5")
+        ),
+        live_results_fetch_enabled=_get_bool("PROAI_LIVE_RESULTS_FETCH_ENABLED", False),
+        live_results_source_url=os.getenv("PROAI_LIVE_RESULTS_SOURCE_URL") or None,
         allow_pickle_model_artifacts=_get_bool(
             "PROAI_ALLOW_PICKLE_MODEL_ARTIFACTS",
             environment.lower() != "production",

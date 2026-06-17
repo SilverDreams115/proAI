@@ -1,22 +1,16 @@
-"""Fetches the Lotería Nacional Progol guide PDF and extracts the upcoming
-contest's 14 fixtures (Fase 2).
+"""Fetches LN Progol guide PDFs (weekend and Media Semana) and extracts upcoming
+contest fixtures.
 
-The PDF is the canonical source: every weekend LN publishes a single-page
-"GUÍA DE LA QUINIELA CONCURSO XXXX" with the 14 local-vs-visitante pairs
-plus the venta dates. The connector:
+Two connectors:
+- ProgolGuiaPdfConnector: LN /Progol/Quiniela page → 14-fixture weekend PDF
+- ProgolMsGuiaPdfConnector: LN /ProgolMediaSemana/Quiniela page → 9-fixture MS PDF
 
-  1. Fetches the LN /Progol/Quiniela landing page.
-  2. Scrapes the latest PDF URL from the page (the URL has a version
-     query string that changes when LN republishes; resolving it on
-     every fetch keeps us aligned with whatever they last published).
-  3. Downloads the PDF and runs pypdf text extraction.
-  4. Pulls CONCURSO number, 14 fixtures and the venta cierre datetime
-     via regex over the extracted text.
-
-The output `SourceDocument.payload` is purposefully thin — just the
-fields the SlateProposalService consumes. Heavy lifting like entity
-resolution lives outside this connector so the parser stays unit-
-testable with a captured PDF fixture.
+Both PDFs share the CONCURSO / CASILLERO / LOCAL / VISITANTE format, but
+the MS PDF has:
+  - 9 fixtures instead of 14
+  - CIERRE DE VENTA (not VENTA DEL...) with a different date layout
+  - Some fixtures with home team names not preceded by VS (PDF 2-column artifact)
+  - Some home teams appearing at the document tail (column-order artifact)
 """
 from __future__ import annotations
 
@@ -235,3 +229,226 @@ def _parse_cierre(text: str) -> datetime | None:
     mx_tz = timezone(timedelta(hours=-6))
     local_dt = datetime(year, month, day, hour, minute, tzinfo=mx_tz)
     return local_dt.astimezone(timezone.utc)
+
+
+# ---------------------------------------------------------------------------
+# Progol Media Semana PDF support
+# ---------------------------------------------------------------------------
+
+_MS_GUIA_PDF_HREF_RE = re.compile(
+    r'href="([^"]*progol_media_guia_quiniela/guiamedia\.pdf[^"]*)"',
+    flags=re.IGNORECASE,
+)
+_MS_FALLBACK_URL = (
+    "https://www.loterianacional.gob.mx/Documentos/juegos/Concursosysorteos/"
+    "progol_media_guia_quiniela/guiamedia.pdf"
+)
+
+# MS cierre: "CIERRE DE VENTA\nConcurso NNN\nJueves 11 de junio hasta las \n13:00 horas"
+_MS_VENTA_RE = re.compile(
+    r"(?:CIERRE\s+DE\s+VENTA|VENTA)\s*\n"
+    r"Concurso\s+\d+\s*\n"
+    r"\w+\s+(?P<day>\d{1,2})\s+de\s+(?P<month>\w+)\s+hasta\s+las\s+\n?"
+    r"(?P<hour>\d{1,2}):(?P<minute>\d{2})",
+    re.IGNORECASE,
+)
+
+# Pattern to match home team followed by VS (with optional whitespace/newlines between)
+_MS_HOME_VS_RE = re.compile(
+    r"([A-ZÁÉÍÓÚÜÑ][A-ZÁÉÍÓÚÜÑ.\s]{0,60}?)\s*\n?\s*VS\s*(?:\n|(?=\s*CASILLERO))",
+    re.MULTILINE,
+)
+
+
+def _ms_clean(raw: str) -> str:
+    return " ".join(raw.split()).strip(".,;: ")
+
+
+def parse_ms_guia_text(text: str) -> tuple[str | None, list[_Fixture], datetime | None]:
+    """Parse the LN Progol Media Semana PDF text.
+
+    The MS PDF uses a 2-column layout that pypdf serialises non-linearly,
+    causing some home team names to appear AFTER all CASILLERO markers.
+    We handle this with a 3-step strategy:
+      1. Extract away teams (text immediately after each CASILLERO N)
+      2. Match home teams from VS markers that precede each CASILLERO
+      3. Rescue orphan home teams at end-of-text (2-column artifact)
+    """
+    draw_match = _CONCURSO_RE.search(text)
+    draw_code = draw_match.group(1) if draw_match else None
+
+    # Step 1: extract all casillero positions and away teams
+    casillero_spans: list[tuple[int, int, int]] = []  # (start, pos, end)
+    for m in re.finditer(r"CASILLERO\s+(\d{1,2})", text):
+        casillero_spans.append((m.start(), int(m.group(1)), m.end()))
+
+    away_map: dict[int, str] = {}
+    for _, pos, end_idx in casillero_spans:
+        after = text[end_idx:]
+        for line in after.split("\n"):
+            stripped = line.strip()
+            if stripped and re.match(r"[A-ZÁÉÍÓÚÜÑ]", stripped):
+                away_map[pos] = _normalize_team(stripped)
+                break
+
+    # Step 2: match home teams from VS markers closest BEFORE each CASILLERO
+    vs_occurrences: list[tuple[int, str]] = []  # (end_of_vs, home_raw)
+    for m in _MS_HOME_VS_RE.finditer(text):
+        home_raw = _ms_clean(m.group(1))
+        if home_raw and home_raw not in {"LOCAL", "VISITANTE", "LOCAL VISITANTE"}:
+            vs_occurrences.append((m.end(), home_raw))
+
+    home_map: dict[int, str] = {}
+    for i, (cas_start, pos, _) in enumerate(casillero_spans):
+        # Only consider VS markers that fall in the gap between the PREVIOUS
+        # CASILLERO and THIS CASILLERO so the same VS is never shared.
+        prev_end = casillero_spans[i - 1][2] if i > 0 else 0
+        candidates = [
+            (vs_end, home)
+            for vs_end, home in vs_occurrences
+            if prev_end <= vs_end <= cas_start + 5
+        ]
+        if candidates:
+            vs_end, home_raw = max(candidates, key=lambda x: x[0])
+            home_map[pos] = _normalize_team(home_raw)
+
+    # Step 3: rescue orphan home-VS pairs at the document tail (CANADÁ VS case).
+    # Run BEFORE the caps_lines fallback so the authoritative orphan wins.
+    # In a 2-column PDF, the left column's home team for an early CASILLERO can
+    # appear after ALL CASILLERO markers in the extracted text.
+    if casillero_spans:
+        tail_start = casillero_spans[-1][2]
+        tail = text[tail_start:]
+        orphans = [
+            _ms_clean(m.group(1))
+            for m in re.finditer(
+                r"([A-ZÁÉÍÓÚÜÑ][A-ZÁÉÍÓÚÜÑ.\s]{0,50}?)\s*\n?\s*VS\b",
+                tail,
+            )
+            if _ms_clean(m.group(1)) not in {"LOCAL", "VISITANTE"}
+        ]
+        missing = [pos for _, pos, _ in casillero_spans if pos not in home_map]
+        for orphan, missing_pos in zip(orphans, missing):
+            home_map[missing_pos] = _normalize_team(orphan)
+
+    # Step 4: for positions still missing a home team, look for the last all-caps
+    # line in the text window just before the CASILLERO (handles "PAÍSES BAJOS"
+    # which appears without a VS marker in the 2-column layout).
+    # Short acronyms (UEFA, FIFA, CAF…) are excluded to avoid matching
+    # competition names embedded in the description text.
+    _NOISE_TOKENS = frozenset(
+        {"UEFA", "FIFA", "CONMEBOL", "CONCACAF", "AFC", "CAF", "OFC", "COPA", "VS"}
+    )
+    for i, (cas_start, pos, _) in enumerate(casillero_spans):
+        if pos in home_map:
+            continue
+        prev_end = casillero_spans[i - 1][2] if i > 0 else 0
+        window = text[prev_end:cas_start]
+        caps_lines = [
+            raw_line.strip()
+            for raw_line in window.split("\n")
+            if re.match(r"^[A-ZÁÉÍÓÚÜÑ][A-ZÁÉÍÓÚÜÑ\s.]{2,50}$", raw_line.strip())
+            and raw_line.strip() not in {"LOCAL", "VISITANTE", "LOCAL VISITANTE"}
+            and raw_line.strip() not in _NOISE_TOKENS
+        ]
+        if caps_lines:
+            home_map[pos] = _normalize_team(caps_lines[-1])
+
+    fixtures: list[_Fixture] = []
+    for _, pos, _ in casillero_spans:
+        home = home_map.get(pos)
+        away = away_map.get(pos)
+        if home and away:
+            fixtures.append(_Fixture(position=pos, home=home, away=away))
+
+    closes_at = _parse_ms_cierre(text)
+    return draw_code, fixtures, closes_at
+
+
+def _parse_ms_cierre(text: str) -> datetime | None:
+    match = _MS_VENTA_RE.search(text)
+    if match is None:
+        return None
+    try:
+        day = int(match.group("day"))
+        month = _SPANISH_MONTHS.get(match.group("month").lower())
+        hour = int(match.group("hour"))
+        minute = int(match.group("minute"))
+    except (TypeError, ValueError):
+        return None
+    if month is None:
+        return None
+    year = datetime.now(timezone.utc).year
+    mx_tz = timezone(timedelta(hours=-6))
+    local_dt = datetime(year, month, day, hour, minute, tzinfo=mx_tz)
+    return local_dt.astimezone(timezone.utc)
+
+
+class ProgolMsGuiaPdfConnector(SourceConnector):
+    """LN Progol Media Semana PDF guide — 9-fixture MS contest.
+
+    Fetches the LN /ProgolMediaSemana/Quiniela landing page to resolve the
+    versioned guiamedia.pdf URL, then parses it with parse_ms_guia_text().
+    """
+
+    DEFAULT_LANDING_URL = "https://www.loterianacional.gob.mx/ProgolMediaSemana/Quiniela"
+
+    def __init__(self, name: str, base_url: str | None = None) -> None:
+        self.name = name
+        self.kind = "progol_ms_guia_pdf"
+        self.base_url = base_url or self.DEFAULT_LANDING_URL
+        self.week_type = "midweek"
+        self.description = "LN Progol Media Semana PDF guide — official upcoming MS contest source."
+
+    def fetch(self) -> list[SourceDocument]:
+        captured = datetime.now(timezone.utc)
+        pdf_url = self._resolve_pdf_url()
+        pdf_bytes = self._download_bytes(pdf_url)
+        text = self._extract_text(pdf_bytes)
+        draw_code, fixtures, closes_at = parse_ms_guia_text(text)
+        return [
+            SourceDocument(
+                source_name=self.name,
+                source_url=pdf_url,
+                captured_at=captured,
+                payload={
+                    "title": f"Progol MS Guía concurso {draw_code}" if draw_code else "Progol MS Guía",
+                    "summary": f"Concurso MS {draw_code}, {len(fixtures)} fixtures parsed.",
+                    "draw_code": draw_code,
+                    "week_type": "midweek",
+                    "registration_closes_at": closes_at.isoformat() if closes_at else None,
+                    "fixtures": [
+                        {"position": f.position, "home": f.home, "away": f.away}
+                        for f in fixtures
+                    ],
+                    "raw_text_excerpt": text[:600],
+                },
+            )
+        ]
+
+    def _resolve_pdf_url(self) -> str:
+        try:
+            request = Request(
+                self.base_url,
+                headers={"User-Agent": "proAI/0.1 (+https://local.proai)", "Accept": "text/html"},
+            )
+            with urlopen(request, timeout=15) as response:
+                html = response.read().decode("utf-8", errors="replace")
+        except Exception:
+            return _MS_FALLBACK_URL
+        m = _MS_GUIA_PDF_HREF_RE.search(html)
+        if m is None:
+            return _MS_FALLBACK_URL
+        return urljoin(self.base_url, m.group(1))
+
+    def _download_bytes(self, url: str) -> bytes:
+        request = Request(
+            url,
+            headers={"User-Agent": "proAI/0.1 (+https://local.proai)", "Accept": "application/pdf"},
+        )
+        with urlopen(request, timeout=30) as response:
+            return response.read()
+
+    def _extract_text(self, pdf_bytes: bytes) -> str:
+        reader = PdfReader(io.BytesIO(pdf_bytes))
+        return "\n".join(page.extract_text() or "" for page in reader.pages)

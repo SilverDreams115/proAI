@@ -13,6 +13,23 @@ class Outcome(str, Enum):
     AWAY = "2"
 
 
+class MatchResultStatus(str, Enum):
+    """Normalized lifecycle status for a match observation.
+
+    Independent of the canonical-result store: a match can have a live
+    status (in progress) before any final result exists, and a final
+    canonical result always maps to ``FULL_TIME``.
+    """
+
+    SCHEDULED = "scheduled"
+    LIVE = "live"
+    HALFTIME = "halftime"
+    FULL_TIME = "full_time"
+    POSTPONED = "postponed"
+    CANCELLED = "cancelled"
+    UNKNOWN = "unknown"
+
+
 class EvidenceKind(str, Enum):
     STATISTIC = "statistic"
     NEWS = "news"

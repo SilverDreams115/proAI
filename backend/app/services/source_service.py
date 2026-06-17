@@ -11,6 +11,7 @@ from app.connectors.http import validate_public_https_url
 from app.connectors.json_feed import JsonFeedConnector
 from app.connectors.local_context_json import LocalContextJsonConnector
 from app.connectors.progol_catalog_html import ProgolCatalogHtmlConnector
+from app.connectors.progol_guia_pdf import ProgolMsGuiaPdfConnector
 from app.connectors.registry import connector_registry
 from app.connectors.rss_feed import RssFeedConnector
 from app.core.errors import ConflictError
@@ -32,6 +33,7 @@ class SourceService:
         "football_data_uk_csv",
         "availability_json_feed",
         "progol_catalog_html",
+        "progol_ms_guia_pdf",
         "local_context_json",
     }
     ALLOWED_PARSER_PROFILES = {"generic", "sports_feed_v1"}
@@ -44,6 +46,7 @@ class SourceService:
         "football_data_uk_csv": {"sports_feed_v1"},
         "availability_json_feed": {"generic"},
         "progol_catalog_html": {"generic"},
+        "progol_ms_guia_pdf": {"generic"},
         "local_context_json": {"generic"},
     }
     SUPPORTED_PROVIDERS = [
@@ -118,6 +121,15 @@ class SourceService:
             "connector_kind": "progol_catalog_html",
             "parser_profile": "generic",
             "description": "TuLotero Progol Media Semana product page with contest options and sale window.",
+        },
+        {
+            "provider_id": "ln-progol-ms-guide",
+            "connector_kind": "progol_ms_guia_pdf",
+            "parser_profile": "generic",
+            "description": (
+                "LN Progol Media Semana guide PDF — official 9-fixture MS contest source. "
+                "URL: https://www.loterianacional.gob.mx/ProgolMediaSemana/Quiniela"
+            ),
         },
         {
             "provider_id": "official-progol-quiniela-page",
@@ -252,6 +264,20 @@ class SourceService:
                 )
             return source
 
+        if payload.provider_id == "ln-progol-ms-guide":
+            ms_url = str(payload.feed_url or ProgolMsGuiaPdfConnector.DEFAULT_LANDING_URL)
+            with managed_transaction(self.repository.session):
+                source = self._create_provider_source(
+                    payload=payload,
+                    base_url=ms_url,
+                    kind="progol_ms_guia_pdf",
+                    parser_profile="generic",
+                )
+                connector_registry.register(
+                    ProgolMsGuiaPdfConnector(name=source.name, base_url=ms_url)
+                )
+            return source
+
         if payload.provider_id == "local-context-json":
             local_path = (
                 payload.local_path
@@ -336,6 +362,10 @@ class SourceService:
         if kind == "progol_catalog_html" and connector_registry.get(source.name) is None:
             connector_registry.register(
                 ProgolCatalogHtmlConnector(name=source.name, base_url=source.base_url)
+            )
+        if kind == "progol_ms_guia_pdf" and connector_registry.get(source.name) is None:
+            connector_registry.register(
+                ProgolMsGuiaPdfConnector(name=source.name, base_url=source.base_url)
             )
         if kind == "local_context_json" and connector_registry.get(source.name) is None:
             connector_registry.register(

@@ -250,6 +250,50 @@ class ModelTrainingArtifactsMixin:
                 return {"home": 0.4, "draw": 0.3, "away": 0.3}
         return self._score_match_with_artifact(match, artifact)
 
+    def current_model_artifact_id(self) -> str | None:
+        """Return a stable id for the artifact currently used to score, or
+        None when no trained artifact exists (heuristic-only fallback).
+
+        Used to stamp prediction audits so a row can be traced back to the
+        exact training run that produced it."""
+        try:
+            run = self.training_repository.latest_run(self.MODEL_NAME)
+        except Exception:  # pragma: no cover - defensive; audit must never crash scoring
+            return None
+        return getattr(run, "id", None) if run is not None else None
+
+    def prediction_engine_for_match(self, match: MatchModel) -> str:
+        """Return the engine that ``score_match`` *would* use for this
+        match, without recomputing the score.
+
+        Mirrors the dispatch in ``_score_match_with_artifact`` so the
+        sanity layer can flag heuristic-fallback predictions. Returns one
+        of ``"xgboost"``, ``"heuristic_blend"``, ``"similarity_knn"`` or
+        ``"placeholder"``. Anything other than ``"xgboost"`` is treated
+        as a non-ML fallback by ``fallback_used``."""
+        artifact = self.latest_artifact()
+        if artifact is None:
+            built = self._build_heuristic_artifact(self.entity_repository.list_matches())
+            if int(built.get("training_sample_size", 0)) <= 0:
+                return "placeholder"
+            return "heuristic_blend"
+        model_type = artifact.get("model_type")
+        if model_type == "xgboost_multiclass":
+            approved = self._xgboost_approved_competitions()
+            verdict_available = bool(self._xgboost_verdict_cache.get("available", False))
+            competition_key = self._competition_key(getattr(match.competition, "name", ""))
+            if verdict_available and competition_key not in approved:
+                return "heuristic_blend"
+            # Only treat the booster as the engine when it can actually
+            # load and produce a 3-class vector; otherwise the dispatch
+            # falls through to the heuristic branch.
+            if self._score_with_xgboost(match, artifact) is not None:
+                return "xgboost"
+            return "heuristic_blend"
+        if model_type == "similarity_knn":
+            return "similarity_knn"
+        return "heuristic_blend"
+
     def competition_operating_policy(self, competition_name: str) -> dict[str, Any]:
         competition_key = self._competition_key(competition_name)
         policy = dict(self.COMPETITION_POLICY_OVERRIDES.get(competition_key, {}))

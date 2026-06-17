@@ -16,6 +16,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.api.routes import availability, evidence, history, ingestion, normalization, predictions, results, scheduler, slates, sources, stats, training, worker
 from app.api.routes import scoring
+from app.api.routes import live_results
 from app.api.routes import adaptive_dataset
 from app.api.routes import training_adaptive
 from app.api.routes import training_neural
@@ -325,6 +326,7 @@ app.include_router(stats.router, prefix="/api")
 app.include_router(training.router, prefix="/api")
 app.include_router(results.router, prefix="/api")
 app.include_router(scoring.router, prefix="/api")
+app.include_router(live_results.router, prefix="/api")
 app.include_router(adaptive_dataset.router, prefix="/api")
 app.include_router(training_adaptive.router, prefix="/api")
 app.include_router(training_neural.router, prefix="/api")
@@ -354,6 +356,15 @@ if frontend_dir.exists():
 
     @app.get("/", include_in_schema=False, response_class=HTMLResponse)
     async def serve_index() -> HTMLResponse:
-        return HTMLResponse(content=_index_rendered)
+        # index.html must never be cached: it carries the asset-version
+        # query string that points at the current JS/CSS. A stale cached
+        # index pins the browser to an old asset version, which can pair a
+        # new app.js with an old helpers.js and break the ES module graph
+        # (link error → app.js never runs → blank "Cargando…" UI). The
+        # versioned assets themselves stay cacheable.
+        return HTMLResponse(
+            content=_index_rendered,
+            headers={"Cache-Control": "no-store, must-revalidate"},
+        )
 
     app.mount("/", StaticFiles(directory=frontend_dir, html=False), name="frontend")

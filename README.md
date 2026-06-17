@@ -1,176 +1,118 @@
 # proAI
 
-`proAI` is a platform for analyzing `Progol` fixtures, consolidating evidence
-from web sources, and producing auditable probabilistic predictions.
+Plataforma de predicción deportiva para quinielas Progol. Ingiere estadísticas de fútbol, normaliza entidades, genera probabilidades `1/X/2` con XGBoost y produce boletas auditables con cobertura de riesgo.
 
-## Principles
+## Principios
 
-- Isolated project: it does not require editing other repositories in the workspace.
-- Evidence before opinion: every prediction must preserve its source trail.
-- Structured data first: the LLM interprets context, not replaces the model.
-- Traceability: every output must be explainable.
+- Evidencia antes que opinión: cada predicción preserva su trail de fuentes.
+- Trazabilidad: cada output es explicable (feature map, banda de confianza, rationale).
+- No ocultar incertidumbre: los partidos sin datos suficientes aparecen como `low` o `blocked`, nunca inflados artificialmente.
 
-## Structure
+## Stack
 
-- `backend/`: API, domain, services, and analysis pipelines.
-- `frontend/`: interface for review and monitoring.
-- `docs/`: architecture, roadmap, and technical decisions.
+| Componente | Tecnología |
+|---|---|
+| API | FastAPI + Python 3.12 |
+| Base de datos | PostgreSQL 16 (SQLite para tests) |
+| ML | XGBoost CPU-only (sin sklearn) |
+| Worker | Scheduler separado en Docker |
+| Auth | Session cookie HMAC-signed + API key |
+| Infra | Docker Compose |
 
-## Initial goal
-
-Build a solid foundation to:
-
-1. capture match data and context from the internet
-2. normalize and assess the quality of that information
-3. generate `1 / X / 2` probabilities
-4. expose suggested picks for `Progol` slates
-
-## Local quality gate
-
-From the repository root:
+## Levantar localmente
 
 ```bash
-python -m venv .venv
-. .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install -c backend/constraints.txt -e "./backend[dev]"
-python -m ruff check backend frontend
-python -m mypy --config-file backend/pyproject.toml backend/app/core backend/app/db backend/app/workers backend/app/api/routes/health.py
-python -m pytest -q
+cp .env.example .env          # ajustar credenciales
+docker compose up --build     # primera vez
+make up                       # usos siguientes
 ```
 
-## Runtime configuration
+Dashboard en `http://127.0.0.1:8000/`.
 
-Main environment variables:
-
-- `PROAI_ENVIRONMENT`
-- `PROAI_DATABASE_URL`
-- `POSTGRES_DB`
-- `POSTGRES_USER`
-- `POSTGRES_PASSWORD`
-- `PROAI_AUTH_REQUIRED`
-- `PROAI_AUTH_API_KEY`
-- `PROAI_AUTH_PASSWORD_HASH`
-- `PROAI_SESSION_SECRET`
-- `PROAI_AUTH_SESSION_COOKIE_NAME`
-- `PROAI_AUTH_SESSION_TTL_SECONDS`
-- `PROAI_API_HOST`
-- `PROAI_API_PORT`
-- `PROAI_LOG_LEVEL`
-- `PROAI_LOG_JSON`
-- `PROAI_ACCESS_LOG_ENABLED`
-- `PROAI_DOCS_ENABLED`
-- `PROAI_REQUEST_ID_HEADER`
-- `PROAI_HEALTHCHECK_TIMEOUT_SECONDS`
-- `PROAI_ALLOWED_HOSTS`
-- `PROAI_CORS_ALLOWED_ORIGINS`
-- `PROAI_FORCE_HTTPS`
-- `PROAI_ENABLE_WORKER_ROUTES`
-- `PROAI_WORKER_POLL_INTERVAL_SECONDS`
-- `PROAI_CURRENT_PROGOL_AUTO_REFRESH_ENABLED`
-- `PROAI_CURRENT_PROGOL_REFRESH_INTERVAL_MINUTES`
-- `PROAI_CURRENT_PROGOL_REFRESH_JOB_NAME`
-- `PROAI_ALLOW_PICKLE_MODEL_ARTIFACTS`
-- `PROAI_LIVE_PICK_READY_COMPETITIONS`
-- `PROAI_LIVE_PICK_BLOCKED_COMPETITIONS`
-- `PROAI_PUBLIC_HOSTNAME`
-- `PROAI_HTTP_PORT`
-- `PROAI_HTTPS_PORT`
-- `PROAI_BACKUP_INTERVAL_SECONDS`
-- `PROAI_BACKUP_RETENTION_DAYS`
-- `PROAI_FOOTBALL_DATA_API_KEY`
-
-Use [.env.example](/home/silver/projects/proAI/.env.example:1) as the baseline for deployment.
-
-## ML stack
-
-XGBoost is part of the base production runtime. It is the only ML
-library proAI uses; scikit-learn is intentionally not supported. Local
-installs and the production image include it out of the box:
+## Tests y calidad
 
 ```bash
-python -m pip install -c backend/constraints.txt -e "./backend[dev]"
+cd backend
+.venv/bin/python -m pytest tests/ -q   # 458 tests
+.venv/bin/ruff check app/ tests/       # linter
+.venv/bin/mypy app/                    # tipos
+make check                             # lint + typecheck + test
 ```
 
-## Production container
+## Rebuild tras cambios de código
 
-Build and run directly:
+El código está baked en la imagen Docker. Después de cualquier cambio:
 
 ```bash
-docker build -t proai .
-docker run --rm -p 8000:8000 --env-file .env -v proai-data:/data proai
+docker compose build proai worker
+docker compose up -d proai worker
 ```
 
-Or with Compose:
+## Estructura
 
-```bash
-cp .env.example .env
-docker compose up --build
+```
+backend/           API, servicios, repositorios, workers, tests
+frontend/          UI de revisión y monitoring
+docs/              Documentación técnica y operativa
+data/              Contexto Progol local (current.json)
+scripts/           Bootstrap, smoke tests, utilidades
+deploy/            Configuración de producción (Caddy, backups)
 ```
 
-The production Compose stack now uses PostgreSQL as the primary database and runs the scheduler worker as a separate service.
-The dashboard authenticates with a password and signed `HttpOnly` session cookie; API key auth remains available for automation.
+## Documentación
 
-## Local operations
+- [docs/architecture.md](docs/architecture.md) — flujo end-to-end, clasificación de módulos, composition_hash
+- [docs/ml_pipeline.md](docs/ml_pipeline.md) — XGBoost, bandas de confianza, retraining gate, neural baseline
+- [docs/operations.md](docs/operations.md) — comandos operativos completos
+- [docs/security.md](docs/security.md) — auth, rutas protegidas, checklist de producción
+- [docs/data_quality.md](docs/data_quality.md) — resultados canónicos, slates legacy, anchor gap
 
-The Docker stack persists PostgreSQL and application data in named volumes. The mounted
-`data/progol_context/current.json` file is the local source for the active Progol contest.
+## Advertencias de operación
 
-Useful commands:
+> **No reentrenar sin pasar por el gate de readiness.** Siempre ejecutar `GET /api/training/adaptive/readiness` y `POST /api/training/adaptive/dry-run` antes de `/run`.
 
-```bash
-make up
-make ready
-make typecheck
-make frontend-smoke
-make load-smoke
-make docker-build
-make update-current-context
-make refresh-current
-make ensure-current-job
-make calibration
-make production-check
-```
+> **No modificar datos de PG-2336 ni slates activas manualmente.** Usar únicamente los endpoints de API con autenticación.
 
-See [docs/operations.md](/home/silver/projects/proAI/docs/operations.md:1) for the
-production-like local runbook, authentication notes, startup behavior, and data safety
-details.
+> **No relajar thresholds de confianza.** Un partido con datos insuficientes se muestra como `low` — es el comportamiento correcto.
 
-By default the worker creates a `current-progol-refresh` scheduled job and refreshes the
-active Progol slate every 60 minutes. Tune it with `PROAI_CURRENT_PROGOL_REFRESH_INTERVAL_MINUTES`.
-`make update-current-context` validates and enriches the mounted `current.json` before
-the Docker refresh reads it.
+## Variables de entorno principales
 
-For an edge-proxied production stack with backups:
+| Variable | Descripción |
+|---|---|
+| `PROAI_ENVIRONMENT` | `development` / `production` |
+| `PROAI_DATABASE_URL` | URL de PostgreSQL |
+| `PROAI_AUTH_REQUIRED` | `true` en producción |
+| `PROAI_AUTH_API_KEY` | API key para scripts y automation |
+| `PROAI_AUTH_PASSWORD_HASH` | Hash PBKDF2 de la contraseña del dashboard |
+| `PROAI_SESSION_SECRET` | Secret para firmar cookies de sesión |
+| `PROAI_DOCS_ENABLED` | `false` en producción |
+| `PROAI_ENABLE_WORKER_ROUTES` | `false` en producción |
+| `PROAI_FOOTBALL_DATA_API_KEY` | API key de football-data.org |
+
+Ver `.env.example` para la lista completa.
+
+## Producción con proxy y backups
 
 ```bash
 cp deploy/production.env.example .env
 docker compose -f docker-compose.prod.yml up -d
 ```
 
-## Operational notes
+Stack de producción incluye Caddy como proxy TLS y job de backups de PostgreSQL. Ver [docs/operations.md](docs/operations.md) para restore.
 
-- Health endpoint: `GET /api/health`
-- Readiness endpoint: `GET /api/ready`
-- Metrics endpoint: `GET /api/metrics`
-- Auditable ticket endpoint: `GET /api/predictions/slates/{slate_id}/ticket`
-- Per-competition backtest endpoint: `POST /api/training/models/evaluate/competitions`
-- Logs are structured JSON by default in production.
-- The container runs as a non-root user.
-- Production authentication is enforced for all `/api` routes except health/readiness unless explicitly disabled. Browser users log in with a password; scripts can still send `X-API-Key`.
-- Worker control routes are disabled by default in production.
-- PostgreSQL is the default production backing store; SQLite remains useful for local development and tests.
-- `docker-compose.prod.yml` adds a Caddy edge proxy with security headers and a PostgreSQL backup job.
-- The backup job writes compressed dumps to the `proai-backups` volume and rotates them by retention days.
-- CI runs lint, tests and image build on each push and pull request.
-- Runtime startup still applies the lightweight built-in migrations, and Alembic
-  revisions live under `backend/alembic` for audited production migration review.
+## ML stack
 
-## Restore workflow
+XGBoost es la única librería ML del runtime. scikit-learn está explícitamente excluido. Ver [docs/ml_pipeline.md](docs/ml_pipeline.md) para detalles del pipeline.
 
-Restore a backup from the production volume into PostgreSQL:
+## Endpoints de referencia rápida
 
-```bash
-docker compose -f docker-compose.prod.yml exec -T postgres sh -c \
-  'gunzip -c /backups/proai-YYYYMMDDTHHMMSSZ.sql.gz | psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
-```
+| Endpoint | Descripción |
+|---|---|
+| `GET /api/health` | Health operativo |
+| `GET /api/ready` | Readiness probe |
+| `GET /api/metrics` | Prometheus |
+| `GET /api/predictions/slates/{id}` | Predicciones de la slate |
+| `GET /api/predictions/slates/{id}/ticket` | Boleta recomendada |
+| `GET /api/predictions/slates/{id}/quality` | Quality report con anchor gap |
+| `GET /api/training/adaptive/readiness` | Gate de readiness para retraining |
+| `POST /api/training/adaptive/dry-run` | Simulación de retraining |

@@ -28,6 +28,72 @@ class MatchPredictionResponse(BaseModel):
     # never "X" even if the raw model thought X was most likely.
     is_knockout: bool = False
 
+    # --- Sanity layer (Fase 3/4): explicit, non-positional outputs -------
+    #
+    # THREE explicit probability vectors, all keyed by the Progol outcome
+    # codes (L/E/V) so nothing ever relies on array order. The contract is:
+    #
+    #   raw_probabilities      -> the ORIGINAL model / fallback output.
+    #                             Preserved untouched for full traceability.
+    #   display_probabilities  -> the guardrailed vector shown in the UI.
+    #   decision_probabilities -> the guardrailed vector the ticket
+    #                             optimizer / coverage math MUST consume.
+    #
+    # `display_probabilities` and `decision_probabilities` are equal by
+    # design today — both are the single sanity-degraded vector — but they
+    # are separate fields so display and decision could diverge later
+    # without another schema migration.
+    #
+    # `probabilities` is kept as an alias of `decision_probabilities` (the
+    # guardrailed numbers) for backward compatibility; downstream code
+    # should prefer the explicit `decision_probabilities` field.
+    probabilities: dict[str, float] = Field(
+        default_factory=lambda: {"L": 0.0, "E": 0.0, "V": 0.0}
+    )
+    display_probabilities: dict[str, float] = Field(
+        default_factory=lambda: {"L": 0.0, "E": 0.0, "V": 0.0}
+    )
+    decision_probabilities: dict[str, float] = Field(
+        default_factory=lambda: {"L": 0.0, "E": 0.0, "V": 0.0}
+    )
+    labels: dict[str, str] = Field(
+        default_factory=lambda: {"L": "Local", "E": "Empate", "V": "Visitante"}
+    )
+    # The pre-sanity vector, preserved for full traceability — the sanity
+    # layer never silently rewrites a probability without exposing the raw.
+    raw_probabilities: dict[str, float] = Field(
+        default_factory=lambda: {"L": 0.0, "E": 0.0, "V": 0.0}
+    )
+    evidence_level: str = "low"
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    risk_level: str = "high"
+    # FIJO / LISTO / REVISAR / BLOQUEADO — the guardrailed status the UI
+    # must render. Distinct from `confidence_band` (the model's own band).
+    final_status: str = "REVISAR"
+    flags: list[str] = Field(default_factory=list)
+    fallback_used: bool = False
+    is_international_friendly: bool = False
+    sanity_recommendation: str = ""
+
+    # --- Accessors used by the ticket optimizer / coverage math ----------
+    # Single chokepoint so decision code never reaches for the legacy
+    # positional fields by accident.
+    def decision_vector(self) -> tuple[float, float, float]:
+        """Return ``(home, draw, away)`` from `decision_probabilities`.
+
+        Falls back to the legacy positional fields only when the decision
+        vector is unpopulated (sums to ~0) — i.e. for hand-built test
+        fixtures or pre-sanity payloads."""
+        vector = self.decision_probabilities or {}
+        if {"L", "E", "V"} <= set(vector):
+            home, draw, away = float(vector["L"]), float(vector["E"]), float(vector["V"])
+            if (home + draw + away) > 1e-9:
+                return home, draw, away
+        return float(self.home_probability), float(self.draw_probability), float(self.away_probability)
+
+    def decision_draw_probability(self) -> float:
+        return self.decision_vector()[1]
+
 
 class SlateFeatureResponse(BaseModel):
     slate_id: str
@@ -48,11 +114,38 @@ class TicketValidationResponse(BaseModel):
     metrics: dict[str, str | int | float | bool]
 
 
+class DrawRiskResponse(BaseModel):
+    """Draw-risk projection for one match (reporting only).
+
+    These fields never alter probabilities, picks, or confidence bands —
+    they expose, per match, how much draw mass the model assigned and
+    whether the empate is actually covered in each ticket mode. The UI
+    uses them to surface "Empate vivo" / "Empate fuerte" chips so the
+    operator can see at a glance why draws may be hurting the boleta.
+
+    Thresholds are draw-reporting thresholds, independent of the model's
+    confidence-band thresholds:
+    * `is_live_draw`   -> p_draw >= 0.25
+    * `is_strong_draw` -> p_draw >= 0.30
+    `draw_rank` is the rank of the draw among the three outcomes by
+    probability (1 = most likely, 3 = least likely).
+    """
+
+    p_draw: float
+    draw_rank: int
+    is_live_draw: bool
+    is_strong_draw: bool
+    covered_simple: bool
+    covered_doubles: bool
+    covered_full: bool
+
+
 class MatchTicketRecommendationResponse(BaseModel):
     position: int
     match_id: str
     decisions: dict[str, TicketDecisionResponse]
     validation: TicketValidationResponse
+    draw_risk: DrawRiskResponse | None = None
 
 
 class TicketCoverageMode(BaseModel):

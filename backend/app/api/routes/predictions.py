@@ -245,11 +245,13 @@ async def get_coverage_target_for_slate(
     from app.services.ticket_optimizer import TicketOption, min_budget_for_target
 
     options = [
+        # DECISION probabilities (guardrailed), not raw model output, so the
+        # budget projection matches what the ticket optimizer actually bets.
         TicketOption(
             match_id=p.match_id,
-            top1=max(p.home_probability, p.draw_probability, p.away_probability),
-            top2=sorted([p.home_probability, p.draw_probability, p.away_probability], reverse=True)[1],
-            top3=min(p.home_probability, p.draw_probability, p.away_probability),
+            top1=max(p.decision_vector()),
+            top2=sorted(p.decision_vector(), reverse=True)[1],
+            top3=min(p.decision_vector()),
         )
         for p in predictions
     ]

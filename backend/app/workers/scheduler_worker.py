@@ -16,6 +16,7 @@ from app.repositories.scheduler_repository import SchedulerRepository
 from app.repositories.slate_repository import SlateRepository
 from app.repositories.source_repository import SourceRepository
 from app.services.current_progol_service import CurrentProgolService
+from app.services.live_results_service import finalize_complete_closed_slates
 from app.services.scheduler_service import SchedulerService
 from app.services.slate_proposal_service import SlateProposalService
 from app.services.slate_service import SlateService
@@ -43,6 +44,9 @@ class WorkerState:
     last_proposal_observed_at: datetime | None = None
     last_proposal_status: str | None = None
     last_proposal_draw_code: str | None = None
+    last_ms_proposal_observed_at: datetime | None = None
+    last_ms_proposal_status: str | None = None
+    last_ms_proposal_draw_code: str | None = None
     last_auto_promoted_at: datetime | None = None
     last_auto_promoted_draw_code: str | None = None
     # In-memory marker for the periodic source_documents prune. The
@@ -50,6 +54,8 @@ class WorkerState:
     # idempotent and the wakeup interval (24h) is cheap to re-run.
     last_maintenance_at: datetime | None = None
     last_maintenance_deleted: int = 0
+    last_live_results_observed_at: datetime | None = None
+    last_live_results_finalized: int = 0
 
 
 class SchedulerWorker:
@@ -88,7 +94,9 @@ class SchedulerWorker:
                     },
                 )
             self._maybe_observe_proposal(session, polled_at)
+            self._maybe_observe_ms_proposal(session, polled_at)
             self._maybe_auto_promote_proposals(session, polled_at)
+            self._maybe_observe_live_results(session, polled_at)
             self._maybe_run_maintenance(session, polled_at)
             runs = service.run_due_jobs()
             self._state.executed_runs += len(runs)
@@ -124,6 +132,78 @@ class SchedulerWorker:
         finally:
             if session is not None:
                 session.close()
+
+    def _maybe_observe_live_results(self, session, polled_at: datetime) -> None:
+        # Persist a final JornadaScore for any closed slate that is now
+        # all-final. Gated to a coarse interval (default 5min) so the
+        # main worker loop (~30s) isn't blocked by per-slate scoring.
+        # Read-mostly and idempotent; never fabricates a result.
+        if not settings.live_results_observe_enabled:
+            return
+        interval = timedelta(minutes=max(1, settings.live_results_observe_interval_minutes))
+        last = self._state.last_live_results_observed_at
+        if last is not None and (polled_at - last) < interval:
+            return
+        self._state.last_live_results_observed_at = polled_at
+        # When an LN results URL is configured, pull the official document
+        # and ingest it into the matching slate (mismatched concursos
+        # no-op). Default off — operators usually drive this per-slate via
+        # POST /api/slates/{id}/ingest-results.
+        if settings.live_results_fetch_enabled and settings.live_results_source_url:
+            try:
+                self._ingest_live_results(session, polled_at)
+            except Exception:
+                logger.exception(
+                    "live results fetch failed",
+                    extra={"event": "live_results_fetch_failed"},
+                )
+        try:
+            summary = finalize_complete_closed_slates(session, now=polled_at)
+        except Exception:
+            logger.exception(
+                "live results observe failed",
+                extra={"event": "live_results_observe_failed"},
+            )
+            return
+        finalized = summary.get("finalized", [])
+        self._state.last_live_results_finalized = len(finalized)
+        if finalized:
+            logger.info(
+                "live results: closed slates finalized",
+                extra={
+                    "event": "live_results_finalized",
+                    "draw_codes": finalized,
+                    "checked": summary.get("checked", 0),
+                },
+            )
+
+    def _ingest_live_results(self, session, polled_at: datetime) -> None:
+        from app.connectors.progol_resultados import ProgolResultadosConnector
+        from app.services.results_ingestion_service import ResultsIngestionService
+
+        connector = ProgolResultadosConnector(base_url=settings.live_results_source_url)
+        documents = connector.fetch()
+        if not documents:
+            return
+        text = str(documents[0].payload.get("raw_text", ""))
+        if not text.strip():
+            return
+        ingest = ResultsIngestionService(session)
+        slate_service = SlateService(SlateRepository(session))
+        recorded = 0
+        for slate in slate_service.list_slates(include_closed=True):
+            if not slate.composition_hash:
+                continue
+            report = ingest.ingest_for_slate(
+                slate, text, source_url=connector.base_url, observed_at=polled_at
+            )
+            recorded += int(report.get("recorded", 0))
+        if recorded:
+            session.commit()
+            logger.info(
+                "live results ingested from LN",
+                extra={"event": "live_results_ingested", "recorded": recorded},
+            )
 
     def _maybe_observe_proposal(self, session, polled_at: datetime) -> None:
         # Gate the LN PDF fetch to the configured interval (default 60min).
@@ -165,38 +245,65 @@ class SchedulerWorker:
             },
         )
 
+    def _maybe_observe_ms_proposal(self, session, polled_at: datetime) -> None:
+        """Periodically fetch the LN Progol Media Semana PDF and record an
+        observation. Uses the same interval setting as the weekend observe job
+        so both PDFs are checked at the same cadence without extra config."""
+        if not settings.progol_proposal_observe_enabled:
+            return
+        interval = timedelta(minutes=max(1, settings.progol_proposal_observe_interval_minutes))
+        last = self._state.last_ms_proposal_observed_at
+        if last is not None and (polled_at - last) < interval:
+            return
+        self._state.last_ms_proposal_observed_at = polled_at
+        try:
+            proposal = SlateProposalService(session).observe_ms()
+        except Exception:
+            logger.exception(
+                "progol MS proposal observation failed",
+                extra={"event": "progol_ms_proposal_observe_failed"},
+            )
+            return
+        if proposal is None:
+            logger.info(
+                "progol MS proposal observation produced no row",
+                extra={"event": "progol_ms_proposal_observe_noop"},
+            )
+            return
+        self._state.last_ms_proposal_status = proposal.status
+        self._state.last_ms_proposal_draw_code = proposal.draw_code
+        logger.info(
+            "progol MS proposal observation recorded",
+            extra={
+                "event": "progol_ms_proposal_observed",
+                "draw_code": proposal.draw_code,
+                "status": proposal.status,
+                "observations": proposal.observations,
+            },
+        )
+
     def _maybe_auto_promote_proposals(self, session, polled_at: datetime) -> None:
-        # Fase 3: turn a validated proposal into a real slate without an
-        # operator click, but ONLY when we're close to the active
-        # slate's cierre (or there's nothing active right now). This
-        # guards against premature promotion when LN republishes a guide
-        # several days in advance — the dual-time validation already
-        # confirmed the fixtures so the only remaining risk is timing.
+        # Fase 3: turn validated proposals into real slates without an
+        # operator click, but ONLY when we're close to the SAME week_type's
+        # active slate cierre (or nothing of that type is active).
+        #
+        # Weekend and midweek/MS contests are independent — a midweek slate
+        # closing soon must not block promotion of an upcoming weekend slate
+        # and vice-versa. We iterate all validated proposals and apply the
+        # threshold check per week_type in isolation.
         if not settings.progol_auto_promote_enabled:
             return
         threshold = timedelta(hours=max(0.0, float(settings.progol_auto_promote_threshold_hours)))
 
-        active = SlateService(SlateRepository(session)).get_active_slate(polled_at)
-        if active is not None:
-            cierre = active.registration_closes_at
-            if cierre is None:
-                # No cierre on the active slate — refuse to promote
-                # without that signal, an operator can still click.
-                return
-            if cierre.tzinfo is None:
-                cierre = cierre.replace(tzinfo=timezone.utc)
-            if (cierre - polled_at) > threshold:
-                return
-
         proposal_service = SlateProposalService(session)
+        slate_service = SlateService(SlateRepository(session))
+
         validated = [
             p for p in proposal_service.list_proposals(status="validated") if not p.promoted_slate_id
         ]
         if not validated:
             return
-        # Sort so the earliest cierre is promoted first — when LN stages
-        # midweek + weekend simultaneously we want the chronologically
-        # next one to land first.
+
         def _sort_key(p):
             cierre_at = p.registration_closes_at
             if cierre_at is None:
@@ -204,42 +311,61 @@ class SchedulerWorker:
             if cierre_at.tzinfo is None:
                 return cierre_at.replace(tzinfo=timezone.utc)
             return cierre_at
+
         validated.sort(key=_sort_key)
-        target = validated[0]
-        try:
-            slate = proposal_service.promote_proposal(target, actor="worker")
-            session.commit()
-        except ValueError as exc:
-            logger.warning(
-                "auto-promote skipped",
+
+        for target in validated:
+            # Check the active slate of the SAME week_type — different
+            # types can coexist and promote independently.
+            active = slate_service.get_active_slate_by_week_type(target.week_type, polled_at)
+            if active is not None:
+                cierre = active.registration_closes_at
+                if cierre is None:
+                    # No cierre on the active slate — can't determine timing;
+                    # skip this week_type, an operator can still click.
+                    continue
+                if cierre.tzinfo is None:
+                    cierre = cierre.replace(tzinfo=timezone.utc)
+                if (cierre - polled_at) > threshold:
+                    continue
+
+            try:
+                result = proposal_service.promote_proposal(target, actor="worker")
+                session.commit()
+            except ValueError as exc:
+                logger.warning(
+                    "auto-promote skipped",
+                    extra={
+                        "event": "progol_auto_promote_skipped",
+                        "draw_code": target.draw_code,
+                        "reason": str(exc),
+                    },
+                )
+                continue
+            except Exception:
+                logger.exception(
+                    "auto-promote failed",
+                    extra={
+                        "event": "progol_auto_promote_failed",
+                        "draw_code": target.draw_code,
+                    },
+                )
+                session.rollback()
+                continue
+
+            self._state.last_auto_promoted_at = polled_at
+            self._state.last_auto_promoted_draw_code = target.draw_code
+            logger.info(
+                "progol proposal auto-promoted",
                 extra={
-                    "event": "progol_auto_promote_skipped",
+                    "event": "progol_proposal_auto_promoted",
                     "draw_code": target.draw_code,
-                    "reason": str(exc),
+                    "week_type": target.week_type,
+                    "slate_id": result.slate.id,
+                    "already_active": result.already_active,
+                    "active_slate_present": active is not None,
                 },
             )
-            return
-        except Exception:
-            logger.exception(
-                "auto-promote failed",
-                extra={
-                    "event": "progol_auto_promote_failed",
-                    "draw_code": target.draw_code,
-                },
-            )
-            session.rollback()
-            return
-        self._state.last_auto_promoted_at = polled_at
-        self._state.last_auto_promoted_draw_code = target.draw_code
-        logger.info(
-            "progol proposal auto-promoted",
-            extra={
-                "event": "progol_proposal_auto_promoted",
-                "draw_code": target.draw_code,
-                "slate_id": slate.id,
-                "active_slate_present": active is not None,
-            },
-        )
 
     def _maybe_run_maintenance(self, session, polled_at: datetime) -> None:
         """Periodically prune orphan source_documents from the worker

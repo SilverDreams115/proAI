@@ -440,6 +440,190 @@ class TestPhase9TeamAliases:
         assert self.svc.normalize_team_name("África del Sur") == "south-africa"
 
 
+class TestPhase10KoreaAliases:
+    """Phase 10 — entity normalisation fix for Progol MS PDF Korea abbreviations.
+
+    Root cause: the MS PDF uses "Re P. Corea" which produced alias-key
+    "re p corea" — absent from TEAM_ALIAS_SLUGS — so the entity resolver
+    created a new placeholder instead of linking to canonical South Korea.
+    """
+
+    def setup_method(self):
+        self.svc = NormalizationService()
+
+    def test_re_p_corea_maps_to_south_korea(self):
+        assert self.svc.normalize_team_name("Re P. Corea") == "south-korea"
+
+    def test_rep_corea_with_dot_maps_to_south_korea(self):
+        assert self.svc.normalize_team_name("Rep. Corea") == "south-korea"
+
+    def test_rep_corea_without_dot_maps_to_south_korea(self):
+        assert self.svc.normalize_team_name("Rep Corea") == "south-korea"
+
+    def test_korea_rep_maps_to_south_korea(self):
+        assert self.svc.normalize_team_name("Korea Rep") == "south-korea"
+
+    def test_north_korea_not_confused(self):
+        assert self.svc.normalize_team_name("North Korea") == "north-korea"
+
+    def test_korea_dpr_not_confused(self):
+        assert self.svc.normalize_team_name("Korea DPR") == "korea-dpr"
+
+    def test_corea_del_norte_not_confused(self):
+        assert self.svc.normalize_team_name("Corea del Norte") == "north-korea"
+
+    def test_existing_south_korea_aliases_unchanged(self):
+        svc = self.svc
+        assert svc.normalize_team_name("South Korea") == "south-korea"
+        assert svc.normalize_team_name("Corea del Sur") == "south-korea"
+        assert svc.normalize_team_name("Korea Republic") == "south-korea"
+        assert svc.normalize_team_name("República de Corea") == "south-korea"
+        assert svc.normalize_team_name("Corea") == "south-korea"
+
+
+class TestMigrationV16:
+    """v16 merges 'Re P. Corea' placeholder into canonical South Korea."""
+
+    def _make_session(self, tmp_path, db_name: str):
+        from app.db import session as db_session
+        from app.db.migrations import run_migrations
+        from app.db.session import configure_session
+
+        configure_session(f"sqlite:///{tmp_path / db_name}")
+        run_migrations(db_session.engine)
+        return db_session.SessionLocal()
+
+    def test_migration_is_idempotent_on_empty_db(self, tmp_path):
+        from app.db.migrations import _migrate_to_v16
+
+        session = self._make_session(tmp_path, "v16_idempotent.db")
+        with session.get_bind().begin() as conn:
+            _migrate_to_v16(conn)
+            _migrate_to_v16(conn)
+        session.close()
+
+    def test_migration_merges_re_p_corea_into_south_korea(self, tmp_path):
+        from sqlalchemy import select
+
+        from app.db.migrations import _migrate_to_v16
+        from app.models.tables import CompetitionModel, MatchModel, TeamModel, TeamAliasModel
+
+        session = self._make_session(tmp_path, "v16_merge.db")
+        try:
+            canonical = TeamModel(name="South Korea", country="KR", is_placeholder=False)
+            placeholder = TeamModel(name="Re P. Corea", country=None, is_placeholder=True)
+            competition = CompetitionModel(
+                name="International Friendlies", country=None, season=None, is_placeholder=False
+            )
+            away = TeamModel(name="Czech Republic", country="CZ", is_placeholder=False)
+            session.add_all([canonical, placeholder, competition, away])
+            session.flush()
+
+            session.add(TeamAliasModel(team=placeholder, alias="Re P. Corea", normalized_alias="re-p-corea"))
+            session.add(TeamAliasModel(team=canonical, alias="South Korea", normalized_alias="south-korea"))
+            session.flush()
+
+            match = MatchModel(
+                competition_id=competition.id,
+                home_team_id=placeholder.id,
+                away_team_id=away.id,
+                kickoff_at=__import__("datetime").datetime(2026, 6, 12, 8, 0, tzinfo=__import__("datetime").timezone.utc),
+            )
+            session.add(match)
+            session.commit()
+
+            match_id = match.id
+            canonical_id = canonical.id
+
+            with session.get_bind().begin() as conn:
+                _migrate_to_v16(conn)
+
+            session.expire_all()
+            updated = session.get(MatchModel, match_id)
+            assert updated is not None
+            assert updated.home_team_id == canonical_id
+
+            alias_row = session.scalars(
+                select(TeamAliasModel).where(TeamAliasModel.normalized_alias == "re-p-corea")
+            ).first()
+            assert alias_row is not None
+            assert alias_row.team_id == canonical_id
+        finally:
+            session.close()
+
+    def test_migration_skips_conflict_when_canonical_match_exists(self, tmp_path):
+        from app.db.migrations import _migrate_to_v16
+        from app.models.tables import CompetitionModel, MatchModel, TeamModel, TeamAliasModel
+        import datetime as dt
+
+        session = self._make_session(tmp_path, "v16_conflict.db")
+        try:
+            canonical = TeamModel(name="South Korea", country="KR", is_placeholder=False)
+            placeholder = TeamModel(name="Re P. Corea", country=None, is_placeholder=True)
+            competition = CompetitionModel(
+                name="International Friendlies", country=None, season=None, is_placeholder=False
+            )
+            away = TeamModel(name="Czech Republic", country="CZ", is_placeholder=False)
+            session.add_all([canonical, placeholder, competition, away])
+            session.flush()
+            session.add(TeamAliasModel(team=placeholder, alias="Re P. Corea", normalized_alias="re-p-corea"))
+            session.add(TeamAliasModel(team=canonical, alias="South Korea", normalized_alias="south-korea"))
+            session.flush()
+
+            kickoff = dt.datetime(2026, 6, 12, 16, 0, tzinfo=dt.timezone.utc)
+            canonical_match = MatchModel(
+                competition_id=competition.id,
+                home_team_id=canonical.id,
+                away_team_id=away.id,
+                kickoff_at=kickoff,
+            )
+            placeholder_match = MatchModel(
+                competition_id=competition.id,
+                home_team_id=placeholder.id,
+                away_team_id=away.id,
+                kickoff_at=kickoff,  # same kickoff → conflict
+            )
+            session.add_all([canonical_match, placeholder_match])
+            session.commit()
+
+            with session.get_bind().begin() as conn:
+                _migrate_to_v16(conn)
+
+            session.expire_all()
+            pm = session.get(MatchModel, placeholder_match.id)
+            assert pm is not None
+        finally:
+            session.close()
+
+    def test_migration_does_not_touch_composition_hash(self, tmp_path):
+        from app.db.migrations import _migrate_to_v16
+        from app.models.tables import ProgolSlateModel
+        import datetime as dt
+
+        session = self._make_session(tmp_path, "v16_hash.db")
+        try:
+            slate = ProgolSlateModel(
+                draw_code="PGM-V16-1",
+                label="Test",
+                week_type="midweek",
+                registration_closes_at=dt.datetime(2026, 12, 31, tzinfo=dt.timezone.utc),
+                composition_hash="deadbeef5678",
+                slate_version=1,
+            )
+            session.add(slate)
+            session.commit()
+            slate_id = slate.id
+
+            with session.get_bind().begin() as conn:
+                _migrate_to_v16(conn)
+
+            session.expire_all()
+            updated = session.get(ProgolSlateModel, slate_id)
+            assert updated.composition_hash == "deadbeef5678"
+        finally:
+            session.close()
+
+
 class TestPhase9CompetitionAliases:
     def setup_method(self):
         self.svc = NormalizationService()
@@ -639,18 +823,22 @@ class TestCompetitionPolicyForFriendlyVariants:
         svc = ModelTrainingService.__new__(ModelTrainingService)
         return svc.competition_operating_policy(name)
 
-    def test_international_friendlies_is_ready(self):
+    def test_international_friendlies_is_context_only(self):
+        # Opción B del 2º pase: los amistosos nunca son "ready" — quedan
+        # en context_only y no se permiten como live pick fuerte.
         p = self._policy("International Friendlies")
-        assert p["competition_readiness"] == "ready"
-        assert p["live_pick_allowed"] is True
+        assert p["competition_readiness"] == "context_only"
+        assert p["live_pick_allowed"] is False
 
-    def test_international_friendly_singular_is_ready(self):
+    def test_international_friendly_singular_is_context_only(self):
         p = self._policy("International Friendly")
-        assert p["competition_readiness"] == "ready"
+        assert p["competition_readiness"] == "context_only"
+        assert p["live_pick_allowed"] is False
 
-    def test_nations_league_is_ready(self):
+    def test_nations_league_is_context_only(self):
         p = self._policy("UEFA Nations League")
-        assert p["competition_readiness"] == "ready"
+        assert p["competition_readiness"] == "context_only"
+        assert p["live_pick_allowed"] is False
 
     def test_progol_concurso_is_context_only(self):
         p = self._policy("Progol Concurso 2336")
