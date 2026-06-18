@@ -2510,3 +2510,74 @@ details.analysis-block summary h4 {
   cursor: pointer;
   font-size: 0.78rem;
 }
+
+/* ===== Fase A — pestañas principales + Seguimiento/Aprendizaje ===== */
+.main-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 4px 0 4px;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 6px;
+}
+.main-tab {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--muted);
+  border-radius: 8px 8px 0 0;
+  padding: 8px 16px;
+  cursor: pointer;
+  font-size: 0.92rem;
+  font-weight: 600;
+}
+.main-tab:hover { color: var(--ink); }
+.main-tab.is-active {
+  color: var(--ink);
+  border-color: var(--line);
+  border-bottom-color: transparent;
+  background: var(--bg-surface, rgba(255, 255, 255, 0.03));
+}
+.view[hidden] { display: none; }
+
+/* Learning badge (per-match) + Aprendizaje summary */
+.learn-badge {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 0.74rem;
+  border: 1px solid var(--line);
+}
+.learn-hit { color: var(--accent-2); border-color: var(--accent-2); }
+.learn-miss { color: var(--bad-muted); border-color: var(--bad-muted); }
+.learn-pending { color: var(--muted); }
+.learn-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+  margin: 6px 0 10px;
+}
+.ls-cell { display: flex; flex-direction: column; }
+.ls-cell strong { font-size: 1.3rem; color: var(--ink); }
+.ls-cell span { font-size: 0.78rem; color: var(--muted); }
+
+/* Empty-state (informational, NOT an error) for Seguimiento with no results */
+.no-comparable {
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--accent-2);
+  border-radius: 10px;
+  padding: 12px 16px;
+  margin: 8px 0 14px;
+  background: rgba(53, 208, 186, 0.06);
+}
+.no-comparable .nc-title {
+  font-weight: 600;
+  color: var(--ink);
+  margin: 0 0 4px;
+}
+.nc-actions {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+.nc-actions li { margin: 2px 0; }

@@ -74,6 +74,20 @@ export function diagnosisBadge(diagnosis) {
   return `<span class="diag-badge diag-${tone}">${escapeHtml(diagnosis || "—")}</span>`;
 }
 
+// Learning eligibility for the adaptive dataset, merged in from the
+// /tracking endpoint: ready (canonical final + prediction), waiting_result
+// (no result yet) or excluded (conflict / non-comparable / no prediction).
+const LEARNING_LABELS = {
+  ready: "Ready",
+  waiting_result: "Pendiente",
+  excluded: "Excluido",
+};
+
+export function learningBadge(status) {
+  const tone = status === "ready" ? "hit" : status === "excluded" ? "miss" : "pending";
+  return `<span class="learn-badge learn-${tone}">${escapeHtml(LEARNING_LABELS[status] || "—")}</span>`;
+}
+
 // Three outcome chips (1/X/2): the original pick is outlined, the real
 // result is filled (green if it matched the pick, red otherwise).
 export function predictionChips(match) {
@@ -167,6 +181,7 @@ export function renderComparisonRow(match) {
       <td class="cmp-mode">${modeGlyph(match.doubles_hit)}</td>
       <td class="cmp-mode">${modeGlyph(match.full_hit)}</td>
       <td>${diagnosisBadge(match.diagnosis)}</td>
+      <td>${learningBadge(match.learning_status)}</td>
     </tr>`;
 }
 
@@ -230,7 +245,7 @@ export function renderComparisonDetail(data) {
       <table class="cmp-table">
         <thead><tr>
           <th>#</th><th>Partido</th><th>Predicción</th><th>Resultado</th>
-          <th title="Simple">S</th><th title="Dobles">D</th><th title="Full">F</th><th>Diagnóstico</th>
+          <th title="Simple">S</th><th title="Dobles">D</th><th title="Full">F</th><th>Diagnóstico</th><th>Learning</th>
         </tr></thead>
         <tbody>${rows}</tbody>
       </table>
@@ -328,12 +343,31 @@ export function renderSummaryBar(data) {
     </div>`;
 }
 
+// Explicit, non-error empty state for the common Phase-A situation: there
+// ARE slates with predictions, but no real results have been ingested yet, so
+// nothing is comparable. This is informational guidance, never a crash/error.
+export function renderNoComparableResults() {
+  return `
+    <div class="no-comparable" role="status">
+      <p class="nc-title">Aún no hay resultados comparables.</p>
+      <p class="meta-copy">Hay predicciones, pero no hay resultados reales ingeridos para esos slates.</p>
+      <ul class="nc-actions">
+        <li>Ingerir resultados manualmente (<span class="mono">POST /api/slates/{id}/ingest-results</span>).</li>
+        <li>Habilitar live result fetch (<span class="mono">PROAI_LIVE_RESULTS_FETCH_ENABLED</span> + source URL).</li>
+        <li>Revisar slates cerrados con <span class="mono">include_closed=true</span>.</li>
+      </ul>
+    </div>`;
+}
+
 export function renderLiveDashboard(data) {
   if (!data) return "";
   // Separate real concursos from demo/synthetic ones so demo data is
   // never presented as a real quiniela. Cerrada/Abierta is still conveyed
   // by each card's status badge.
   const all = (data.closed || []).concat(data.open || []);
+  // No slate has any real/live result yet → show the explicit empty state
+  // alongside the (still useful) slate list, not an error.
+  const noResults = all.length > 0 && all.every((e) => (e.completed_count || 0) + (e.live_count || 0) === 0);
   const real = all.filter((e) => e.comparable === true);
   const demo = all.filter((e) => e.comparable !== true);
   const group = (title, entries, demoGroup) => `
@@ -345,6 +379,7 @@ export function renderLiveDashboard(data) {
     <div class="live-tracking">
       <div class="lt-header"><h2>Seguimiento de quinielas</h2></div>
       ${renderSummaryBar(data)}
+      ${noResults ? renderNoComparableResults() : ""}
       ${group("Quinielas reales", real, false)}
       ${group("Demo / no comparable", demo, true)}
     </div>`;
@@ -376,8 +411,25 @@ export function initLiveTracking({ container, detailContainer, fetchJson }) {
   async function showDetail(slateId) {
     if (!detailContainer) return;
     try {
-      const data = await fetchJson(`/slates/${slateId}/result-comparison`);
+      // Postmortem comparison + the tracking view (for learning_status). The
+      // tracking call is best-effort: if it fails the comparison still
+      // renders, just without the Learning column populated.
+      const [data, tracking] = await Promise.all([
+        fetchJson(`/slates/${slateId}/result-comparison`),
+        fetchJson(`/slates/${slateId}/tracking`),
+      ]);
       if (!data) throw new Error("empty");
+      if (tracking && Array.isArray(tracking.matches) && Array.isArray(data.matches)) {
+        const learnByPos = new Map(
+          tracking.matches.map((m) => [m.position, m])
+        );
+        data.matches = data.matches.map((m) => {
+          const t = learnByPos.get(m.position);
+          return t
+            ? { ...m, learning_status: t.learning_status, exclusion_reason: t.exclusion_reason }
+            : m;
+        });
+      }
       detailContainer.innerHTML = renderComparisonDetail(data);
       detailContainer.scrollIntoView({ behavior: "smooth", block: "nearest" });
     } catch (err) {

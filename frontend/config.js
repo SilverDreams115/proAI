@@ -56,7 +56,7 @@ const ticketModes = [
   {
     key: "simple",
     label: "Simple",
-    description: "Solo fijos: la jugada que firmaría si fuera una quiniela sencilla.",
+    description: "Jugada base: tu pick simple por partido.",
   },
   {
     key: "doubles",

@@ -39,10 +39,15 @@
       </section>
       <div id="global-error"></div>
 
-      <section class="ops-panel panel" id="ops-panel"></section>
+      <nav class="main-tabs" id="main-tabs" role="tablist" aria-label="Vistas principales">
+        <button class="main-tab is-active" id="tab-prediccion" type="button" role="tab" aria-selected="true" data-view="prediccion">Predicción actual</button>
+        <button class="main-tab" id="tab-seguimiento" type="button" role="tab" aria-selected="false" data-view="seguimiento">Seguimiento</button>
+        <button class="main-tab" id="tab-aprendizaje" type="button" role="tab" aria-selected="false" data-view="aprendizaje">Aprendizaje</button>
+        <button class="main-tab" id="tab-diagnostico" type="button" role="tab" aria-selected="false" data-view="diagnostico">Diagnóstico</button>
+      </nav>
 
-      <section class="panel live-tracking-panel" id="live-tracking-panel"></section>
-      <section class="panel live-tracking-detail" id="live-tracking-detail"></section>
+      <div class="view" id="view-prediccion" data-view="prediccion">
+      <section class="ops-panel panel" id="ops-panel"></section>
 
       <div class="transition-banner" id="transition-banner" hidden></div>
 
@@ -77,7 +82,7 @@
             <div class="ticket-tabs" id="ticket-tabs"></div>
             <div class="ticket-tools">
               <div class="legend">
-                <span class="legend-chip fixed">Fijo</span>
+                <span class="legend-chip fixed">Simple</span>
                 <span class="legend-chip double">Doble</span>
                 <span class="legend-chip triple">Triple</span>
                 <span class="legend-chip manual">Manual</span>
@@ -105,6 +110,36 @@
           </article>
         </section>
       </section>
+      </div>
+
+      <div class="view" id="view-seguimiento" data-view="seguimiento" hidden>
+        <section class="panel live-tracking-panel" id="live-tracking-panel"></section>
+        <section class="panel live-tracking-detail" id="live-tracking-detail"></section>
+      </div>
+
+      <div class="view" id="view-aprendizaje" data-view="aprendizaje" hidden>
+        <section class="panel" id="learning-panel">
+          <div class="panel-head">
+            <h2>Aprendizaje</h2>
+            <p class="meta-copy">Filas de entrenamiento derivadas de jornadas con resultados reales</p>
+          </div>
+          <div id="learning-body">
+            <p class="meta-copy">Disponible cuando haya learning rows suficientes.</p>
+          </div>
+        </section>
+      </div>
+
+      <div class="view" id="view-diagnostico" data-view="diagnostico" hidden>
+        <section class="panel" id="diagnostic-panel">
+          <div class="panel-head">
+            <h2>Diagnóstico</h2>
+            <p class="meta-copy">Auditoría de la señal base del modelo (solo lectura)</p>
+          </div>
+          <div id="diagnostic-body">
+            <p class="meta-copy">La auditoría de señal base se genera con <span class="mono">backend/scripts/signal_audit_report.py --slate-id &lt;id&gt;</span> (texto o <span class="mono">--json</span>). Esta pestaña queda preparada para integrar ese reporte por slate.</p>
+          </div>
+        </section>
+      </div>
     </main>
     <script src="./config.js?v=__ASSET_VERSION__" defer></script>
     <script src="./ui-utils.js?v=__ASSET_VERSION__" defer></script>

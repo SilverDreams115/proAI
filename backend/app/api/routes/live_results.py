@@ -30,10 +30,12 @@ from app.schemas.live_results import (
     LiveScoreResponse,
     ResultComparisonResponse,
 )
+from app.schemas.tracking import TrackingResponse
 from app.services.live_results_service import LiveResultsService
 from app.services.results_ingestion_service import ResultsIngestionService
 from app.services.slate_classification_service import classify_slate
 from app.services.slate_service import SlateService
+from app.services.tracking_service import TrackingService
 
 
 class IngestResultsRequest(BaseModel):
@@ -113,6 +115,38 @@ async def result_comparison(
     slate = _require_slate(session, slate_id)
     payload = LiveResultsService(session).build_result_comparison(slate)
     return ResultComparisonResponse(**payload)
+
+
+@router.get(
+    "/{slate_id}/tracking",
+    response_model=TrackingResponse,
+    summary="Seguimiento: slate-level scoring + per-match prediction vs real result",
+)
+async def slate_tracking(
+    slate_id: str, session: Session = Depends(get_db_session)
+) -> TrackingResponse:
+    """Phase A tracking view: original pick, raw/decision split, ticket
+    strategy, real result, prediction_status (hit/miss/pending) and
+    learning_status (ready/waiting_result/excluded) per match, plus a
+    slate-level summary. Read-only; pending matches never become learning
+    ready and conflicting results are excluded."""
+    slate = _require_slate(session, slate_id)
+    return TrackingResponse(**TrackingService(session).build_tracking(slate))
+
+
+@router.get(
+    "/{slate_id}/comparison",
+    response_model=TrackingResponse,
+    summary="Per-match comparison (alias of tracking, postmortem focus)",
+)
+async def slate_comparison(
+    slate_id: str, session: Session = Depends(get_db_session)
+) -> TrackingResponse:
+    """Same enriched payload as ``/tracking`` — exposed under the name the
+    Seguimiento UI uses for the per-match comparison table. Reuses
+    TrackingService so the two endpoints never diverge."""
+    slate = _require_slate(session, slate_id)
+    return TrackingResponse(**TrackingService(session).build_tracking(slate))
 
 
 @router.post(

@@ -309,7 +309,7 @@ function validationProfile(match) {
   if (["ready", "covered"].includes(profile.readiness)) {
     reasons.push(`referencia ${readinessLabel(profile.readiness)}`);
   } else {
-    reasons.push(`referencia ${readinessLabel(profile.readiness)}; no se trata como fijo seguro`);
+    reasons.push(`referencia ${readinessLabel(profile.readiness)}; no se trata como jugada simple segura`);
   }
 
   if (profile.evidenceCount <= 0) {
@@ -1621,7 +1621,58 @@ function attachEvents() {
   _eventsAttached = true;
 }
 
+// Top-level view tabs: Predicción actual | Seguimiento | Aprendizaje |
+// Diagnóstico. Pure visibility toggling — switching tabs never refetches or
+// re-renders the prediction board, so a failure inside Seguimiento (its own
+// isolated module) can never break "Predicción actual".
+function activateView(view) {
+  document.querySelectorAll(".main-tab").forEach((tab) => {
+    const active = tab.dataset.view === view;
+    tab.classList.toggle("is-active", active);
+    tab.setAttribute("aria-selected", active ? "true" : "false");
+  });
+  document.querySelectorAll(".view").forEach((node) => {
+    node.hidden = node.dataset.view !== view;
+  });
+  if (view === "aprendizaje") loadLearningSummary();
+}
+
+function setupMainTabs() {
+  document.querySelectorAll(".main-tab").forEach((tab) => {
+    tab.addEventListener("click", () => activateView(tab.dataset.view));
+  });
+}
+
+let learningSummaryLoaded = false;
+async function loadLearningSummary() {
+  if (learningSummaryLoaded) return;
+  learningSummaryLoaded = true;
+  const body = getById("learning-body");
+  if (!body) return;
+  try {
+    const summary = await safeFetch("/adaptive-dataset/summary", { optional: true });
+    if (!summary) return; // keep the honest placeholder on any non-OK response
+    const rows = Number(summary.total_rows || 0);
+    if (rows <= 0) {
+      body.innerHTML = `<p class="meta-copy">Disponible cuando haya learning rows suficientes. Aún no hay jornadas con resultado real y predicción enlazada (${escapeHtml(summary.total_slates_scored || 0)} jornadas scoreadas, ${escapeHtml(summary.total_slates_complete || 0)} completas).</p>`;
+      return;
+    }
+    const hitRate = summary.hit_rate == null ? "—" : `${Math.round(Number(summary.hit_rate) * 100)}%`;
+    body.innerHTML = `
+      <div class="learn-summary">
+        <div class="ls-cell"><strong>${escapeHtml(rows)}</strong><span>learning rows</span></div>
+        <div class="ls-cell"><strong>${escapeHtml(summary.rows_with_canonical_result || 0)}</strong><span>con resultado canónico</span></div>
+        <div class="ls-cell"><strong>${escapeHtml(summary.rows_with_conflict || 0)}</strong><span>en conflicto (excluidas)</span></div>
+        <div class="ls-cell"><strong>${hitRate}</strong><span>hit rate</span></div>
+      </div>
+      <p class="meta-copy subtle">Solo lectura. No se entrena ni se promueve ningún modelo desde esta vista.</p>`;
+  } catch (err) {
+    // Best-effort: leave the honest placeholder in place.
+  }
+}
+
 function attachStaticEvents() {
+  setupMainTabs();
   getById("login-form")?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const passwordInput = getById("auth-password");

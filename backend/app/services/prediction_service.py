@@ -80,7 +80,19 @@ class PredictionService:
             confidence_band="low",
         )
 
-    def build_slate_predictions(self, slate: ProgolSlateModel) -> list[MatchPredictionResponse]:
+    def build_slate_predictions(
+        self, slate: ProgolSlateModel, *, persist_audit: bool = True
+    ) -> list[MatchPredictionResponse]:
+        """Score every match in the slate.
+
+        ``persist_audit`` (default True) keeps the production behaviour: a
+        durable ``PredictionModel`` audit row is written per match and the
+        result is cached. Read-only callers (the tracking/comparison GET
+        endpoints) pass ``persist_audit=False`` to recompute the same
+        raw/decision/sanity vectors WITHOUT inserting any audit row — and
+        without populating the shared cache, so a later ``persist_audit=True``
+        call still recomputes and writes its audit.
+        """
         cached = _cached_slate_predictions(slate.id)
         if cached is not None:
             return cached
@@ -295,25 +307,30 @@ class PredictionService:
                 "fallback_used": fallback_used,
                 "is_international_friendly": is_friendly,
             }
-            self._persist_prediction_audit(
-                match_id=match.id,
-                slate_id=slate.id,
-                composition_hash=getattr(slate, "composition_hash", None),
-                slate_version=getattr(slate, "slate_version", None),
-                generated_at=prediction.generated_at,
-                # MODEL-adjusted values: the backtesting source of truth.
-                # NOT overwritten by the sanity decision (kept in the trace).
-                home_probability=adjusted_home,
-                draw_probability=adjusted_draw,
-                away_probability=adjusted_away,
-                recommended_outcome=recommended_outcome.value,
-                confidence_band=confidence_band,
-                competition_readiness=str(competition_policy["competition_readiness"]),
-                feature_map=feature_map,
-                sanity_audit=sanity_audit,
-            )
+            if persist_audit:
+                self._persist_prediction_audit(
+                    match_id=match.id,
+                    slate_id=slate.id,
+                    composition_hash=getattr(slate, "composition_hash", None),
+                    slate_version=getattr(slate, "slate_version", None),
+                    generated_at=prediction.generated_at,
+                    # MODEL-adjusted values: the backtesting source of truth.
+                    # NOT overwritten by the sanity decision (kept in the trace).
+                    home_probability=adjusted_home,
+                    draw_probability=adjusted_draw,
+                    away_probability=adjusted_away,
+                    recommended_outcome=recommended_outcome.value,
+                    confidence_band=confidence_band,
+                    competition_readiness=str(competition_policy["competition_readiness"]),
+                    feature_map=feature_map,
+                    sanity_audit=sanity_audit,
+                )
 
-        _store_slate_predictions(slate.id, responses)
+        # Only a persisting run seeds the shared cache, so a read-only
+        # (persist_audit=False) recompute can never make a later production
+        # call skip its audit write via a cache hit.
+        if persist_audit:
+            _store_slate_predictions(slate.id, responses)
         return responses
 
     # Fallback bounds used when the training service is missing (unit
