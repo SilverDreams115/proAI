@@ -81,10 +81,16 @@ const LEARNING_LABELS = {
   ready: "Ready",
   waiting_result: "Pendiente",
   excluded: "Excluido",
+  sign_only: "Solo signo",
 };
 
 export function learningBadge(status) {
-  const tone = status === "ready" ? "hit" : status === "excluded" ? "miss" : "pending";
+  // sign_only = result known but not canonical/scored -> not training-ready.
+  const tone =
+    status === "ready" ? "hit"
+    : status === "excluded" ? "miss"
+    : status === "sign_only" ? "warn"
+    : "pending";
   return `<span class="learn-badge learn-${tone}">${escapeHtml(LEARNING_LABELS[status] || "—")}</span>`;
 }
 

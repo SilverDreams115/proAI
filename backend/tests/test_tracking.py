@@ -451,6 +451,34 @@ async def test_predictions_endpoint_still_persists_audit(client):
 
 
 # --------------------------------------------------------------------------
+# Sign-only official result: tracking shows hit/miss, but NOT learning-ready
+# --------------------------------------------------------------------------
+
+def test_sign_only_result_is_not_learning_ready(db):
+    slate = _seed_slate(db, draw_code="PG-SO", n=1, closes_at=_past(), outcomes=["1"])
+    _make_official(db, slate)
+    mid = _match_ids(slate)[0]
+    # Sign-only final (no goals) -> match_live_results only, never promoted to
+    # the canonical (scored) match_results store. This is the Progol acta case.
+    LiveResultService(db).record_observation(
+        match_id=mid, source_id=_source(db, "ln").id,
+        status=MatchResultStatus.FULL_TIME, result_code="1", is_final=True,
+    )
+    db.flush()
+
+    payload = TrackingService(db).build_tracking(slate)
+    m = _by_pos(payload)[1]
+    assert m["match_status"] == "finished"
+    assert m["actual_result"] == "L"            # sign surfaces in tracking
+    assert m["prediction_status"] == "hit"      # hit/miss still computed
+    assert m["learning_status"] == "sign_only"  # but NOT learning-ready
+    assert m["excluded_from_training"] is True
+    assert m["exclusion_reason"] == "sign_only_no_canonical_score"
+    assert payload["learning_rows_ready"] == 0
+    assert payload["learning_rows_sign_only"] == 1
+
+
+# --------------------------------------------------------------------------
 # 6. pending matches never become learning-ready
 # --------------------------------------------------------------------------
 

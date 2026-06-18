@@ -1654,7 +1654,7 @@ async function loadLearningSummary() {
     if (!summary) return; // keep the honest placeholder on any non-OK response
     const rows = Number(summary.total_rows || 0);
     if (rows <= 0) {
-      body.innerHTML = `<p class="meta-copy">Disponible cuando haya learning rows suficientes. Aún no hay jornadas con resultado real y predicción enlazada (${escapeHtml(summary.total_slates_scored || 0)} jornadas scoreadas, ${escapeHtml(summary.total_slates_complete || 0)} completas).</p>`;
+      body.innerHTML = `<p class="meta-copy">Disponible cuando haya learning rows suficientes. Los resultados oficiales de Progol son solo-signo (sin marcador) y no aportan filas de entrenamiento; el aprendizaje necesita marcadores de una fuente deportiva. (${escapeHtml(summary.total_slates_scored || 0)} jornadas scoreadas, ${escapeHtml(summary.total_slates_complete || 0)} completas.)</p>`;
       return;
     }
     const hitRate = summary.hit_rate == null ? "—" : `${Math.round(Number(summary.hit_rate) * 100)}%`;

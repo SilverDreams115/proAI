@@ -2549,6 +2549,7 @@ details.analysis-block summary h4 {
 }
 .learn-hit { color: var(--accent-2); border-color: var(--accent-2); }
 .learn-miss { color: var(--bad-muted); border-color: var(--bad-muted); }
+.learn-warn { color: #e3b341; border-color: #e3b341; }
 .learn-pending { color: var(--muted); }
 .learn-summary {
   display: flex;

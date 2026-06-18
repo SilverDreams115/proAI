@@ -64,11 +64,16 @@ class TrackingService:
             for m in match_rows
         )
         preds = self._slate_predictions(slate) if needs_recompute else {}
-        conflict_ids = CanonicalResultRepository(self.session).conflict_match_ids(match_ids)
+        canonical_repo = CanonicalResultRepository(self.session)
+        conflict_ids = canonical_repo.conflict_match_ids(match_ids)
+        # Matches with a CANONICAL, scored result (match_results, goals NOT NULL).
+        # Progol's official acta is sign-only and never lands here, so a final
+        # sign-only result is "result present but not canonical/scored".
+        canonical_ids = set(canonical_repo.get_canonical_for_matches(match_ids).keys())
         comparable = classify_slate(self.session, slate).comparable_with_results
 
         matches: list[dict[str, Any]] = []
-        hits = misses = scored = ready = waiting = excluded = 0
+        hits = misses = scored = ready = waiting = excluded = sign_only = 0
 
         for m in match_rows:
             mid = m["match_id"]
@@ -108,9 +113,16 @@ class TrackingService:
             elif m["predicted_outcome"] is None:
                 learning_status = "excluded"
                 exclusion_reason = "missing_prediction"
+            elif mid not in canonical_ids:
+                # Final result exists (sign known, tracking shows hit/miss) but
+                # there is no canonical SCORED result, so the adaptive dataset
+                # cannot use it. Distinct from a hard exclusion or pending.
+                learning_status = "sign_only"
+                exclusion_reason = "sign_only_no_canonical_score"
             else:
                 learning_status = "ready"
-            excluded_from_training = learning_status == "excluded"
+            # Anything not "ready"/"waiting_result" cannot feed training.
+            excluded_from_training = learning_status not in {"ready", "waiting_result"}
 
             if is_final and m["predicted_outcome"] is not None:
                 scored += 1
@@ -122,6 +134,8 @@ class TrackingService:
                 ready += 1
             elif learning_status == "waiting_result":
                 waiting += 1
+            elif learning_status == "sign_only":
+                sign_only += 1
             else:
                 excluded += 1
 
@@ -211,6 +225,7 @@ class TrackingService:
             "learning_rows_ready": ready,
             "learning_rows_pending": waiting,
             "learning_rows_excluded": excluded,
+            "learning_rows_sign_only": sign_only,
             "has_conflicts": len(conflict_ids) > 0,
             "comparable_with_results": comparable,
             "last_result_update": results["last_updated_at"],

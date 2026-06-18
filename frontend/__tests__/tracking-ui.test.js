@@ -107,6 +107,11 @@ describe("comparison: acierto / fallo / pendiente + learning", () => {
     // a comparison row still renders without a learning_status (tracking 401/blip)
     expect(() => renderComparisonRow(cmp({ learning_status: undefined }))).not.toThrow();
   });
+  it("renders sign_only as a distinct, non-ready badge", () => {
+    expect(learningBadge("sign_only")).toContain("Solo signo");
+    expect(learningBadge("sign_only")).toContain("learn-warn");
+    expect(learningBadge("ready")).not.toContain("Solo signo");
+  });
 });
 
 describe("empty-state when no comparable results", () => {

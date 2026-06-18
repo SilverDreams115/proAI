@@ -45,7 +45,9 @@ class TrackingMatch(BaseModel):
     away_score: int | None = None
     match_status: str  # "finished" | "live" | "pending"
     prediction_status: str  # "hit" | "miss" | "pending"
-    learning_status: str  # "ready" | "waiting_result" | "excluded"
+    # "ready" | "waiting_result" | "excluded" | "sign_only" (final but no
+    # canonical scored result, e.g. an official Progol sign-only acta).
+    learning_status: str
     excluded_from_training: bool = False
     exclusion_reason: str | None = None
 
@@ -66,6 +68,9 @@ class TrackingResponse(BaseModel):
     learning_rows_ready: int
     learning_rows_pending: int
     learning_rows_excluded: int
+    # Final but sign-only (no canonical scored result) — tracking shows
+    # hit/miss, but the adaptive dataset cannot use these rows.
+    learning_rows_sign_only: int = 0
     has_conflicts: bool = False
     comparable_with_results: bool = False
     last_result_update: datetime | None = None
