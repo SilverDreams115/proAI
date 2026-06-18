@@ -161,6 +161,33 @@ describe("empty-state when no comparable results", () => {
   });
 });
 
+describe("Seguimiento shows finalizados + hits/misses after results", () => {
+  it("dashboard entry surfaces finalized count and hit tally", () => {
+    const html = renderDashboardEntry({
+      slate_id: "s1", draw_code: "PGM-800", week_type: "midweek", status_label: "Completa",
+      classification: "official_real", comparable: true,
+      completed_count: 6, match_count: 9, live_count: 0, pending_count: 3,
+      simple_hits: 4, doubles_hits: 5, full_hits: 6, empates_reales: 1, empates_esperados: 1.2,
+      current_hit_rate: 0.667,
+    });
+    expect(html).toContain(">6/9</strong> finalizados");
+    expect(html).toContain("S 4 · D 5 · F 6"); // hit tally visible
+    expect(html).not.toContain("Sin resultados aún");
+  });
+
+  it("comparison rows show acierto and fallo side by side", () => {
+    const base = {
+      position: 1, home_team_name: "A", away_team_name: "B", predicted_outcome: "1",
+      is_final: true, is_live: false, is_pending: false,
+      simple_hit: true, doubles_hit: true, full_hit: true,
+    };
+    const hit = renderComparisonRow({ ...base, result_code: "1", prediction_hit: true, diagnosis: "acierto", learning_status: "ready" });
+    const miss = renderComparisonRow({ ...base, position: 2, result_code: "X", prediction_hit: false, diagnosis: "fallo por empate", learning_status: "ready" });
+    expect(hit).toContain("acierto");
+    expect(miss).toContain("fallo por empate");
+  });
+});
+
 describe("fijo cleanup + main-panel integrity", () => {
   it("no 'Fijo' legend chip remains in the main UI", () => {
     expect(indexHtml).not.toContain(">Fijo<");
