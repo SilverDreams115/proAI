@@ -108,6 +108,32 @@ class NormalizationService:
         # different stems for the long Swedish names.
         "brommapojkarna": "brommapojkarna",
         "degerfors": "degerfors-if",
+        # Phase 9 — national-team canonicalization for the API-Football
+        # sports-score audit. API-Football uses English forms (Czechia,
+        # Switzerland, Bosnia & Herzegovina) while the Progol slate stores
+        # Spanish/long forms; both inputs must collapse to one slug so the
+        # matcher scores them as the same team. Several of these slugs are
+        # already produced by _normalize(); the explicit entries pin the
+        # cross-language pairs that otherwise diverge.
+        "mexico": "mexico",
+        "south korea": "south-korea",
+        "korea": "south-korea",
+        "czechia": "czech-republic",
+        "czech republic": "czech-republic",
+        "suiza": "switzerland",
+        "switzerland": "switzerland",
+        "swiss": "switzerland",
+        "bosnia and herzegovina": "bosnia-herzegovina",
+        "bosnia herzegovina": "bosnia-herzegovina",
+        "ivory coast": "ivory-coast",
+        "netherlands": "netherlands",
+        "turkiye": "turkey",
+        "turkey": "turkey",
+        "japan": "japan",
+        "tunisia": "tunisia",
+        "norway": "norway",
+        "morocco": "morocco",
+        "croatia": "croatia",
     }
     COMPETITION_ALIAS_SLUGS = {
         "copa de alemania": "german-cup",
@@ -163,6 +189,15 @@ class NormalizationService:
         "eliminatorias sudamericanas": "international-friendlies",
         "eliminatorias conmebol": "international-friendlies",
         "wcq": "international-friendlies",
+        # Phase 9 — short friendlies labels API-Football emits. These ADD
+        # to the competition score (one weighted term), they never force a
+        # match. Women's friendlies stay a SEPARATE slug so a women's
+        # fixture can't be scored against a men's national-team slate.
+        "friendlies": "international-friendlies",
+        "friendly": "international-friendlies",
+        "world friendlies": "international-friendlies",
+        "friendlies women": "international-friendlies-women",
+        "women friendlies": "international-friendlies-women",
     }
 
     def normalize_team_name(self, value: str) -> str:

@@ -88,6 +88,13 @@ class Settings(BaseModel):
     # non-production so dev loops aren't throttled.
     rate_limit_window_seconds: int = Field(default=60)
     rate_limit_max_requests: int = Field(default=0)
+    # API-Football (api-sports.io v3) connector. Audit-only for now:
+    # OFF by default, no key, no base_url. The connector never makes an
+    # external call unless `enabled` is true AND a key is present, so the
+    # app boots cleanly with these blank. Not wired into the worker.
+    apifootball_enabled: bool = Field(default=False)
+    apifootball_api_key: str | None = Field(default=None)
+    apifootball_base_url: str | None = Field(default=None)
     # Sentry SDK is opt-in. With no DSN set the SDK import is skipped
     # entirely (zero overhead). When the DSN is present we tag events
     # with the environment and the asset version hash so each release is
@@ -217,6 +224,9 @@ def load_settings() -> Settings:
         source_documents_retention_days=int(
             os.getenv("PROAI_SOURCE_DOCUMENTS_RETENTION_DAYS", "90")
         ),
+        apifootball_enabled=_get_bool("PROAI_APIFOOTBALL_ENABLED", False),
+        apifootball_api_key=os.getenv("PROAI_APIFOOTBALL_API_KEY") or None,
+        apifootball_base_url=os.getenv("PROAI_APIFOOTBALL_BASE_URL") or None,
         rate_limit_window_seconds=int(
             os.getenv("PROAI_RATE_LIMIT_WINDOW_SECONDS", "60")
         ),
