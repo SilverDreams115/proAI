@@ -201,27 +201,29 @@ class JornadaScoringService:
             return {}
         subq = (
             select(
+                PredictionModel.id.label("prediction_id"),
                 PredictionModel.match_id,
-                func.max(PredictionModel.generated_at).label("max_gen"),
+                func.row_number()
+                .over(
+                    partition_by=PredictionModel.match_id,
+                    order_by=(PredictionModel.generated_at.desc(), PredictionModel.id.desc()),
+                )
+                .label("rn"),
             )
             .where(
                 PredictionModel.slate_id == slate_id,
                 PredictionModel.composition_hash == composition_hash,
                 PredictionModel.match_id.in_(match_ids),
             )
-            .group_by(PredictionModel.match_id)
             .subquery()
         )
         stmt = (
             select(PredictionModel)
-            .join(
-                subq,
-                (PredictionModel.match_id == subq.c.match_id)
-                & (PredictionModel.generated_at == subq.c.max_gen),
-            )
+            .join(subq, PredictionModel.id == subq.c.prediction_id)
             .where(
                 PredictionModel.slate_id == slate_id,
                 PredictionModel.composition_hash == composition_hash,
+                subq.c.rn == 1,
             )
         )
         return {p.match_id: p for p in self.session.scalars(stmt)}
@@ -246,7 +248,10 @@ class JornadaScoringService:
                 TicketRecommendationSnapshotModel.is_valid.is_(True),
                 TicketRecommendationSnapshotModel.composition_hash == composition_hash,
             )
-            .order_by(TicketRecommendationSnapshotModel.generated_at.desc())
+            .order_by(
+                TicketRecommendationSnapshotModel.generated_at.desc(),
+                TicketRecommendationSnapshotModel.id.desc(),
+            )
         )
         return self.session.scalar(stmt)
 

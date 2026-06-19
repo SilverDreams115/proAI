@@ -314,11 +314,12 @@ class PredictionService:
                     composition_hash=getattr(slate, "composition_hash", None),
                     slate_version=getattr(slate, "slate_version", None),
                     generated_at=prediction.generated_at,
-                    # MODEL-adjusted values: the backtesting source of truth.
-                    # NOT overwritten by the sanity decision (kept in the trace).
-                    home_probability=adjusted_home,
-                    draw_probability=adjusted_draw,
-                    away_probability=adjusted_away,
+                    # Legacy probability columns are the API compatibility
+                    # vector, so they must alias the decision probabilities.
+                    # The raw/model-adjusted vectors remain in sanity_audit_json.
+                    home_probability=decision_home,
+                    draw_probability=decision_draw,
+                    away_probability=decision_away,
                     recommended_outcome=recommended_outcome.value,
                     confidence_band=confidence_band,
                     competition_readiness=str(competition_policy["competition_readiness"]),

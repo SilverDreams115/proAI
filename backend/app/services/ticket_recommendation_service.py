@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import json
 from datetime import datetime, timezone
 from typing import Any
 
@@ -51,6 +52,90 @@ class TicketRecommendationService:
         predictions: list[MatchPredictionResponse],
         feature_payloads_by_match: dict[str, dict[str, Any]],
     ) -> TicketRecommendationResponse:
+        generated_at, rule, recommendations, coverage, payload = self._build_payload(
+            slate=slate,
+            predictions=predictions,
+            feature_payloads_by_match=feature_payloads_by_match,
+        )
+        with managed_transaction(self.repository.session):
+            snapshot = self.repository.save_snapshot(
+                slate_id=slate.id,
+                model_version=self.MODEL_VERSION,
+                payload=payload,
+                composition_hash=getattr(slate, "composition_hash", None),
+            )
+        return TicketRecommendationResponse(
+            slate_id=slate.id,
+            snapshot_id=snapshot.id,
+            generated_at=snapshot.generated_at,
+            model_version=self.MODEL_VERSION,
+            rules=rule,
+            recommendations=recommendations,
+            coverage=coverage,
+        )
+
+    def build_read_only(
+        self,
+        *,
+        slate: ProgolSlateModel,
+        predictions: list[MatchPredictionResponse],
+        feature_payloads_by_match: dict[str, dict[str, Any]],
+    ) -> TicketRecommendationResponse:
+        """Build a ticket recommendation without inserting a snapshot."""
+        generated_at, rule, recommendations, coverage, _payload = self._build_payload(
+            slate=slate,
+            predictions=predictions,
+            feature_payloads_by_match=feature_payloads_by_match,
+        )
+        return TicketRecommendationResponse(
+            slate_id=slate.id,
+            snapshot_id="read-only",
+            generated_at=generated_at,
+            model_version=self.MODEL_VERSION,
+            rules=rule,
+            recommendations=recommendations,
+            coverage=coverage,
+        )
+
+    def response_from_snapshot(self, snapshot: Any) -> TicketRecommendationResponse:
+        """Deserialize the persisted latest snapshot into the public response."""
+        try:
+            payload = json.loads(snapshot.payload_json or "{}")
+        except (TypeError, ValueError):
+            payload = {}
+        raw_recommendations = payload.get("recommendations", [])
+        raw_coverage = payload.get("coverage", [])
+        return TicketRecommendationResponse(
+            slate_id=str(payload.get("slate_id") or snapshot.slate_id),
+            snapshot_id=snapshot.id,
+            generated_at=snapshot.generated_at,
+            model_version=snapshot.model_version,
+            rules=dict(payload.get("rules") or {}),
+            recommendations=[
+                MatchTicketRecommendationResponse.model_validate(item)
+                for item in raw_recommendations
+                if isinstance(item, dict)
+            ],
+            coverage=[
+                TicketCoverageMode.model_validate(item)
+                for item in raw_coverage
+                if isinstance(item, dict)
+            ],
+        )
+
+    def _build_payload(
+        self,
+        *,
+        slate: ProgolSlateModel,
+        predictions: list[MatchPredictionResponse],
+        feature_payloads_by_match: dict[str, dict[str, Any]],
+    ) -> tuple[
+        datetime,
+        dict[str, int | str],
+        list[MatchTicketRecommendationResponse],
+        list[TicketCoverageMode],
+        dict[str, Any],
+    ]:
         generated_at = datetime.now(timezone.utc)
         rule = self._rule_for_slate(slate.week_type, len(predictions))
         profiles = {
@@ -81,22 +166,7 @@ class TicketRecommendationService:
             "recommendations": [item.model_dump(mode="json") for item in recommendations],
             "coverage": [item.model_dump(mode="json") for item in coverage],
         }
-        with managed_transaction(self.repository.session):
-            snapshot = self.repository.save_snapshot(
-                slate_id=slate.id,
-                model_version=self.MODEL_VERSION,
-                payload=payload,
-                composition_hash=getattr(slate, "composition_hash", None),
-            )
-        return TicketRecommendationResponse(
-            slate_id=slate.id,
-            snapshot_id=snapshot.id,
-            generated_at=snapshot.generated_at,
-            model_version=self.MODEL_VERSION,
-            rules=rule,
-            recommendations=recommendations,
-            coverage=coverage,
-        )
+        return generated_at, rule, recommendations, coverage, payload
 
     def _coverage_modes(
         self,

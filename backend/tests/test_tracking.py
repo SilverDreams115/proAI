@@ -432,8 +432,8 @@ async def test_comparison_endpoint_writes_no_audit_rows(client):
 
 
 @pytest.mark.anyio
-async def test_predictions_endpoint_still_persists_audit(client):
-    """Production /api/predictions must keep writing its audit trail."""
+async def test_predictions_endpoint_is_read_only(client):
+    """GET /api/predictions is a read path; refresh is the explicit audit writer."""
     from app.db.session import SessionLocal
 
     with SessionLocal() as session:
@@ -447,7 +447,7 @@ async def test_predictions_endpoint_still_persists_audit(client):
     assert resp.status_code == 200
 
     with SessionLocal() as s:
-        assert _count_predictions(s, sid) > before  # audit still persisted
+        assert _count_predictions(s, sid) == before
 
 
 # --------------------------------------------------------------------------

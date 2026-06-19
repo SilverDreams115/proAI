@@ -56,6 +56,7 @@ def _serialize_slate(
             .where(
                 TicketRecommendationSnapshotModel.slate_id == slate.id,
                 TicketRecommendationSnapshotModel.is_valid.is_(True),
+                TicketRecommendationSnapshotModel.composition_hash == slate.composition_hash,
             )
             .limit(1)
         ) is not None

@@ -213,6 +213,7 @@ def test_audit_decision_degrades_raw_for_extreme_friendly(tmp_path) -> None:
         assert raw_v >= 0.75
         assert decision_v <= 0.65
         assert decision_v < raw_v
+        assert row.away_probability == decision_v
         assert "LOW_EVIDENCE" in trace["sanity_flags"]
         assert trace["final_status"] in {"REVISAR", "BLOQUEADO"}
     finally:

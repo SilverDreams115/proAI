@@ -152,6 +152,8 @@ def test_legacy_fields_match_decision_no_contradiction() -> None:
     )
     home, draw, away = prediction.decision_vector()
     assert (home, draw, away) == (0.20, 0.20, 0.60)
+    assert prediction.probabilities == prediction.decision_probabilities
+    assert prediction.probabilities != prediction.raw_probabilities
     assert prediction.home_probability == 0.20
     assert prediction.away_probability == 0.60
     # raw is preserved and is NOT what any decision path uses.

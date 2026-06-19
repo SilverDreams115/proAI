@@ -263,7 +263,7 @@ class TrackingService:
                 PredictionModel.sanity_audit_json != "",
                 PredictionModel.generated_at <= cutoff,
             )
-            .order_by(PredictionModel.generated_at.desc())
+            .order_by(PredictionModel.generated_at.desc(), PredictionModel.id.desc())
         )
         out: dict[str, dict[str, Any]] = {}
         for mid, audit_json in self.session.execute(stmt):

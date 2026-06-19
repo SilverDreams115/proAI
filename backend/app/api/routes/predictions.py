@@ -40,7 +40,7 @@ async def get_slate_predictions(
         ResultRepository(session),
     )
     prediction_service = PredictionService(training_service)
-    return prediction_service.build_slate_predictions(slate)
+    return prediction_service.build_slate_predictions(slate, persist_audit=False)
 
 
 @router.post("/slates/{slate_id}/refresh", response_model=list[MatchPredictionResponse], status_code=200)
@@ -126,7 +126,7 @@ async def get_slate_data_quality(
     prediction_service = PredictionService(training_service)
     policies = {
         prediction.match_id: prediction
-        for prediction in prediction_service.build_slate_predictions(slate)
+        for prediction in prediction_service.build_slate_predictions(slate, persist_audit=False)
     }
     feature_repository = FeatureRepository(session)
     feature_service = FeatureService(feature_repository, ResultRepository(session))
@@ -230,7 +230,7 @@ async def get_coverage_target_for_slate(
         ResultRepository(session),
     )
     prediction_service = PredictionService(training_service)
-    predictions = prediction_service.build_slate_predictions(slate)
+    predictions = prediction_service.build_slate_predictions(slate, persist_audit=False)
     if not predictions:
         return {
             "slate_id": slate_id,
@@ -295,13 +295,22 @@ async def get_slate_ticket_recommendations(
         ResultRepository(session),
     )
     prediction_service = PredictionService(training_service)
-    predictions = prediction_service.build_slate_predictions(slate)
+    predictions = prediction_service.build_slate_predictions(slate, persist_audit=False)
     feature_service = FeatureService(FeatureRepository(session), ResultRepository(session))
+    ticket_service = TicketRecommendationService(TicketRecommendationRepository(session))
+    snapshot = ticket_service.repository.latest_for_slate(
+        slate.id,
+        composition_hash=getattr(slate, "composition_hash", None),
+        model_version=ticket_service.MODEL_VERSION,
+    )
+    if snapshot is not None:
+        return ticket_service.response_from_snapshot(snapshot)
+
     feature_payloads_by_match: dict[str, dict[str, object]] = {}
     for slate_match in sorted(slate.matches, key=lambda item: item.position):
         _match, payload, _generated_at = feature_service.build_match_features(slate_match.match.id)
         feature_payloads_by_match[slate_match.match.id] = payload
-    return TicketRecommendationService(TicketRecommendationRepository(session)).build_and_persist(
+    return ticket_service.build_read_only(
         slate=slate,
         predictions=predictions,
         feature_payloads_by_match=feature_payloads_by_match,
