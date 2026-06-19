@@ -20,6 +20,8 @@ from app.connectors.api_football import (
     ApiFootballDisabledError,
     ApiFootballFetchResult,
     ApiFootballFixture,
+    ApiFootballTeamCandidate,
+    ApiFootballTeamFetchResult,
     classify_api_errors,
     load_local_fixtures,
     load_local_payload,
@@ -31,6 +33,12 @@ from scripts.audit_sports_scores import (
     _fetch_fixtures_online,
     _window_dates,
     run_audit,
+)
+from scripts.diagnose_api_football_fixtures import (
+    DiagnosticPosition,
+    build_report,
+    diagnose_position,
+    resolve_team_id,
 )
 from app.services.normalization_service import NormalizationService
 from app.services.sports_score_matching import (
@@ -492,3 +500,126 @@ def test_coverage_run_audit_is_pure_no_db():
     assert rows[0]["decision"] in {
         "blocked_by_missing_date", "needs_review", "no_match", "blocked", "safe",
     }
+
+
+# --- Team-id diagnostic for residual no_match positions -----------------
+
+def _team_candidate(team_id, name, *, country="World", national=True):
+    return ApiFootballTeamCandidate(
+        team_id=team_id,
+        name=name,
+        country=country,
+        national=national,
+    )
+
+
+def _team_result(candidates=None, *, error_kind=None):
+    return ApiFootballTeamFetchResult(
+        candidates=list(candidates or []),
+        results=len(candidates or []),
+        api_error=error_kind is not None,
+        api_error_kind=error_kind,
+        api_error_message="blocked by plan" if error_kind else None,
+    )
+
+
+def _fixture_result(fixtures=None, *, error_kind=None):
+    return ApiFootballFetchResult(
+        fixtures=list(fixtures or []),
+        results=len(fixtures or []),
+        api_error=error_kind is not None,
+        api_error_kind=error_kind,
+        api_error_message="blocked by plan" if error_kind else None,
+    )
+
+
+def _diag_pos(*, home="Tunisia", away="Japan", day=18):
+    return DiagnosticPosition(
+        slate_id="slate-pg-2337",
+        draw_code="PG-2337",
+        position=9,
+        match_id="match-9",
+        home=home,
+        away=away,
+        kickoff_at=__import__("datetime").datetime(2026, 6, day, 20, 0),
+        competition="International Friendlies",
+    )
+
+
+def test_team_search_with_multiple_exact_candidates_is_ambiguous():
+    resolved = resolve_team_id(
+        "Tunisia",
+        [_team_candidate(1, "Tunisia"), _team_candidate(2, "Tunisia")],
+    )
+    assert resolved.team_id is None
+    assert resolved.status == "team_ambiguous"
+
+
+def test_diagnostic_resolves_jordania_alias_to_jordan_candidate():
+    resolved = resolve_team_id("Jordania", [_team_candidate(1548, "Jordan")])
+    assert resolved.team_id == 1548
+    assert resolved.status == "resolved"
+
+
+def test_diagnostic_fixture_found_requires_both_teams():
+    row = diagnose_position(
+        _diag_pos(),
+        home_search=_team_result([_team_candidate(1, "Tunisia")]),
+        away_search=_team_result([_team_candidate(2, "Japan")]),
+        home_fixtures_window=_fixture_result([_fx("Tunisia", "South Korea", fid="single")]),
+        away_fixtures_window=_fixture_result([]),
+    )
+    assert row["fixture_found"] is False
+    assert row["reason_if_not_found"] == "single_team_only"
+    assert row["fixture_id"] is None
+
+
+def test_diagnostic_fixture_outside_plus_minus_one_is_reported():
+    row = diagnose_position(
+        _diag_pos(day=18),
+        home_search=_team_result([_team_candidate(1, "Tunisia")]),
+        away_search=_team_result([_team_candidate(2, "Japan")]),
+        home_fixtures_window=_fixture_result([_fx("Tunisia", "Japan", date="2026-06-21")]),
+        away_fixtures_window=_fixture_result([]),
+    )
+    assert row["fixture_found"] is True
+    assert row["fixture_found_outside_audit_window"] is True
+    assert row["conclusion"] == "fixture_found_outside_window"
+
+
+def test_diagnostic_plan_restriction_is_not_provider_missing():
+    row = diagnose_position(
+        _diag_pos(),
+        home_search=_team_result([_team_candidate(1, "Tunisia")]),
+        away_search=_team_result([_team_candidate(2, "Japan")]),
+        home_fixtures_window=_fixture_result([], error_kind=API_ERROR_PLAN),
+        away_fixtures_window=_fixture_result([]),
+    )
+    assert row["fixture_found"] is False
+    assert row["reason_if_not_found"] == "plan_blocked"
+    assert row["api_errors"][0]["kind"] == API_ERROR_PLAN
+    assert row["conclusion"] == "plan_blocked"
+
+
+def test_diagnostic_single_team_only_is_not_found():
+    row = diagnose_position(
+        _diag_pos(home="Panama", away="Croatia"),
+        home_search=_team_result([_team_candidate(1, "Panama")]),
+        away_search=_team_result([_team_candidate(2, "Croatia")]),
+        home_fixtures_window=_fixture_result([_fx("Panama", "Norway", fid="one-side")]),
+        away_fixtures_window=_fixture_result([]),
+    )
+    assert row["fixture_found"] is False
+    assert row["reason_if_not_found"] == "single_team_only"
+    assert row["conclusion"] == "single_team_only"
+
+
+def test_diagnostic_report_is_pure_dry_run_with_zero_db_writes():
+    report = build_report(
+        slate_id="slate-pg-2337",
+        draw_code="PG-2337",
+        source="api_football",
+        rows=[],
+    )
+    assert report["dry_run"] is True
+    assert report["db_writes"] == 0

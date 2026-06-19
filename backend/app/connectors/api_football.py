@@ -94,6 +94,7 @@ class ApiFootballFixture:
     competition: str | None
     country: str | None
     result_code: str | None
+    league_id: str | None = None
 
     @property
     def is_finished(self) -> bool:
@@ -191,6 +192,7 @@ def normalize_fixture(item: dict[str, Any]) -> ApiFootballFixture:
         competition=(league.get("name") or None),
         country=(league.get("country") or None),
         result_code=code,
+        league_id=str(league.get("id")) if league.get("id") is not None else None,
     )
 
 
@@ -284,6 +286,80 @@ class ApiFootballFetchResult:
     api_error_message: str | None
 
 
+@dataclass(frozen=True, slots=True)
+class ApiFootballTeamCandidate:
+    """One normalized candidate from API-Football ``/teams``."""
+
+    team_id: int
+    name: str
+    country: str | None
+    national: bool | None
+
+    def as_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True, slots=True)
+class ApiFootballTeamFetchResult:
+    """Outcome of a team search — candidates OR a classified API error."""
+
+    candidates: list[ApiFootballTeamCandidate]
+    results: int | None
+    api_error: bool
+    api_error_kind: str | None
+    api_error_message: str | None
+
+
+def _normalize_team_candidates(payload: dict[str, Any] | list[Any]) -> list[ApiFootballTeamCandidate]:
+    if isinstance(payload, dict):
+        items = payload.get("response") or []
+    else:
+        items = payload
+    candidates: list[ApiFootballTeamCandidate] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        team = item.get("team") or {}
+        team_id = _parse_int(team.get("id"))
+        name = team.get("name")
+        if team_id is None or not isinstance(name, str) or not name.strip():
+            continue
+        candidates.append(
+            ApiFootballTeamCandidate(
+                team_id=team_id,
+                name=name.strip(),
+                country=(team.get("country") or None),
+                national=team.get("national") if isinstance(team.get("national"), bool) else None,
+            )
+        )
+    return candidates
+
+
+def normalize_team_payload(payload: dict[str, Any] | list[Any]) -> ApiFootballTeamFetchResult:
+    """Normalize a ``/teams`` payload, preserving provider denials."""
+    errors = payload.get("errors") if isinstance(payload, dict) else None
+    classified = classify_api_errors(errors)
+    if classified is not None:
+        kind, message = classified
+        results = payload.get("results") if isinstance(payload, dict) else None
+        return ApiFootballTeamFetchResult(
+            candidates=[],
+            results=results,
+            api_error=True,
+            api_error_kind=kind,
+            api_error_message=message,
+        )
+    candidates = _normalize_team_candidates(payload)
+    results = payload.get("results") if isinstance(payload, dict) else len(candidates)
+    return ApiFootballTeamFetchResult(
+        candidates=candidates,
+        results=results,
+        api_error=False,
+        api_error_kind=None,
+        api_error_message=None,
+    )
+
+
 def normalize_payload(payload: dict[str, Any] | list[Any]) -> ApiFootballFetchResult:
     """Normalize a payload, surfacing any ``errors`` as a classified error."""
     errors = payload.get("errors") if isinstance(payload, dict) else None
@@ -366,12 +442,18 @@ class ApiFootballConnector:
         league: str | int | None,
         season: str | int | None,
         fixture_id: str | int | None,
+        from_date: str | None,
+        to_date: str | None,
     ) -> dict[str, str]:
         params: dict[str, str] = {}
         if fixture_id is not None:
             params["id"] = str(fixture_id)
         if date:
             params["date"] = date
+        if from_date:
+            params["from"] = from_date
+        if to_date:
+            params["to"] = to_date
         if team is not None:
             params["team"] = str(team)
         if league is not None:
@@ -390,6 +472,8 @@ class ApiFootballConnector:
         league: str | int | None = None,
         season: str | int | None = None,
         fixture_id: str | int | None = None,
+        from_date: str | None = None,
+        to_date: str | None = None,
     ) -> ApiFootballFetchResult:
         """Query ``/fixtures`` and surface fixtures OR a classified error.
 
@@ -399,7 +483,13 @@ class ApiFootballConnector:
         :class:`ApiFootballDisabledError` when not operational.
         """
         params = self._fixtures_params(
-            date=date, team=team, league=league, season=season, fixture_id=fixture_id
+            date=date,
+            team=team,
+            league=league,
+            season=season,
+            fixture_id=fixture_id,
+            from_date=from_date,
+            to_date=to_date,
         )
         try:
             payload = self._get("/fixtures", params)
@@ -421,6 +511,8 @@ class ApiFootballConnector:
         league: str | int | None = None,
         season: str | int | None = None,
         fixture_id: str | int | None = None,
+        from_date: str | None = None,
+        to_date: str | None = None,
     ) -> list[ApiFootballFixture]:
         """Convenience wrapper returning only the fixtures list.
 
@@ -429,8 +521,28 @@ class ApiFootballConnector:
         :class:`ApiFootballDisabledError` when not operational.
         """
         return self.fetch_fixtures(
-            date=date, team=team, league=league, season=season, fixture_id=fixture_id
+            date=date,
+            team=team,
+            league=league,
+            season=season,
+            fixture_id=fixture_id,
+            from_date=from_date,
+            to_date=to_date,
         ).fixtures
+
+    def fetch_team_candidates(self, name: str) -> ApiFootballTeamFetchResult:
+        """Query ``/teams?search=`` and surface candidates OR an API error."""
+        try:
+            payload = self._get("/teams", {"search": name})
+        except HTTPError as exc:
+            return ApiFootballTeamFetchResult(
+                candidates=[],
+                results=None,
+                api_error=True,
+                api_error_kind=_kind_from_http_status(exc.code),
+                api_error_message=_sanitize_error_message(f"HTTP {exc.code}: {exc.reason}"),
+            )
+        return normalize_team_payload(payload)
 
     def search_team_id(self, name: str) -> list[dict[str, Any]]:
         """Resolve a team name to API-Football team candidates (raw).
