@@ -37,10 +37,15 @@ def init_sentry(
     if not dsn:
         return False
     try:
-        import sentry_sdk
-        from sentry_sdk.integrations.fastapi import FastApiIntegration
-        from sentry_sdk.integrations.logging import LoggingIntegration
-        from sentry_sdk.integrations.starlette import StarletteIntegration
+        # sentry-sdk is an optional extra (see the ImportError branch). It
+        # isn't a declared dependency, so a root-level mypy run that misses
+        # backend/pyproject.toml's ignore_missing_imports flags it as
+        # import-not-found; the runtime guard below already handles its
+        # absence, so the missing stub is safe to ignore here.
+        import sentry_sdk  # type: ignore[import-not-found]
+        from sentry_sdk.integrations.fastapi import FastApiIntegration  # type: ignore[import-not-found]
+        from sentry_sdk.integrations.logging import LoggingIntegration  # type: ignore[import-not-found]
+        from sentry_sdk.integrations.starlette import StarletteIntegration  # type: ignore[import-not-found]
     except ImportError:
         logger.warning(
             "PROAI_SENTRY_DSN is set but sentry-sdk is not installed; "

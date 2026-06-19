@@ -37,18 +37,24 @@ def _seed_slate(session, *, draw_code: str, week_type: str, is_archived: bool = 
     from app.schemas.common import MatchReferencePayload, TeamPayload, CompetitionPayload
     from app.services.slate_service import SlateService
 
+    # Use far-future dates so the seeded slate stays "active" (not closed)
+    # regardless of the wall clock. A fixed near-term date rots: once the
+    # registration_closes_at timestamp passes, the slate is treated as
+    # closed and hidden from the default /api/slates listing, which made
+    # these tests fail by date rather than by logic. Mirrors the 2099
+    # dates already used in test_default_list_excludes_archived_and_closed.
     match = MatchReferencePayload(
         position=1,
         competition=CompetitionPayload(name="Test League", country="MX"),
         home_team=TeamPayload(name="Home FC", country="MX"),
         away_team=TeamPayload(name="Away FC", country="MX"),
-        kickoff_at=datetime(2026, 6, 20, 18, 0, tzinfo=timezone.utc),
+        kickoff_at=datetime(2099, 6, 20, 18, 0, tzinfo=timezone.utc),
     )
     payload = ProgolSlateCreate(
         label=f"Slate {draw_code}",
         draw_code=draw_code,
         week_type=week_type,
-        registration_closes_at=datetime(2026, 6, 19, 3, 0, tzinfo=timezone.utc),
+        registration_closes_at=datetime(2099, 6, 19, 3, 0, tzinfo=timezone.utc),
         is_archived=is_archived,
         matches=[match],
     )
