@@ -26,7 +26,12 @@ from app.connectors.api_football import (
     normalize_payload,
     normalize_response,
 )
-from scripts.audit_sports_scores import _fetch_fixtures_online, run_audit
+from scripts.audit_sports_scores import (
+    _dates_to_query,
+    _fetch_fixtures_online,
+    _window_dates,
+    run_audit,
+)
 from app.services.normalization_service import NormalizationService
 from app.services.sports_score_matching import (
     SlateMatchInput,
@@ -359,7 +364,7 @@ def test_league_query_reduces_candidates_and_keeps_correct_match():
         by_date={"2026-06-18": ApiFootballFetchResult([correct, *noise], 51, False, None, None)},
     )
     slate_inputs = [_slate_input("Mexico", "South Korea", day=18)]
-    results, strategy = _fetch_fixtures_online(conn, slate_inputs, league="1", season="2026")
+    results, strategy = _fetch_fixtures_online(conn, slate_inputs, league="1", season="2026", date_window=0)
     assert strategy["2026-06-18"] == "league"
     assert len(results["2026-06-18"].fixtures) == 1
     assert results["2026-06-18"].fixtures[0].home == "Mexico"
@@ -372,7 +377,7 @@ def test_date_query_fallback_when_league_empty():
         by_date={"2026-06-18": ApiFootballFetchResult([correct], 1, False, None, None)},
     )
     slate_inputs = [_slate_input("Mexico", "South Korea", day=18)]
-    results, strategy = _fetch_fixtures_online(conn, slate_inputs, league="1", season="2026")
+    results, strategy = _fetch_fixtures_online(conn, slate_inputs, league="1", season="2026", date_window=0)
     assert strategy["2026-06-18"] == "date_fallback"
     assert len(results["2026-06-18"].fixtures) == 1
 
@@ -386,7 +391,7 @@ def test_league_plan_error_falls_back_to_date_query():
         by_date={"2026-06-18": ApiFootballFetchResult([correct], 1, False, None, None)},
     )
     slate_inputs = [_slate_input("Mexico", "South Korea", day=18)]
-    results, strategy = _fetch_fixtures_online(conn, slate_inputs, league="1", season="2026")
+    results, strategy = _fetch_fixtures_online(conn, slate_inputs, league="1", season="2026", date_window=0)
     assert strategy["2026-06-18"] == "date_fallback_error"
     assert results["2026-06-18"].fixtures[0].home == "Mexico"
 
@@ -409,3 +414,81 @@ def test_finished_fixture_with_score_can_be_scored_candidate():
     )
     assert decision.decision == "safe"
     assert decision.candidate.fixture.result_code == "X"
+
+
+# --- Per-position date coverage (date-rot fix) --------------------------
+
+def _fake_slate_one(*, home, away, day, position=1):
+    """A one-position fake slate; day=None yields a match with no kickoff."""
+    kickoff = (
+        __import__("datetime").datetime(2026, 6, day, 20, 0) if day is not None else None
+    )
+    match = SimpleNamespace(
+        id=f"m-{position}",
+        home_team=SimpleNamespace(name=home),
+        away_team=SimpleNamespace(name=away),
+        competition=SimpleNamespace(name="International Friendlies"),
+        kickoff_at=kickoff,
+    )
+    return SimpleNamespace(
+        id="slate-x", draw_code="PG-X",
+        matches=[SimpleNamespace(position=position, match=match)],
+    )
+
+
+def test_match_date_is_queried_exactly_with_window_zero():
+    inputs = [_slate_input("Mexico", "South Korea", day=20)]
+    assert _dates_to_query(inputs, window=0) == ["2026-06-20"]
+
+
+def test_match_date_window_one_queries_plus_minus_one_day():
+    assert _window_dates(date(2026, 6, 20), 1) == [
+        "2026-06-19", "2026-06-20", "2026-06-21",
+    ]
+    inputs = [_slate_input("Mexico", "South Korea", day=20)]
+    assert _dates_to_query(inputs, window=1) == [
+        "2026-06-19", "2026-06-20", "2026-06-21",
+    ]
+
+
+def test_match_without_date_is_not_no_match():
+    slate = _fake_slate_one(home="Mexico", away="South Korea", day=None)
+    rows = run_audit(slate, [], {}, "api_football", {}, 1)
+    row = rows[0]
+    assert row["decision"] == "blocked_by_missing_date"
+    assert row["decision"] != "no_match"
+    assert row["mapping_warnings"] == ["missing_match_date"]
+    assert row["date_source"] == "missing"
+    assert row["expected_match_date"] is None
+
+
+def test_expected_date_not_in_pool_is_date_coverage_incomplete():
+    # date_results provided but the position's date was never queried.
+    slate = _fake_slate_one(home="Mexico", away="South Korea", day=12)
+    date_results = {"2026-06-99-unused": ApiFootballFetchResult([], 0, False, None, None)}
+    rows = run_audit(slate, [], {}, "api_football", date_results, 0)
+    row = rows[0]
+    assert row["decision"] == "needs_review"
+    assert row["decision"] != "no_match"
+    assert row["mapping_warnings"] == ["date_coverage_incomplete"]
+    assert row["expected_match_date"] == "2026-06-12"
+
+
+def test_no_match_only_when_expected_date_was_queried():
+    # Expected date WAS queried (present, non-error) but genuinely empty.
+    slate = _fake_slate_one(home="Mexico", away="South Korea", day=12)
+    date_results = {"2026-06-12": ApiFootballFetchResult([], 0, False, None, None)}
+    rows = run_audit(slate, [], {}, "api_football", date_results, 0)
+    row = rows[0]
+    assert row["decision"] == "no_match"
+    assert row["api_error"] is False
+    assert "2026-06-12" in row["queried_dates"]
+
+
+def test_coverage_run_audit_is_pure_no_db():
+    slate = _fake_slate_one(home="Mexico", away="South Korea", day=12)
+    rows = run_audit(slate, [], {}, "api_football", {}, 1)
+    # No session argument exists — purity by construction.
+    assert rows[0]["decision"] in {
+        "blocked_by_missing_date", "needs_review", "no_match", "blocked", "safe",
+    }

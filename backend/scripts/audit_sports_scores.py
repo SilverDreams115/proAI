@@ -26,6 +26,8 @@ import argparse
 import json
 import sys
 from dataclasses import asdict
+from datetime import date as date_cls
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
@@ -63,13 +65,35 @@ _API_KIND_WARNING = {
 }
 
 
+def _window_dates(d: date_cls | None, window: int) -> list[str]:
+    """ISO dates in [d-window, d+window] (inclusive), or [] if d is None."""
+    if d is None:
+        return []
+    return [(d + timedelta(days=k)).isoformat() for k in range(-window, window + 1)]
+
+
+def _dates_to_query(slate_inputs: list[SlateMatchInput], window: int) -> list[str]:
+    """Union of every position's expected date ±window, sorted ascending.
+
+    Each match is queried on ITS OWN kickoff date (not just the slate's
+    global dates), expanded by ``window`` days so a timezone-shifted
+    fixture (kickoff UTC vs slate-local date) is still covered.
+    """
+    seen: set[str] = set()
+    for item in slate_inputs:
+        for iso in _window_dates(item.date, window):
+            seen.add(iso)
+    return sorted(seen)
+
+
 def _fetch_fixtures_online(
     connector: ApiFootballConnector,
     slate_inputs: list[SlateMatchInput],
     league: str | None = None,
     season: str | None = None,
+    date_window: int = 1,
 ) -> tuple[dict[str, ApiFootballFetchResult], dict[str, str]]:
-    """Query API-Football once per distinct slate date (online mode).
+    """Query API-Football per position date ±``date_window`` (online mode).
 
     Strategy (Part 4): when a ``league`` id is supplied, query
     ``/fixtures?date=&league=&season=`` to cut the ~100+ global fixtures
@@ -80,10 +104,7 @@ def _fetch_fixtures_online(
     """
     results: dict[str, ApiFootballFetchResult] = {}
     strategy: dict[str, str] = {}
-    for item in slate_inputs:
-        if item.date is None:
-            continue
-        key = item.date.isoformat()
+    for key in _dates_to_query(slate_inputs, date_window):
         if key in results:
             continue
         if league is not None:
@@ -118,6 +139,44 @@ def _count_on_date(fixtures: list[ApiFootballFixture], date_iso: str | None) -> 
     return sum(1 for fx in fixtures if fx.date == date_iso)
 
 
+def _coverage_for(
+    window: list[str],
+    fixtures: list[ApiFootballFixture],
+    date_results: dict[str, ApiFootballFetchResult] | None,
+) -> list[dict[str, Any]]:
+    """candidate_count + API-error status for each date in a position window."""
+    out: list[dict[str, Any]] = []
+    for diso in window:
+        probe = date_results.get(diso) if date_results else None
+        if probe is not None and probe.api_error:
+            out.append(
+                {
+                    "date": diso,
+                    "candidate_count": probe.results,
+                    "api_error": True,
+                    "api_error_kind": probe.api_error_kind,
+                }
+            )
+        else:
+            out.append(
+                {
+                    "date": diso,
+                    "candidate_count": _count_on_date(fixtures, diso),
+                    "api_error": False,
+                    "api_error_kind": None,
+                }
+            )
+    return out
+
+
+def _queried_dates(
+    window: list[str], date_results: dict[str, ApiFootballFetchResult] | None
+) -> list[str]:
+    if not date_results:
+        return []
+    return [d for d in window if d in date_results]
+
+
 def _build_slate_inputs(slate: Any) -> list[SlateMatchInput]:
     inputs: list[SlateMatchInput] = []
     for link in sorted(slate.matches, key=lambda m: m.position):
@@ -137,15 +196,27 @@ def _build_slate_inputs(slate: Any) -> list[SlateMatchInput]:
     return inputs
 
 
-def _base_row(slate_input: SlateMatchInput, source: str) -> dict[str, Any]:
+def _base_row(
+    slate_input: SlateMatchInput,
+    source: str,
+    *,
+    date_source: str,
+    queried_dates: list[str],
+    coverage: list[dict[str, Any]],
+) -> dict[str, Any]:
+    expected = slate_input.date.isoformat() if slate_input.date else None
     return {
         "draw_code": slate_input.draw_code,
         "position": slate_input.position,
         "home": slate_input.home,
         "away": slate_input.away,
-        "date": slate_input.date.isoformat() if slate_input.date else None,
+        "date": expected,
         "competition": slate_input.competition,
         "sports_source": source,
+        "expected_match_date": expected,
+        "date_source": date_source,
+        "queried_dates": queried_dates,
+        "candidate_count_by_queried_date": coverage,
     }
 
 
@@ -156,6 +227,10 @@ def _row_for(
     ln_check: Any,
     source: str,
     candidate_count: int,
+    *,
+    date_source: str,
+    queried_dates: list[str],
+    coverage: list[dict[str, Any]],
 ) -> dict[str, Any]:
     cand = decision_obj.candidate
     fx = cand.fixture if cand else None
@@ -167,7 +242,10 @@ def _row_for(
     if ln_check.decision == "blocked":
         decision = "blocked"
 
-    row = _base_row(slate_input, source)
+    row = _base_row(
+        slate_input, source,
+        date_source=date_source, queried_dates=queried_dates, coverage=coverage,
+    )
     row.update(
         {
             "api_error": False,
@@ -203,6 +281,10 @@ def _error_row(
     probe: ApiFootballFetchResult,
     ln_sign: str | None,
     source: str,
+    *,
+    date_source: str,
+    queried_dates: list[str],
+    coverage: list[dict[str, Any]],
 ) -> dict[str, Any]:
     """Row for a position whose date the API DENIED — blocked, not no_match.
 
@@ -212,7 +294,10 @@ def _error_row(
     ``api_error`` flag is what a caller must branch on.
     """
     warning = _API_KIND_WARNING.get(probe.api_error_kind or API_ERROR_UNKNOWN, "api_error")
-    row = _base_row(slate_input, source)
+    row = _base_row(
+        slate_input, source,
+        date_source=date_source, queried_dates=queried_dates, coverage=coverage,
+    )
     row.update(
         {
             "api_error": True,
@@ -243,37 +328,128 @@ def _error_row(
     return row
 
 
+def _simple_row(
+    slate_input: SlateMatchInput,
+    source: str,
+    ln_sign: str | None,
+    *,
+    decision: str,
+    warning: str,
+    date_source: str,
+    queried_dates: list[str],
+    coverage: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Row that skips matching (missing date / incomplete coverage).
+
+    Never ``no_match``: matching was not run because the correct date was
+    unavailable, so a definitive "no result exists" cannot be claimed.
+    """
+    row = _base_row(
+        slate_input, source,
+        date_source=date_source, queried_dates=queried_dates, coverage=coverage,
+    )
+    row.update(
+        {
+            "api_error": False,
+            "api_error_kind": None,
+            "api_error_message": None,
+            "candidate_count": None,
+            "fixture_id": None,
+            "candidate_home": None,
+            "candidate_away": None,
+            "home_score": None,
+            "away_score": None,
+            "status": None,
+            "result_code": None,
+            "confidence": None,
+            "decision": decision,
+            "ln_sign": ln_sign,
+            "ln_sign_check": "not_available",
+            "usable_for_learning": False,
+            "exclusion_reason": warning,
+            "team_match_score": None,
+            "date_score": None,
+            "competition_score": None,
+            "home_away_orientation_score": None,
+            "safe_blockers": [],
+            "mapping_warnings": [warning],
+        }
+    )
+    return row
+
+
 def run_audit(
     slate: Any,
     fixtures: list[ApiFootballFixture],
     ln_signs: dict[int, str | None],
     source: str,
     date_results: dict[str, ApiFootballFetchResult] | None = None,
+    date_window: int = 1,
 ) -> list[dict[str, Any]]:
     """Pure audit: produce one row per slate position. No DB writes.
 
-    When ``date_results`` is provided and a position's date carries an
-    API error, that position is reported as ``blocked`` with the API
-    error surfaced — matching is skipped so a denial is never mistaken
-    for ``no_match``.
+    Each position is resolved on ITS OWN expected match date (kickoff),
+    expanded by ``date_window`` days. Precedence guarantees ``no_match``
+    is only ever emitted when the expected date was actually queried:
+
+    1. no match date           -> ``blocked_by_missing_date`` (missing_match_date)
+    2. expected date API-denied -> ``blocked`` (api_*; surfaced, not no_match)
+    3. expected date not queried-> ``needs_review`` (date_coverage_incomplete)
+    4. otherwise                -> scored match (safe/needs_review/no_match)
     """
     rows: list[dict[str, Any]] = []
     for slate_input in _build_slate_inputs(slate):
-        date_iso = slate_input.date.isoformat() if slate_input.date else None
-        probe = date_results.get(date_iso) if (date_results and date_iso) else None
+        expected = slate_input.date.isoformat() if slate_input.date else None
+        window = _window_dates(slate_input.date, date_window)
+        coverage = _coverage_for(window, fixtures, date_results)
+        queried = _queried_dates(window, date_results)
         ln_sign = ln_signs.get(slate_input.position)
 
-        if probe is not None and probe.api_error:
-            rows.append(_error_row(slate_input, probe, ln_sign, source))
+        # (1) Position has no match date at all — never invent a no_match.
+        if expected is None:
+            rows.append(
+                _simple_row(
+                    slate_input, source, ln_sign,
+                    decision="blocked_by_missing_date", warning="missing_match_date",
+                    date_source="missing", queried_dates=queried, coverage=coverage,
+                )
+            )
             continue
 
+        probe = date_results.get(expected) if date_results else None
+
+        # (2) The exact expected date was denied by the API.
+        if probe is not None and probe.api_error:
+            rows.append(
+                _error_row(
+                    slate_input, probe, ln_sign, source,
+                    date_source="match_kickoff", queried_dates=queried, coverage=coverage,
+                )
+            )
+            continue
+
+        # (3) We have a date map but never queried the expected date.
+        if date_results is not None and expected not in date_results:
+            rows.append(
+                _simple_row(
+                    slate_input, source, ln_sign,
+                    decision="needs_review", warning="date_coverage_incomplete",
+                    date_source="match_kickoff", queried_dates=queried, coverage=coverage,
+                )
+            )
+            continue
+
+        # (4) Expected date covered — a scored match (incl. valid no_match).
         decision_obj = match_slate_fixture(slate_input, fixtures)
         cand = decision_obj.candidate
         sports_result_code = cand.fixture.result_code if cand else None
         ln_check = evaluate_ln_sign_check(ln_sign, sports_result_code)
-        candidate_count = _count_on_date(fixtures, date_iso)
+        candidate_count = _count_on_date(fixtures, expected)
         rows.append(
-            _row_for(slate_input, decision_obj, ln_sign, ln_check, source, candidate_count)
+            _row_for(
+                slate_input, decision_obj, ln_sign, ln_check, source, candidate_count,
+                date_source="match_kickoff", queried_dates=queried, coverage=coverage,
+            )
         )
     return rows
 
@@ -372,6 +548,13 @@ def main(argv: list[str] | None = None) -> int:
         "--season",
         help="API-Football season for the --league filter (e.g. 2026).",
     )
+    parser.add_argument(
+        "--date-window",
+        type=int,
+        default=1,
+        help="Days +/- each match's kickoff date to also query, covering "
+        "timezone shifts (default 1; 0 = exact date only).",
+    )
     parser.add_argument("--json-out", help="Optional path to write the audit JSON.")
     args = parser.parse_args(argv)
 
@@ -410,7 +593,7 @@ def main(argv: list[str] | None = None) -> int:
                     "--online requires PROAI_APIFOOTBALL_ENABLED=true and an API key."
                 )
             date_results, strategy = _fetch_fixtures_online(
-                connector, slate_inputs, args.league, args.season
+                connector, slate_inputs, args.league, args.season, args.date_window
             )
             fixtures = _fixtures_pool(date_results)
         else:
@@ -419,7 +602,9 @@ def main(argv: list[str] | None = None) -> int:
             )
 
         ln_signs = _ln_signs_for_slate(session, slate)
-        rows = run_audit(slate, fixtures, ln_signs, args.source, date_results)
+        rows = run_audit(
+            slate, fixtures, ln_signs, args.source, date_results, args.date_window
+        )
     finally:
         session.close()
 
@@ -433,6 +618,8 @@ def main(argv: list[str] | None = None) -> int:
         "query": {
             "league": args.league,
             "season": args.season,
+            "date_window": args.date_window,
+            "queried_dates": sorted(date_results.keys()) if date_results else [],
             "strategy_by_date": strategy,
         },
         "dates": _date_summaries(slate_inputs, fixtures, date_results),
