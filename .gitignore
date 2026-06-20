@@ -26,3 +26,6 @@ backend/.coverage
 
 # OpenCode IDE files
 .opencode/
+
+# Local database backups / dumps (never commit DB dumps)
+backups/
