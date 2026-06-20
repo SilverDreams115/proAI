@@ -88,11 +88,21 @@ class SlateRepository:
 
     @staticmethod
     def _compute_composition_hash(payload: ProgolSlateCreate) -> str:
-        """SHA-256 of the ordered fixture list.
+        """SHA-256 of the ordered fixture list, from the RAW payload names.
 
         Deterministic from the payload alone — no DB IDs needed. Two
         calls with the same draw_code/week_type/fixtures always produce
         the same hash, enabling safe re-ingestion detection.
+
+        CONTRACT: this is the *canonical* composition_hash. It hashes the
+        team/competition names exactly as they arrive in the payload,
+        BEFORE entity resolution. The value it produces is what gets
+        persisted on the slate and copied onto every prediction and ticket
+        snapshot. Because it runs pre-resolution, a payload of Spanish
+        names (e.g. "CHEQUIA") yields a hash that will NOT match a recompute
+        over the resolved canonical model names ("Czech Republic"). That
+        divergence is expected — see ``_compute_hash_from_model``. Pinned by
+        tests/test_composition_hash_contract.py.
         """
         fixtures = [
             {
@@ -146,6 +156,18 @@ class SlateRepository:
         Used during backfill for slates that predate hash tracking. Requires
         that slate.matches and their nested match/home_team/away_team/competition
         are eagerly loaded. Returns None if the slate has no match links.
+
+        WARNING: this hashes the RESOLVED (canonical) team/competition names,
+        not the raw payload names. It is therefore NOT interchangeable with
+        ``_compute_composition_hash``: for any slate whose names were
+        canonicalized by entity resolution the two helpers return different
+        digests. Never use this to "refresh" or overwrite a composition_hash
+        that originally came from a raw payload (doing so would silently
+        invalidate every prediction/snapshot keyed on the stored hash). It is
+        safe ONLY for first-time backfill of slates whose hash is NULL (see
+        ``backfill_composition_hashes``). A future cleanup could unify both
+        helpers behind a single canonical implementation; until then they are
+        intentionally kept separate and documented.
         """
         if not slate.matches:
             return None
@@ -173,6 +195,13 @@ class SlateRepository:
 
         Safe to call at startup: slates that already have a hash are skipped,
         snapshots are never invalidated. Returns the count of slates updated.
+
+        Note: this fills NULL hashes using ``_compute_hash_from_model`` (the
+        resolved-name convention), which may differ from the raw-payload hash
+        the slate would have received at upsert time. This is acceptable here
+        precisely because it only ever touches slates that have NO hash yet —
+        it can never overwrite a persisted payload-derived hash, so existing
+        predictions/snapshots are unaffected.
         """
         statement = (
             select(ProgolSlateModel)
