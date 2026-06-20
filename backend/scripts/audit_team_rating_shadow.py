@@ -15,10 +15,15 @@ from dataclasses import asdict
 from typing import Any
 
 from sqlalchemy import select
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.core.settings import settings
 from app.db.session import SessionLocal
+from app.domain.team_rating_calibrator import apply_temperature_scaling
+from app.domain.team_rating_calibrator import get_team_rating_calibrator_candidate
+from app.domain.team_rating_calibrator import is_calibrator_candidate_compatible
+from app.domain.team_rating_calibrator import TeamRatingCalibratorCandidate
 from app.domain.team_rating_gate_config import CRITICAL_SANITY_BLOCKERS
 from app.domain.team_rating_gate_config import GATE_CALIBRATOR_METADATA
 from app.models.tables import MatchModel
@@ -42,6 +47,14 @@ _RATING_GATE_BLOCKERS = frozenset(
         "away_confidence_too_low",
     }
 )
+
+
+def _enforce_read_only_transaction(session: Session) -> None:
+    """Make live PostgreSQL audit sessions fail fast on accidental writes."""
+
+    bind = session.get_bind()
+    if bind.dialect.name == "postgresql":
+        session.execute(text("SET TRANSACTION READ ONLY"))
 
 
 def _latest_predictions_by_match(session: Session) -> dict[str, PredictionModel]:
@@ -135,6 +148,57 @@ def _links_for_scope(
     )
 
 
+def _scope_competition_name(links: list[ProgolSlateMatchModel]) -> tuple[str, list[str]]:
+    competitions = sorted({link.match.competition.name for link in links})
+    if len(competitions) == 1:
+        return competitions[0], []
+    if not competitions:
+        return "", ["no_matches"]
+    return ", ".join(competitions), ["mixed_competitions"]
+
+
+def _candidate_for_scope(
+    *,
+    candidate_id: str | None,
+    links: list[ProgolSlateMatchModel],
+    routing_policy: str,
+) -> tuple[TeamRatingCalibratorCandidate | None, bool, list[str]]:
+    if candidate_id is None:
+        return None, False, []
+    candidate = get_team_rating_calibrator_candidate(candidate_id)
+    competition_name, scope_blockers = _scope_competition_name(links)
+    compatible, blockers = is_calibrator_candidate_compatible(
+        candidate=candidate,
+        competition_name=competition_name,
+        subset="both_medium_plus_only",
+        routing_policy=routing_policy,
+        min_test_rows=settings.team_rating_gate_min_test_rows,
+    )
+    all_blockers = [*scope_blockers, *blockers]
+    return candidate, compatible and not scope_blockers, all_blockers
+
+
+def _calibrated_probability_vector(
+    pred: PredictionModel | None,
+    candidate: TeamRatingCalibratorCandidate | None,
+    *,
+    candidate_available: bool,
+    candidate_compatible: bool,
+) -> dict[str, float] | None:
+    if pred is None or candidate is None or not candidate_available or not candidate_compatible:
+        return None
+    if candidate.method != "temperature_scaling":
+        return None
+    return apply_temperature_scaling(
+        {
+            "home": pred.home_probability,
+            "draw": pred.draw_probability,
+            "away": pred.away_probability,
+        },
+        candidate.temperature,
+    )
+
+
 def _row_for_link(
     link: ProgolSlateMatchModel,
     *,
@@ -143,10 +207,14 @@ def _row_for_link(
     assume_gate_enabled: bool,
     assume_calibrator_available: bool,
     routing_policy: str,
+    calibrator_candidate: TeamRatingCalibratorCandidate | None,
+    calibrator_candidate_available: bool,
+    calibrator_candidate_compatible: bool,
 ) -> dict[str, Any]:
     match = link.match
     facts = _rating_facts(snaps, match)
-    sanity_flags = _legacy_sanity_flags(latest_predictions.get(match.id))
+    latest_prediction = latest_predictions.get(match.id)
+    sanity_flags = _legacy_sanity_flags(latest_prediction)
     decision = evaluate_team_rating_shadow_for_match(
         competition_name=match.competition.name,
         rating_present=facts["rating_present"],
@@ -187,6 +255,12 @@ def _row_for_link(
         "soft_sanity_blockers": routing.soft_sanity_blockers,
         "review_blockers": routing.review_blockers,
         "warnings": routing.warnings,
+        "calibrated_probability_vector": _calibrated_probability_vector(
+            latest_prediction,
+            calibrator_candidate,
+            candidate_available=calibrator_candidate_available,
+            candidate_compatible=calibrator_candidate_compatible,
+        ),
     }
 
 
@@ -256,8 +330,25 @@ def audit_shadow(
     assume_gate_enabled: bool,
     assume_calibrator_available: bool,
     routing_policy: str = "strict",
+    calibrator_candidate_id: str | None = None,
+    assume_calibrator_candidate_available: bool = False,
 ) -> dict[str, Any]:
     selected_policy = normalize_routing_policy(routing_policy)
+    calibrator_candidate, calibrator_compatible, calibrator_blockers = (
+        _candidate_for_scope(
+            candidate_id=calibrator_candidate_id,
+            links=links,
+            routing_policy=selected_policy,
+        )
+    )
+    candidate_available = (
+        assume_calibrator_candidate_available
+        and calibrator_candidate is not None
+        and calibrator_compatible
+    )
+    effective_assume_calibrator_available = (
+        assume_calibrator_available or candidate_available
+    )
     run, snaps = load_active_run_snapshots(session)
     latest_predictions = _latest_predictions_by_match(session)
     rows = [
@@ -266,8 +357,11 @@ def audit_shadow(
             snaps=snaps,
             latest_predictions=latest_predictions,
             assume_gate_enabled=assume_gate_enabled,
-            assume_calibrator_available=assume_calibrator_available,
+            assume_calibrator_available=effective_assume_calibrator_available,
             routing_policy=selected_policy,
+            calibrator_candidate=calibrator_candidate,
+            calibrator_candidate_available=candidate_available,
+            calibrator_candidate_compatible=calibrator_compatible,
         )
         for link in links
     ]
@@ -288,8 +382,18 @@ def audit_shadow(
             ),
             "assume_gate_enabled": assume_gate_enabled,
             "assume_calibrator_available": assume_calibrator_available,
+            "assume_calibrator_candidate_available": (
+                assume_calibrator_candidate_available
+            ),
             "routing_policy": selected_policy,
+            "calibrator_candidate_id": calibrator_candidate_id,
+            "calibrator_compatible": calibrator_compatible,
+            "calibrator_compatibility_blockers": calibrator_blockers,
+            "calibrator_candidate_available": candidate_available,
         },
+        "calibrator_candidate": (
+            calibrator_candidate.as_dict() if calibrator_candidate is not None else None
+        ),
         "summary": _summarize(rows),
         "rows": rows,
     }
@@ -307,10 +411,13 @@ def main(argv: list[str] | None = None) -> int:
         default="strict",
         choices=CLI_ROUTING_POLICIES,
     )
+    parser.add_argument("--calibrator-candidate")
+    parser.add_argument("--assume-calibrator-candidate-available", action="store_true")
     args = parser.parse_args(argv)
 
     with SessionLocal() as session:
         try:
+            _enforce_read_only_transaction(session)
             links = _links_for_scope(
                 session,
                 draw_code=args.draw_code,
@@ -322,6 +429,10 @@ def main(argv: list[str] | None = None) -> int:
                 assume_gate_enabled=args.assume_gate_enabled,
                 assume_calibrator_available=args.assume_calibrator_available,
                 routing_policy=args.routing_policy,
+                calibrator_candidate_id=args.calibrator_candidate,
+                assume_calibrator_candidate_available=(
+                    args.assume_calibrator_candidate_available
+                ),
             )
             report["scope"] = args.draw_code or args.competition
         finally:

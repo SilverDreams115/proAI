@@ -6,6 +6,8 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
+import pytest
+
 from app.models.tables import CompetitionModel
 from app.models.tables import MatchFeatureSnapshotModel
 from app.models.tables import MatchModel
@@ -190,6 +192,58 @@ def test_shadow_audit_rating_replaces_fallback_policy(tmp_path):
     session.close()
 
 
+def test_shadow_audit_accepts_calibrator_candidate(tmp_path):
+    session = _make_session(tmp_path)
+    slate = _seed(session)
+    links = sorted(slate.matches, key=lambda link: link.position)
+
+    report = shadow_audit.audit_shadow(
+        session,
+        links,
+        assume_gate_enabled=True,
+        assume_calibrator_available=False,
+        routing_policy="rating-replaces-fallback",
+        calibrator_candidate_id="international_friendlies_temperature_v1",
+        assume_calibrator_candidate_available=True,
+    )
+    gate_config = report["gate_config"]
+    assert gate_config["calibrator_candidate_id"] == "international_friendlies_temperature_v1"
+    assert gate_config["calibrator_compatible"] is False  # mixed competition slate
+    assert "mixed_competitions" in gate_config["calibrator_compatibility_blockers"]
+    assert gate_config["calibrator_candidate_available"] is False
+    assert report["calibrator_candidate"]["productive_available"] is False
+    session.close()
+
+
+def test_shadow_audit_calibrator_candidate_compatible_for_friendly_scope(tmp_path):
+    session = _make_session(tmp_path)
+    _seed(session)
+    links = shadow_audit._links_for_scope(
+        session, draw_code=None, competition="International Friendlies"
+    )
+    report = shadow_audit.audit_shadow(
+        session,
+        links,
+        assume_gate_enabled=True,
+        assume_calibrator_available=False,
+        routing_policy="rating-replaces-fallback",
+        calibrator_candidate_id="international_friendlies_temperature_v1",
+        assume_calibrator_candidate_available=True,
+    )
+    gate_config = report["gate_config"]
+    assert gate_config["calibrator_compatible"] is True
+    assert gate_config["calibrator_compatibility_blockers"] == []
+    assert gate_config["calibrator_candidate_available"] is True
+    assert report["summary"]["eligible_if_enabled"] == 2
+    assert report["summary"]["would_use_rating_model_if_enabled"] == 2
+    # The sanity-flagged friendly has a current prediction, so the auditor can
+    # show a transient calibrated vector without persisting it.
+    row = next(r for r in report["rows"] if r["position"] == 3)
+    assert row["calibrated_probability_vector"] is not None
+    assert sum(row["calibrated_probability_vector"].values()) == pytest.approx(1.0)
+    session.close()
+
+
 def test_competition_scope_and_calibrator_blocker(tmp_path):
     session = _make_session(tmp_path)
     _seed(session)
@@ -224,6 +278,8 @@ def test_script_no_writes_db(tmp_path):
         assume_gate_enabled=True,
         assume_calibrator_available=True,
         routing_policy="review_allowed_shadow",
+        calibrator_candidate_id="international_friendlies_temperature_v1",
+        assume_calibrator_candidate_available=True,
     )
     after = {
         "predictions": session.query(PredictionModel).count(),
@@ -236,6 +292,30 @@ def test_script_no_writes_db(tmp_path):
     session.close()
 
 
+def test_live_auditor_enforces_postgres_read_only_transaction():
+    class _Dialect:
+        name = "postgresql"
+
+    class _Bind:
+        dialect = _Dialect()
+
+    class _Session:
+        def __init__(self) -> None:
+            self.statements: list[str] = []
+
+        def get_bind(self):
+            return _Bind()
+
+        def execute(self, statement):
+            self.statements.append(str(statement))
+
+    session = _Session()
+
+    shadow_audit._enforce_read_only_transaction(session)  # type: ignore[arg-type]
+
+    assert session.statements == ["SET TRANSACTION READ ONLY"]
+
+
 def test_no_active_service_integration_and_defaults_off():
     root = Path(__file__).resolve().parents[1]
     prediction = (root / "app/services/prediction_service.py").read_text()
@@ -245,12 +325,15 @@ def test_no_active_service_integration_and_defaults_off():
     assert "team_rating_shadow_service" not in prediction
     assert "team_rating_gate_service" not in prediction
     assert "team_rating_routing_policy" not in prediction
+    assert "team_rating_calibrator" not in prediction
     assert "team_rating_shadow_service" not in ticket
     assert "team_rating_gate_service" not in ticket
     assert "team_rating_routing_policy" not in ticket
+    assert "team_rating_calibrator" not in ticket
     assert "team_rating_shadow_service" not in feature
     assert "team_rating_gate_service" not in feature
     assert "team_rating_routing_policy" not in feature
+    assert "team_rating_calibrator" not in feature
 
     from app.core.settings import load_settings
     import os

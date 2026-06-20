@@ -83,6 +83,37 @@ Hard sanity blockers always block in every policy:
 Policy warnings are audit output only. They do not change predictions, feature
 snapshots, tickets, approval gates, settings, or model artifacts.
 
+## Calibrator Candidate
+
+R5.3 adds one commitable calibrator candidate for shadow audits:
+
+- id: `international_friendlies_temperature_v1`
+- competition: `International Friendlies`
+- subset: `both_medium_plus_only`
+- method: `temperature_scaling`
+- temperature: `2.22`
+- routing policy: `rating_replaces_fallback`
+- test rows: `161`
+- held-out metrics: Brier `0.6347` vs baseline `0.7216`, logloss `1.0718`
+  vs baseline `1.3125`, ECE `0.1074` vs baseline `0.2346`
+- productive_available: `false`
+
+Audit it with:
+
+```bash
+.venv/bin/python backend/scripts/audit_team_rating_shadow.py \
+  --competition "International Friendlies" \
+  --assume-gate-enabled \
+  --calibrator-candidate international_friendlies_temperature_v1 \
+  --assume-calibrator-candidate-available \
+  --routing-policy rating-replaces-fallback
+```
+
+The auditor validates competition, subset, routing policy, and minimum test
+rows before treating the candidate as available. A compatible candidate only
+changes the shadow report. It does not enable the production gate, register an
+artifact, write to the database, or alter any persisted probability.
+
 ## Before Real Activation
 
 - Refit and register a productive calibrator instead of relying on experiment
