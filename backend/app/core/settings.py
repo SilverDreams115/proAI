@@ -102,6 +102,13 @@ class Settings(BaseModel):
     sentry_dsn: str | None = Field(default=None)
     sentry_traces_sample_rate: float = Field(default=0.0)
     sentry_profiles_sample_rate: float = Field(default=0.0)
+    # Team-rating feature read-only adapter (R3). OFF by default: with this
+    # flag false the rating helper returns nothing and NOTHING in the
+    # prediction/feature path consults a rating. Flipping it on only lets a
+    # future, explicitly-wired feature layer READ the latest active rating
+    # snapshot — it never changes predictions on its own. See
+    # docs/team_rating_activation_protocol.md.
+    team_rating_feature_enabled: bool = Field(default=False)
 
     @property
     def docs_url(self) -> str | None:
@@ -227,6 +234,7 @@ def load_settings() -> Settings:
         apifootball_enabled=_get_bool("PROAI_APIFOOTBALL_ENABLED", False),
         apifootball_api_key=os.getenv("PROAI_APIFOOTBALL_API_KEY") or None,
         apifootball_base_url=os.getenv("PROAI_APIFOOTBALL_BASE_URL") or None,
+        team_rating_feature_enabled=_get_bool("PROAI_TEAM_RATING_FEATURE_ENABLED", False),
         rate_limit_window_seconds=int(
             os.getenv("PROAI_RATE_LIMIT_WINDOW_SECONDS", "60")
         ),
