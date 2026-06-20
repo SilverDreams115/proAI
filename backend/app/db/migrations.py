@@ -9,7 +9,7 @@ from sqlalchemy.engine import Engine
 
 from app.db.base import Base
 
-SCHEMA_VERSION = 18
+SCHEMA_VERSION = 19
 POSTGRES_MIGRATION_LOCK_ID = 791796
 ALEMBIC_VERSION_PATTERN = re.compile(r"^0*(?P<version>\d+)_.*\.py$")
 
@@ -125,6 +125,9 @@ def _run_migrations_unlocked(engine: Engine) -> None:
         if current_version < 18:
             _migrate_to_v18(connection)
             current_version = 18
+        if current_version < 19:
+            _migrate_to_v19(connection)
+            current_version = 19
         connection.execute(text("UPDATE schema_migrations SET version = :version"), {"version": current_version})
 
 
@@ -178,6 +181,7 @@ def _bootstrap_schema(engine: Engine) -> None:
         _migrate_to_v16(connection)
         _migrate_to_v17(connection)
         _migrate_to_v18(connection)
+        _migrate_to_v19(connection)
         connection.execute(text("CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER NOT NULL)"))
         has_row = connection.execute(text("SELECT 1 FROM schema_migrations LIMIT 1")).scalar_one_or_none()
         if has_row is None:
@@ -964,5 +968,91 @@ def _migrate_to_v17(connection) -> None:
         text(
             "CREATE INDEX IF NOT EXISTS ix_match_live_results_source_id "
             "ON match_live_results (source_id)"
+        )
+    )
+
+
+def _migrate_to_v19(connection) -> None:
+    """Create team_rating_runs / team_rating_snapshots (R2 persistence).
+
+    Schema-only: inserts NO ratings and touches NO existing table. The first
+    active run is computed separately by compute_team_ratings.py --apply.
+
+    Idempotent via CREATE TABLE IF NOT EXISTS; no-op when already present.
+    JSON is stored as TEXT and ids as VARCHAR(36) so the identical DDL runs
+    on SQLite (tests) and PostgreSQL (production), mirroring the SQLAlchemy
+    models in app/models/team_rating.py and the alembic revision 0019.
+    """
+    connection.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS team_rating_runs (
+                id VARCHAR(36) PRIMARY KEY,
+                algorithm_version VARCHAR(32) NOT NULL,
+                config_json TEXT NOT NULL DEFAULT '{}',
+                source_result_count INTEGER NOT NULL DEFAULT 0,
+                rated_match_count INTEGER NOT NULL DEFAULT 0,
+                excluded_match_count INTEGER NOT NULL DEFAULT 0,
+                input_checksum VARCHAR(64) NOT NULL,
+                output_checksum VARCHAR(64) NOT NULL,
+                status VARCHAR(16) NOT NULL DEFAULT 'computed',
+                created_at TIMESTAMPTZ NOT NULL,
+                CONSTRAINT ck_team_rating_run_status
+                    CHECK (status IN ('computed','active','superseded'))
+            )
+            """
+        )
+    )
+    connection.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_team_rating_runs_status_created_at "
+            "ON team_rating_runs (status, created_at)"
+        )
+    )
+    connection.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_team_rating_runs_algorithm_version "
+            "ON team_rating_runs (algorithm_version)"
+        )
+    )
+    connection.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS team_rating_snapshots (
+                id VARCHAR(36) PRIMARY KEY,
+                run_id VARCHAR(36) NOT NULL REFERENCES team_rating_runs(id),
+                team_id VARCHAR(36) NOT NULL REFERENCES teams(id),
+                namespace VARCHAR(16) NOT NULL,
+                rating FLOAT NOT NULL,
+                rating_delta FLOAT NOT NULL DEFAULT 0,
+                matches_count INTEGER NOT NULL DEFAULT 0,
+                wins INTEGER NOT NULL DEFAULT 0,
+                draws INTEGER NOT NULL DEFAULT 0,
+                losses INTEGER NOT NULL DEFAULT 0,
+                goals_for INTEGER NOT NULL DEFAULT 0,
+                goals_against INTEGER NOT NULL DEFAULT 0,
+                confidence_bucket VARCHAR(16) NOT NULL DEFAULT 'no_rating',
+                last_result_at TIMESTAMPTZ,
+                competitions_seen_json TEXT NOT NULL DEFAULT '[]',
+                CONSTRAINT uq_team_rating_snapshot_identity
+                    UNIQUE (run_id, team_id, namespace),
+                CONSTRAINT ck_team_rating_snapshot_namespace
+                    CHECK (namespace IN ('club','national','unknown')),
+                CONSTRAINT ck_team_rating_snapshot_confidence
+                    CHECK (confidence_bucket IN ('no_rating','weak','medium','strong'))
+            )
+            """
+        )
+    )
+    connection.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_team_rating_snapshots_run_id "
+            "ON team_rating_snapshots (run_id)"
+        )
+    )
+    connection.execute(
+        text(
+            "CREATE INDEX IF NOT EXISTS ix_team_rating_snapshots_team_namespace "
+            "ON team_rating_snapshots (team_id, namespace)"
         )
     )

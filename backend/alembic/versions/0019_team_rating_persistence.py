@@ -1,28 +1,20 @@
-"""DRAFT migration — team rating persistence (R2). NOT APPLIED.
+"""Team rating persistence (R2) — team_rating_runs / team_rating_snapshots.
 
 Revision ID: 0019
 Revises: 0018
 Create Date: 2026-06-20
 
-⚠️  THIS FILE IS A DRAFT AND LIVES OUTSIDE ``alembic/versions/`` ON PURPOSE.
+Activated R2 persistence: this revision was promoted from
+``alembic/drafts/`` into ``alembic/versions/`` and is now the latest applied
+revision. The runtime migrator (``app/db/migrations.py``) is the real apply
+path — ``SCHEMA_VERSION`` is bumped to 19 and ``_migrate_to_v19`` creates
+these two tables idempotently (CREATE TABLE IF NOT EXISTS, like
+``_migrate_to_v17``). This alembic file mirrors that DDL for review parity;
+``migration_audit_errors`` requires ``max(versions/) == SCHEMA_VERSION``.
 
-It is therefore:
-  * NOT autodiscovered by ``alembic upgrade`` (alembic only scans
-    ``versions/``), so it can never be applied accidentally;
-  * NOT scanned by ``app.db.migrations.migration_audit_errors`` (which globs
-    ``versions/*.py``), so the runtime ``SCHEMA_VERSION`` (18) still matches
-    the latest *applied* alembic revision and the app keeps booting and the
-    test suite keeps passing.
-
-ACTIVATION PROTOCOL (future, manual, confirm-gated — see
-``docs/team_rating_activation_protocol.md``):
-  1. Move this file into ``backend/alembic/versions/`` as
-     ``0019_team_rating_persistence.py``.
-  2. Bump ``SCHEMA_VERSION`` to 19 in ``app/db/migrations.py`` and add a
-     ``_migrate_to_v19`` that creates the same two tables (CREATE TABLE IF
-     NOT EXISTS, like ``_migrate_to_v17``), wired into both
-     ``_run_migrations_unlocked`` and ``_bootstrap_schema``.
-  3. Only then does the schema reach a real database.
+Schema-only: inserts NO ratings and touches NO existing table. The first
+active run is computed separately by
+``backend/scripts/compute_team_ratings.py --apply``.
 
 DDL parity: JSON is stored as ``Text`` (json string), matching every other
 JSON column in this codebase (``payload_json``, ``anchors_json``,
