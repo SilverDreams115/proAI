@@ -109,6 +109,18 @@ class Settings(BaseModel):
     # snapshot — it never changes predictions on its own. See
     # docs/team_rating_activation_protocol.md.
     team_rating_feature_enabled: bool = Field(default=False)
+    # Team-rating controlled gate (R5.0). INACTIVE by default and NOT wired
+    # into PredictionService: these flags only configure the pure gate
+    # predicate / dry-run auditor. With team_rating_gate_enabled false the
+    # gate always returns eligible=false (flag_disabled), so probabilities are
+    # never affected. See docs/team_rating_gate_calibration_metadata.md.
+    team_rating_gate_enabled: bool = Field(default=False)
+    team_rating_gate_competitions: list[str] = Field(
+        default_factory=lambda: ["International Friendlies"]
+    )
+    team_rating_gate_require_both_medium_plus: bool = Field(default=True)
+    team_rating_gate_require_calibrator: bool = Field(default=True)
+    team_rating_gate_min_test_rows: int = Field(default=150)
 
     @property
     def docs_url(self) -> str | None:
@@ -235,6 +247,19 @@ def load_settings() -> Settings:
         apifootball_api_key=os.getenv("PROAI_APIFOOTBALL_API_KEY") or None,
         apifootball_base_url=os.getenv("PROAI_APIFOOTBALL_BASE_URL") or None,
         team_rating_feature_enabled=_get_bool("PROAI_TEAM_RATING_FEATURE_ENABLED", False),
+        team_rating_gate_enabled=_get_bool("PROAI_TEAM_RATING_GATE_ENABLED", False),
+        team_rating_gate_competitions=_get_csv(
+            "PROAI_TEAM_RATING_GATE_COMPETITIONS", ["International Friendlies"]
+        ),
+        team_rating_gate_require_both_medium_plus=_get_bool(
+            "PROAI_TEAM_RATING_GATE_REQUIRE_BOTH_MEDIUM_PLUS", True
+        ),
+        team_rating_gate_require_calibrator=_get_bool(
+            "PROAI_TEAM_RATING_GATE_REQUIRE_CALIBRATOR", True
+        ),
+        team_rating_gate_min_test_rows=int(
+            os.getenv("PROAI_TEAM_RATING_GATE_MIN_TEST_ROWS", "150")
+        ),
         rate_limit_window_seconds=int(
             os.getenv("PROAI_RATE_LIMIT_WINDOW_SECONDS", "60")
         ),
