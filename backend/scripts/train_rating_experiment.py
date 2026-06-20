@@ -63,6 +63,16 @@ FEATURE_SETS = {
 }
 
 LABEL_TO_INDEX = {"1": 0, "X": 1, "2": 2}
+
+# Row subsets compared in R4.1. Each predicate reads ONLY pre-match flags
+# already computed leak-free in build_experiment_rows, so subsetting never
+# introduces future information.
+SUBSETS: dict[str, Any] = {
+    "all_trainable": lambda r: True,
+    "both_medium_plus_only": lambda r: r.both_medium_plus,
+    "rating_present_only": lambda r: r.home_rating_present and r.away_rating_present,
+}
+
 _FORM_WINDOW = 8
 _CONF_ORDINAL = {
     ConfidenceBucket.NO_RATING: 0, ConfidenceBucket.WEAK: 1,
@@ -260,6 +270,42 @@ def top2_coverage(probs: list[list[float]], y: list[int]) -> float:
     return cov / len(y) if y else 0.0
 
 
+def apply_temperature(probs: list[list[float]], temperature: float) -> list[list[float]]:
+    """Temperature-scale probability vectors: p_i ∝ p_i**(1/T), renormalized.
+
+    T>1 softens (less confident), T<1 sharpens. Pure, no sklearn."""
+    inv = 1.0 / temperature
+    out: list[list[float]] = []
+    for p in probs:
+        q = [max(pi, 1e-15) ** inv for pi in p]
+        s = sum(q) or 1.0
+        out.append([qi / s for qi in q])
+    return out
+
+
+def fit_temperature(probs: list[list[float]], y: list[int]) -> float:
+    """Pick T minimizing log loss over a coarse-then-fine 1-D grid. Fit this on
+    a CALIBRATION set (e.g. train predictions), never on the test fold."""
+    if not y:
+        return 1.0
+    best_t, best_ll = 1.0, float("inf")
+    # coarse pass
+    grid = [0.3 + 0.1 * i for i in range(58)]  # 0.3 .. 6.0
+    for t in grid:
+        ll = multiclass_log_loss(apply_temperature(probs, t), y)
+        if ll < best_ll:
+            best_ll, best_t = ll, t
+    # fine pass around the best
+    fine = [best_t - 0.1 + 0.02 * i for i in range(11)]
+    for t in fine:
+        if t <= 0:
+            continue
+        ll = multiclass_log_loss(apply_temperature(probs, t), y)
+        if ll < best_ll:
+            best_ll, best_t = ll, t
+    return round(best_t, 3)
+
+
 def calibration_bins(probs: list[list[float]], y: list[int], bins: int = 10) -> dict[str, Any]:
     """Reliability of the predicted (max-prob) class. Returns ECE + bins."""
     buckets: list[dict[str, float]] = [{"conf_sum": 0.0, "hits": 0.0, "n": 0.0} for _ in range(bins)]
@@ -311,15 +357,42 @@ def train_eval_xgb(
         "eval_metric": "mlogloss", "verbosity": 0,
     }
     booster = xgb.train(params, dtrain, num_boost_round=num_round)
-    raw = booster.predict(dtest)
-    probs = [[float(x) for x in row] for row in raw]
+    probs = [[float(x) for x in row] for row in booster.predict(dtest)]
+    base_cal = calibration_bins(probs, yte)
+    raw_ll = round(multiclass_log_loss(probs, yte), 4)
+
+    # Offline temperature-scaling DIAGNOSTIC (never persisted/registered):
+    #  * train_fit: fit T on TRAIN predictions. XGBoost overfits the train
+    #    fold, so this is the naive/deployable-without-a-calib-fold protocol
+    #    and is expected to be a poor estimate of T.
+    #  * oracle_test_fit: fit T on the TEST fold itself — an optimistic UPPER
+    #    BOUND that answers "is this model calibratable at all?".
+    train_probs = [[float(x) for x in row] for row in booster.predict(dtrain)]
+    t_train = fit_temperature(train_probs, ytr)
+    t_oracle = fit_temperature(probs, yte)
+    p_train = apply_temperature(probs, t_train)
+    p_oracle = apply_temperature(probs, t_oracle)
     return {
         "n_train": len(train), "n_test": len(test),
         "top1_accuracy": round(top1_accuracy(probs, yte), 4),
         "top2_coverage": round(top2_coverage(probs, yte), 4),
         "brier_score": round(multiclass_brier(probs, yte), 4),
-        "log_loss": round(multiclass_log_loss(probs, yte), 4),
-        "calibration": calibration_bins(probs, yte),
+        "log_loss": raw_ll,
+        "calibration": base_cal,
+        "calibration_diagnostic": {
+            "log_loss_raw": raw_ll,
+            "ece_raw": base_cal["ece"],
+            "train_fit": {
+                "temperature": t_train,
+                "log_loss": round(multiclass_log_loss(p_train, yte), 4),
+                "ece": calibration_bins(p_train, yte)["ece"],
+            },
+            "oracle_test_fit": {
+                "temperature": t_oracle,
+                "log_loss": round(multiclass_log_loss(p_oracle, yte), 4),
+                "ece": calibration_bins(p_oracle, yte)["ece"],
+            },
+        },
         "_booster": booster,
     }
 
@@ -358,12 +431,18 @@ def run_competition(
     min_test: int,
     save_dir: Path | None,
     num_round: int = 200,
+    subset: str = "all_trainable",
 ) -> dict[str, Any]:
-    summary = dataset_summary(rows, competition)
-    train, test = temporal_split(rows, test_fraction)
+    predicate = SUBSETS[subset]
+    subset_rows = [r for r in rows if predicate(r)]
+    summary = dataset_summary(subset_rows, competition)
+    summary["subset"] = subset
+    summary["rows_before_subset"] = len(rows)
+    train, test = temporal_split(subset_rows, test_fraction)
     summary["split"] = {"n_train": len(train), "n_test": len(test),
                         "train_end": str(train[-1].played_at) if train else None,
                         "test_start": str(test[0].played_at) if test else None}
+    summary["rows_test"] = len(test)
     if len(train) < min_train or len(test) < min_test:
         summary["status"] = "insufficient_sample"
         summary["ablation"] = {}
@@ -376,9 +455,15 @@ def run_competition(
         if save_dir is not None:
             save_dir.mkdir(parents=True, exist_ok=True)
             safe = competition.lower().replace(" ", "_").replace("/", "_")
-            booster.save_model(str(save_dir / f"{safe}__{set_name}.json"))
+            booster.save_model(str(save_dir / f"{safe}__{subset}__{set_name}.json"))
         ablation[set_name] = res
     summary["ablation"] = ablation
+    base, rated = ablation["without_rating"], ablation["with_rating"]
+    summary["deltas"] = {
+        "delta_brier": round(rated["brier_score"] - base["brier_score"], 4),
+        "delta_logloss": round(rated["log_loss"] - base["log_loss"], 4),
+        "delta_ece": round(rated["calibration"]["ece"] - base["calibration"]["ece"], 4),
+    }
     summary["status"] = "evaluated"
     summary["verdict"] = _verdict(summary, ablation)
     return summary
@@ -422,6 +507,7 @@ def run_experiment(
     session,
     *,
     competitions: list[str] | None,
+    subsets: list[str] | None = None,
     test_fraction: float = 0.3,
     min_train: int = 50,
     min_test: int = 20,
@@ -434,22 +520,26 @@ def run_experiment(
         by_comp[r.competition].append(r)
 
     targets = competitions if competitions else sorted(by_comp, key=lambda c: -len(by_comp[c]))
-    reports = []
-    for comp in targets:
-        comp_rows = by_comp.get(comp, [])
-        if not comp_rows:
-            reports.append({"competition": comp, "status": "not_found", "rows_total": 0})
-            continue
-        reports.append(run_competition(
-            comp_rows, comp, test_fraction=test_fraction, min_train=min_train,
-            min_test=min_test, save_dir=save_dir, num_round=num_round,
-        ))
+    use_subsets = subsets or ["all_trainable"]
+    by_subset: dict[str, list[dict[str, Any]]] = {}
+    for subset in use_subsets:
+        reports = []
+        for comp in targets:
+            comp_rows = by_comp.get(comp, [])
+            if not comp_rows:
+                reports.append({"competition": comp, "status": "not_found", "rows_total": 0})
+                continue
+            reports.append(run_competition(
+                comp_rows, comp, test_fraction=test_fraction, min_train=min_train,
+                min_test=min_test, save_dir=save_dir, num_round=num_round, subset=subset,
+            ))
+        by_subset[subset] = reports
     return {
-        "experiment": "team_rating_r4",
+        "experiment": "team_rating_r4_1",
         "total_rows": len(rows),
-        "competitions_evaluated": len(reports),
+        "subsets": list(use_subsets),
         "feature_sets": FEATURE_SETS,
-        "reports": reports,
+        "reports_by_subset": by_subset,
     }
 
 
@@ -457,6 +547,12 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Offline experimental rating-feature backtest.")
     parser.add_argument("--competition", action="append", help="repeatable; omit with --all")
     parser.add_argument("--all", action="store_true", help="evaluate all competitions")
+    parser.add_argument(
+        "--rating-subset",
+        choices=["all-trainable", "both-medium-plus", "rating-present"],
+        action="append",
+        help="repeatable row subset; default runs all three (R4.1)",
+    )
     parser.add_argument("--test-fraction", type=float, default=0.3)
     parser.add_argument("--num-round", type=int, default=200)
     parser.add_argument("--no-save", action="store_true", help="do not write artifacts")
@@ -464,12 +560,23 @@ def main(argv: list[str] | None = None) -> int:
     if not args.all and not args.competition:
         parser.error("pass --all or at least one --competition")
 
+    _cli_to_subset = {
+        "all-trainable": "all_trainable",
+        "both-medium-plus": "both_medium_plus_only",
+        "rating-present": "rating_present_only",
+    }
+    subsets = (
+        [_cli_to_subset[s] for s in args.rating_subset]
+        if args.rating_subset
+        else list(SUBSETS.keys())
+    )
     save_dir = None if args.no_save else _EXPERIMENT_DIR
     with SessionLocal() as session:
         try:
             report = run_experiment(
                 session,
                 competitions=None if args.all else args.competition,
+                subsets=subsets,
                 test_fraction=args.test_fraction,
                 save_dir=save_dir,
                 num_round=args.num_round,

@@ -173,6 +173,80 @@ def test_experiment_runs_and_writes_only_experimental_artifacts(tmp_path):
     assert "verdict" in rep
 
 
+def _synthetic_rows(n=200, seed=0):
+    import numpy as np
+    base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    rng = np.random.default_rng(seed)
+    rows = []
+    for i in range(n):
+        rd = float(rng.normal(0, 100))
+        t = "1" if rd > 40 else ("2" if rd < -40 else "X")
+        feats = {name: float(rng.normal()) for name in exp.BASELINE_FEATURES}
+        feats.update({
+            "home_rating": 1500 + rd / 2, "away_rating": 1500 - rd / 2, "rating_diff": rd,
+            "home_rating_confidence": 3.0, "away_rating_confidence": 3.0,
+            "both_rating_medium_plus": 1.0, "rating_match_count_diff": 0.0,
+        })
+        # alternate medium_plus / present so subsets differ
+        both_mp = (i % 3 != 0)
+        present = (i % 5 != 0)
+        rows.append(exp.ExperimentRow(
+            match_id=f"m{i}",
+            played_at=base.fromtimestamp(base.timestamp() + i * 3600, tz=timezone.utc),
+            competition="Liga", namespace="club", target=t, features=feats,
+            home_rating_present=present, away_rating_present=present,
+            both_medium_plus=both_mp,
+        ))
+    return rows
+
+
+def test_subset_filters_are_leakfree_and_correct():
+    rows = _synthetic_rows(120)
+    bmp = [r for r in rows if exp.SUBSETS["both_medium_plus_only"](r)]
+    pres = [r for r in rows if exp.SUBSETS["rating_present_only"](r)]
+    allr = [r for r in rows if exp.SUBSETS["all_trainable"](r)]
+    assert len(allr) == 120
+    # both_medium_plus is a strict subset of the trainable rows
+    assert all(r.both_medium_plus for r in bmp) and len(bmp) < len(allr)
+    assert all(r.home_rating_present and r.away_rating_present for r in pres)
+    # subset predicates read only pre-match flags (no future fields exist)
+    assert set(vars(rows[0])) >= {"both_medium_plus", "home_rating_present", "away_rating_present"}
+
+
+def test_temperature_scaling_pure_and_monotone():
+    # sharp-but-wrong probs → temperature >1 should reduce log loss
+    probs = [[0.98, 0.01, 0.01]] * 20
+    y = [1] * 20  # always wrong on the confident class
+    t = exp.fit_temperature(probs, y)
+    assert t > 1.0  # softening helps when overconfident-and-wrong
+    base_ll = exp.multiclass_log_loss(probs, y)
+    temp_ll = exp.multiclass_log_loss(exp.apply_temperature(probs, t), y)
+    assert temp_ll < base_ll
+    # apply_temperature keeps rows normalized
+    for row in exp.apply_temperature(probs, 2.0):
+        assert abs(sum(row) - 1.0) < 1e-9
+
+
+def test_run_competition_subset_reports_temperature(tmp_path):
+    rows = _synthetic_rows(200)
+    rep = exp.run_competition(
+        rows, "Liga", test_fraction=0.3, min_train=50, min_test=20,
+        save_dir=tmp_path / "art", num_round=40, subset="both_medium_plus_only",
+    )
+    assert rep["subset"] == "both_medium_plus_only"
+    assert rep["both_medium_plus_rate"] == 1.0  # by construction of the subset
+    assert "deltas" in rep and {"delta_brier", "delta_logloss", "delta_ece"} <= set(rep["deltas"])
+    for arm in rep["ablation"].values():
+        cal = arm["calibration_diagnostic"]
+        assert cal["train_fit"]["temperature"] > 0
+        assert cal["oracle_test_fit"]["temperature"] > 0
+        # oracle is fit on the test fold → never worse than raw log loss
+        assert cal["oracle_test_fit"]["log_loss"] <= cal["log_loss_raw"] + 1e-9
+    # artifacts include the subset in the filename, under the experimental dir
+    written = list((tmp_path / "art").glob("*both_medium_plus_only*.json"))
+    assert written and all(p.parent == tmp_path / "art" for p in written)
+
+
 def test_build_writes_nothing_and_no_service_coupling(tmp_path):
     session = _make_session(tmp_path)
     _seed(session)
