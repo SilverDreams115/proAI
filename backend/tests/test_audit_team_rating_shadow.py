@@ -151,6 +151,7 @@ def test_shadow_audit_current_off_and_assumed_enabled_breakdown(tmp_path):
         links,
         assume_gate_enabled=True,
         assume_calibrator_available=True,
+        routing_policy="strict",
     )
     summary = assumed["summary"]
     assert summary["total_matches"] == 5
@@ -160,8 +161,32 @@ def test_shadow_audit_current_off_and_assumed_enabled_breakdown(tmp_path):
     assert summary["blocked_by_rating"] == 1
     assert summary["blocked_by_competition"] == 2
     assert summary["blocked_by_sanity"] == 1
+    assert summary["blocked_by_soft_sanity"] == 1
+    assert summary["positions_would_route"] == [1]
     assert summary["positions_eligible_if_enabled"] == [1, 3]
     assert summary["positions_blocked"] == [2, 3, 4, 5]
+    session.close()
+
+
+def test_shadow_audit_rating_replaces_fallback_policy(tmp_path):
+    session = _make_session(tmp_path)
+    slate = _seed(session)
+    links = sorted(slate.matches, key=lambda link: link.position)
+
+    report = shadow_audit.audit_shadow(
+        session,
+        links,
+        assume_gate_enabled=True,
+        assume_calibrator_available=True,
+        routing_policy="rating-replaces-fallback",
+    )
+    summary = report["summary"]
+    assert summary["eligible_if_enabled"] == 2
+    assert summary["would_use_rating_model_if_enabled"] == 2
+    assert summary["blocked_by_soft_sanity"] == 0
+    assert summary["warnings"] == 1
+    assert summary["positions_would_route"] == [1, 3]
+    assert summary["positions_blocked"] == [2, 4, 5]
     session.close()
 
 
@@ -176,6 +201,7 @@ def test_competition_scope_and_calibrator_blocker(tmp_path):
         links,
         assume_gate_enabled=True,
         assume_calibrator_available=False,
+        routing_policy="rating_replaces_fallback",
     )
     assert report["summary"]["total_matches"] == 3
     assert report["summary"]["blocked_by_calibrator"] == 2
@@ -197,6 +223,7 @@ def test_script_no_writes_db(tmp_path):
         links,
         assume_gate_enabled=True,
         assume_calibrator_available=True,
+        routing_policy="review_allowed_shadow",
     )
     after = {
         "predictions": session.query(PredictionModel).count(),
@@ -217,10 +244,13 @@ def test_no_active_service_integration_and_defaults_off():
 
     assert "team_rating_shadow_service" not in prediction
     assert "team_rating_gate_service" not in prediction
+    assert "team_rating_routing_policy" not in prediction
     assert "team_rating_shadow_service" not in ticket
     assert "team_rating_gate_service" not in ticket
+    assert "team_rating_routing_policy" not in ticket
     assert "team_rating_shadow_service" not in feature
     assert "team_rating_gate_service" not in feature
+    assert "team_rating_routing_policy" not in feature
 
     from app.core.settings import load_settings
     import os

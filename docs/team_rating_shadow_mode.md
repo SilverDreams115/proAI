@@ -31,7 +31,8 @@ Use the read-only script:
 .venv/bin/python backend/scripts/audit_team_rating_shadow.py \
   --competition "International Friendlies" \
   --assume-gate-enabled \
-  --assume-calibrator-available
+  --assume-calibrator-available \
+  --routing-policy rating-replaces-fallback
 ```
 
 The script opens one DB session, reads the active `team_rating_runs` row, rating
@@ -56,6 +57,31 @@ the session back.
 `eligible_if_enabled` is the shadow rating guard view: gate ON, optional
 calibrator assumption, and no legacy sanity flags. `would_use_rating_model` is
 the stricter view that also applies current sanity blockers.
+
+## Routing Policy
+
+R5.2 adds a shadow-only routing policy so the audit can separate true blockers
+from fallback-era artifacts. The policy is selected with `--routing-policy` and
+is never imported by production services.
+
+- `strict`: treats `FALLBACK_USED`, `LOW_EVIDENCE`, and `REVISAR` as blockers.
+  This is the conservative R5.1-compatible view.
+- `rating-replaces-fallback`: allows `FALLBACK_USED` when the rating gate
+  passes, and allows `LOW_EVIDENCE` when both teams are medium-plus and a
+  calibrator is available. `REVISAR` still blocks.
+- `review-allowed-shadow`: same as `rating-replaces-fallback`, but `REVISAR`
+  becomes a warning instead of a blocker.
+
+Hard sanity blockers always block in every policy:
+
+- `BLOCKED`
+- `EXTREME_PROBABILITY_WITHOUT_EVIDENCE`
+- `DATA_CONFLICT`
+- `PLACEHOLDER_TEAM`
+- `RESULT_CONFLICT`
+
+Policy warnings are audit output only. They do not change predictions, feature
+snapshots, tickets, approval gates, settings, or model artifacts.
 
 ## Before Real Activation
 

@@ -1,4 +1,4 @@
-"""Read-only shadow audit for the inactive team-rating gate (R5.1).
+"""Read-only shadow audit for the inactive team-rating gate (R5.1/R5.2).
 
 The script answers what would happen if the controlled International
 Friendlies team-rating gate were enabled, without changing production state:
@@ -26,11 +26,22 @@ from app.models.tables import PredictionModel
 from app.models.tables import ProgolSlateMatchModel
 from app.repositories.slate_repository import SlateRepository
 from app.services.team_rating_feature_service import build_rating_features
-from app.services.team_rating_shadow_service import TeamRatingShadowDecision
 from app.services.team_rating_shadow_service import evaluate_team_rating_shadow_for_match
-from app.services.team_rating_shadow_service import has_rating_blocker
+from app.services.team_rating_routing_policy import ALL_ROUTING_SANITY_FLAGS
+from app.services.team_rating_routing_policy import CLI_ROUTING_POLICIES
+from app.services.team_rating_routing_policy import evaluate_team_rating_routing_policy
+from app.services.team_rating_routing_policy import normalize_routing_policy
 from scripts.audit_rating_features import load_active_run_snapshots
 from scripts.compute_team_ratings import namespace_for_competition
+
+_RATING_GATE_BLOCKERS = frozenset(
+    {
+        "rating_not_present",
+        "not_both_medium_plus",
+        "home_confidence_too_low",
+        "away_confidence_too_low",
+    }
+)
 
 
 def _latest_predictions_by_match(session: Session) -> dict[str, PredictionModel]:
@@ -56,7 +67,8 @@ def _legacy_sanity_flags(pred: PredictionModel | None) -> list[str]:
     final_status = str(audit.get("final_status", "")).upper()
     if final_status in {"BLOCKED", "REVISAR"}:
         flags.add(final_status)
-    return [flag for flag in sorted(flags) if flag in CRITICAL_SANITY_BLOCKERS]
+    known = ALL_ROUTING_SANITY_FLAGS | set(CRITICAL_SANITY_BLOCKERS)
+    return [flag for flag in sorted(flags) if flag in known]
 
 
 def _rating_facts(
@@ -130,6 +142,7 @@ def _row_for_link(
     latest_predictions: dict[str, PredictionModel],
     assume_gate_enabled: bool,
     assume_calibrator_available: bool,
+    routing_policy: str,
 ) -> dict[str, Any]:
     match = link.match
     facts = _rating_facts(snaps, match)
@@ -141,10 +154,20 @@ def _row_for_link(
         home_rating_confidence=facts["home_rating_confidence"],
         away_rating_confidence=facts["away_rating_confidence"],
         rating_diff=facts["rating_diff"],
-        sanity_flags=sanity_flags,
+        sanity_flags=[],
         assume_gate_enabled=assume_gate_enabled,
         assume_calibrator_available=assume_calibrator_available,
     )
+    routing = evaluate_team_rating_routing_policy(
+        policy=routing_policy,
+        gate_eligible_if_enabled=decision.eligible_if_enabled,
+        gate_blockers=decision.blockers,
+        both_medium_plus=decision.both_medium_plus,
+        calibrator_available=decision.calibrator_available,
+        sanity_flags=sanity_flags,
+    )
+    decision_dict = asdict(decision)
+    decision_dict["gate_blockers"] = decision_dict.pop("blockers")
     return {
         "slate_draw_code": link.slate.draw_code if link.slate is not None else None,
         "position": link.position,
@@ -155,39 +178,37 @@ def _row_for_link(
         "rating_status": _status(facts),
         "legacy_sanity_flags": sanity_flags,
         **facts,
-        **asdict(decision),
+        **decision_dict,
+        "routing_policy": routing.policy,
+        "would_use_rating_model": routing.eligible_for_rating_route,
+        "would_remain_fallback": not routing.eligible_for_rating_route,
+        "blockers": routing.blockers,
+        "hard_sanity_blockers": routing.hard_sanity_blockers,
+        "soft_sanity_blockers": routing.soft_sanity_blockers,
+        "review_blockers": routing.review_blockers,
+        "warnings": routing.warnings,
     }
 
 
 def _summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
-    decisions = [
-        TeamRatingShadowDecision(
-            shadow_enabled=row["shadow_enabled"],
-            gate_enabled=row["gate_enabled"],
-            eligible_current=row["eligible_current"],
-            eligible_if_enabled=row["eligible_if_enabled"],
-            would_use_rating_model=row["would_use_rating_model"],
-            would_remain_fallback=row["would_remain_fallback"],
-            blockers=list(row["blockers"]),
-            rating_diff=row["rating_diff"],
-            both_medium_plus=row["both_medium_plus"],
-            calibrator_required=row["calibrator_required"],
-            calibrator_available=row["calibrator_available"],
-        )
-        for row in rows
-    ]
-
     def _positions(pred) -> list[int]:
         return [int(row["position"]) for row in rows if pred(row)]
 
-    blocked_by_rating = sum(1 for decision in decisions if has_rating_blocker(decision))
+    blocked_by_rating = sum(
+        1
+        for row in rows
+        if any(blocker in _RATING_GATE_BLOCKERS for blocker in row["gate_blockers"])
+    )
     blocked_by_calibrator = sum(
         1
-        for decision in decisions
-        if "calibrator_unavailable" in decision.blockers
-        and "competition_not_allowed" not in decision.blockers
-        and not has_rating_blocker(decision)
+        for row in rows
+        if "calibrator_unavailable" in row["gate_blockers"]
+        and "competition_not_allowed" not in row["gate_blockers"]
+        and not any(blocker in _RATING_GATE_BLOCKERS for blocker in row["gate_blockers"])
     )
+    blocked_by_hard = sum(1 for row in rows if row["hard_sanity_blockers"])
+    blocked_by_soft = sum(1 for row in rows if row["soft_sanity_blockers"])
+    blocked_by_review = sum(1 for row in rows if row["review_blockers"])
     return {
         "total_matches": len(rows),
         "eligible_current": sum(1 for row in rows if row["eligible_current"]),
@@ -203,18 +224,27 @@ def _summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
             1 for row in rows if not row["gate_enabled"] and not row["eligible_current"]
         ),
         "blocked_by_competition": sum(
-            1 for row in rows if "competition_not_allowed" in row["blockers"]
+            1 for row in rows if "competition_not_allowed" in row["gate_blockers"]
         ),
         "blocked_by_rating": blocked_by_rating,
         "blocked_by_calibrator": blocked_by_calibrator,
+        "blocked_by_hard_sanity": blocked_by_hard,
+        "blocked_by_soft_sanity": blocked_by_soft,
+        "blocked_by_review": blocked_by_review,
         "blocked_by_sanity": sum(
             1
             for row in rows
             if row["eligible_if_enabled"]
             and not row["would_use_rating_model"]
-            and "sanity_blocked" in row["blockers"]
+            and (
+                row["hard_sanity_blockers"]
+                or row["soft_sanity_blockers"]
+                or row["review_blockers"]
+            )
         ),
+        "warnings": sum(1 for row in rows if row["warnings"]),
         "positions_eligible_if_enabled": _positions(lambda row: row["eligible_if_enabled"]),
+        "positions_would_route": _positions(lambda row: row["would_use_rating_model"]),
         "positions_blocked": _positions(lambda row: not row["would_use_rating_model"]),
     }
 
@@ -225,7 +255,9 @@ def audit_shadow(
     *,
     assume_gate_enabled: bool,
     assume_calibrator_available: bool,
+    routing_policy: str = "strict",
 ) -> dict[str, Any]:
+    selected_policy = normalize_routing_policy(routing_policy)
     run, snaps = load_active_run_snapshots(session)
     latest_predictions = _latest_predictions_by_match(session)
     rows = [
@@ -235,6 +267,7 @@ def audit_shadow(
             latest_predictions=latest_predictions,
             assume_gate_enabled=assume_gate_enabled,
             assume_calibrator_available=assume_calibrator_available,
+            routing_policy=selected_policy,
         )
         for link in links
     ]
@@ -255,6 +288,7 @@ def audit_shadow(
             ),
             "assume_gate_enabled": assume_gate_enabled,
             "assume_calibrator_available": assume_calibrator_available,
+            "routing_policy": selected_policy,
         },
         "summary": _summarize(rows),
         "rows": rows,
@@ -268,6 +302,11 @@ def main(argv: list[str] | None = None) -> int:
     mode.add_argument("--competition")
     parser.add_argument("--assume-gate-enabled", action="store_true")
     parser.add_argument("--assume-calibrator-available", action="store_true")
+    parser.add_argument(
+        "--routing-policy",
+        default="strict",
+        choices=CLI_ROUTING_POLICIES,
+    )
     args = parser.parse_args(argv)
 
     with SessionLocal() as session:
@@ -282,6 +321,7 @@ def main(argv: list[str] | None = None) -> int:
                 links,
                 assume_gate_enabled=args.assume_gate_enabled,
                 assume_calibrator_available=args.assume_calibrator_available,
+                routing_policy=args.routing_policy,
             )
             report["scope"] = args.draw_code or args.competition
         finally:
