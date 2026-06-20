@@ -29,3 +29,6 @@ backend/.coverage
 
 # Local database backups / dumps (never commit DB dumps)
 backups/
+
+# Experimental ML artifacts (boosters / metrics) — not productive, not in VCS
+artifacts/
