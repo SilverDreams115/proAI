@@ -2709,3 +2709,19 @@ details.analysis-block summary h4 {
 @media (max-width: 440px) {
   .shadow-cards, .shadow-stats { grid-template-columns: 1fr; }
 }
+
+/* R5.5 Team Rating Activation Dry-run panel (read-only, diagnostic only). */
+.dryrun-badge { background: rgba(90, 140, 255, 0.16); color: #5a8cff; border: 1px solid #5a8cff; }
+.dryrun-lead { margin: 0; color: var(--ink); font-size: 0.86rem; }
+.dryrun-stat-warn { border-left: 3px solid #f0aa46; }
+.dryrun-pick-changed {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 6px;
+  font-weight: 700;
+  background: rgba(240, 170, 70, 0.18);
+  color: #f0aa46;
+}
+.dryrun-activation { display: flex; flex-direction: column; gap: 6px; }
+.dryrun-blockers { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.dryrun-blockers li { margin: 0; }

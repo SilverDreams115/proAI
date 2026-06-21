@@ -132,3 +132,14 @@ artifact, write to the database, or alter any persisted probability.
   close to activation time.
 - Non-International-Friendlies competitions remain audit controls unless the
   gate allowlist is changed in a separate activation review.
+
+## R5.5 — Controlled Activation Dry-run
+
+The shadow projection is extended by a **controlled-activation dry-run** that
+also simulates the resulting probabilities / picks per match and reports
+`safe_to_activate` plus `activation_blockers`. It is still read-only and
+diagnostic only — it does not activate the gate, regenerate predictions, or
+change real probabilities / picks / tickets. See
+[team_rating_activation_dry_run.md](team_rating_activation_dry_run.md) for the
+policy, the simulated probability model, the endpoint/CLI/UI, and what is still
+required for R5.6 (real controlled activation).

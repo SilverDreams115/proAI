@@ -33,6 +33,7 @@ import {
   probBarWidthClass,
 } from "./helpers.js";
 import { renderTeamRatingShadowPanel } from "./team-rating-shadow.js";
+import { renderTeamRatingActivationDryRunPanel } from "./team-rating-activation-dry-run.js";
 // NOTE: live-tracking is loaded via a guarded dynamic import in the
 // bootstrap (not a static import), so a failure to load/link that module
 // can never abort app.js and blank out the main selector.
@@ -1384,6 +1385,12 @@ function renderTeamRatingShadow() {
   node.innerHTML = renderTeamRatingShadowPanel(state.teamRatingShadow);
 }
 
+function renderTeamRatingDryRun() {
+  const node = getById("team-rating-dry-run-body");
+  if (!node) return;
+  node.innerHTML = renderTeamRatingActivationDryRunPanel(state.teamRatingDryRun);
+}
+
 function renderBoard() {
   const labelNode = getById("ticket-label");
   const codeNode = getById("ticket-code");
@@ -1397,6 +1404,7 @@ function renderBoard() {
   const activeSlate = currentSlate();
   renderProductionStatus();
   renderTeamRatingShadow();
+  renderTeamRatingDryRun();
   if (qualityFilterNode) qualityFilterNode.innerHTML = renderQualityFilterOptions();
 
   if (!state.authenticated) {
@@ -1820,7 +1828,7 @@ async function loadSlateDetails(slateId) {
   // batch endpoints (`/evidence/slates`, `/availability/slates`,
   // `/results/slates/{id}/context`) each return a {match_id: [...]}
   // mapping so the per-match loop below is a dict lookup, not a fetch.
-  const [predictions, features, ticketPlan, quality, evidenceBySlate, availabilityBySlate, resultsBySlate, teamRatingShadow] = await Promise.all([
+  const [predictions, features, ticketPlan, quality, evidenceBySlate, availabilityBySlate, resultsBySlate, teamRatingShadow, teamRatingDryRun] = await Promise.all([
     safeFetch(`/predictions/slates/${slateId}`),
     safeFetch(`/predictions/slates/${slateId}/features`),
     safeFetch(`/predictions/slates/${slateId}/ticket`, {optional: true}),
@@ -1831,8 +1839,12 @@ async function loadSlateDetails(slateId) {
     // R5.4: read-only shadow diagnostic. Optional so a failure never blocks
     // the prediction board.
     safeFetch(`/predictions/slates/${slateId}/team-rating-shadow`, {optional: true}),
+    // R5.5: read-only activation dry-run diagnostic. Optional for the same
+    // reason — never blocks the prediction board.
+    safeFetch(`/predictions/slates/${slateId}/team-rating-activation-dry-run`, {optional: true}),
   ]);
   state.teamRatingShadow = (teamRatingShadow && !Array.isArray(teamRatingShadow)) ? teamRatingShadow : null;
+  state.teamRatingDryRun = (teamRatingDryRun && !Array.isArray(teamRatingDryRun)) ? teamRatingDryRun : null;
   if (!Array.isArray(predictions) || !Array.isArray(features)) {
     state.matches = [];
     state.ticketPlan = null;

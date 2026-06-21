@@ -37,6 +37,10 @@ const state = {
   // projection of the inactive gate — never changes predictions, picks or
   // tickets. Rendered in the Diagnóstico tab.
   teamRatingShadow: null,
+  // R5.5: read-only controlled-activation dry-run for the active slate. Pure
+  // simulation of enabling the gate — never changes real predictions, picks,
+  // tickets or probabilities. Rendered in the Diagnóstico tab.
+  teamRatingDryRun: null,
 };
 
 const qualityFilters = [
