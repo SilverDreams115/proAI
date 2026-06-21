@@ -14,6 +14,7 @@ from app.schemas.prediction import MatchPredictionResponse
 from app.schemas.prediction import TicketRecommendationResponse
 from app.schemas.feature import MatchFeatureResponse
 from app.schemas.feature import MatchDataQualityResponse
+from app.schemas.team_rating_shadow import TeamRatingShadowResponse
 from app.services.feature_service import FeatureService
 from app.services.ingestion_service import IngestionService
 from app.services.model_training_service import ModelTrainingService
@@ -108,6 +109,29 @@ async def get_slate_feature_snapshots(
             )
         )
     return responses
+
+
+@router.get(
+    "/slates/{slate_id}/team-rating-shadow",
+    response_model=TeamRatingShadowResponse,
+)
+async def get_slate_team_rating_shadow(
+    slate_id: str,
+    session: Session = Depends(get_db_session),
+) -> TeamRatingShadowResponse:
+    """Read-only Team Rating Shadow diagnostic for the slate.
+
+    Shadow-only: reports what the inactive team-rating gate *would* do if it
+    were enabled (eligibility, routing, blockers per match) without touching
+    predictions, picks, tickets or probabilities, and without writing any row.
+    """
+    from app.services.team_rating_shadow_report import build_slate_shadow_report
+
+    slate_service = SlateService(SlateRepository(session))
+    slate = slate_service.get_slate(slate_id)
+    if slate is None:
+        raise HTTPException(status_code=404, detail="Slate not found.")
+    return build_slate_shadow_report(session, slate)
 
 
 @router.get("/slates/{slate_id}/quality", response_model=list[MatchDataQualityResponse])

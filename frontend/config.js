@@ -33,6 +33,10 @@ const state = {
   // concurso before cierre lands.
   proposals: [],
   proposalPromoting: false,
+  // R5.4: read-only Team Rating Shadow diagnostic for the active slate. Pure
+  // projection of the inactive gate — never changes predictions, picks or
+  // tickets. Rendered in the Diagnóstico tab.
+  teamRatingShadow: null,
 };
 
 const qualityFilters = [
