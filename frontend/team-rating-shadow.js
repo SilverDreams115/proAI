@@ -59,6 +59,32 @@ function matchTag(m) {
   return "shadow-tag-block";
 }
 
+function metaCard(label, value, { mono = false, title = "" } = {}) {
+  const valueClass = mono ? "shadow-card-value mono" : "shadow-card-value";
+  const titleAttr = title ? ` title="${escapeHtml(title)}"` : "";
+  return `<div class="shadow-card">
+    <span class="shadow-card-label">${escapeHtml(label)}</span>
+    <span class="${valueClass}"${titleAttr}>${value}</span>
+  </div>`;
+}
+
+function statCard(label, value, tone = "") {
+  const toneClass = tone ? ` ${tone}` : "";
+  return `<div class="shadow-stat${toneClass}">
+    <span class="shadow-stat-value">${escapeHtml(value)}</span>
+    <span class="shadow-stat-label">${escapeHtml(label)}</span>
+  </div>`;
+}
+
+function blockerChips(blockers) {
+  if (!blockers || !blockers.length) {
+    return `<span class="shadow-chip shadow-chip-ok">—</span>`;
+  }
+  return blockers
+    .map((b) => `<span class="shadow-chip">${escapeHtml(b)}</span>`)
+    .join("");
+}
+
 export function renderTeamRatingShadowPanel(shadow) {
   if (!shadow || !shadow.summary) {
     return `<div class="empty-state">Sin datos de team rating shadow para la papeleta activa.</div>`;
@@ -69,60 +95,77 @@ export function renderTeamRatingShadowPanel(shadow) {
   const candidate = shadow.calibrator_candidate;
   const gateOn = Boolean(shadow.gate_flag_enabled);
 
-  const rows = [
-    ["Modo", `${shadow.mode === "shadow_only" ? "Solo sombra" : shadow.mode} · gate ${gateOn ? "ON" : "OFF"}`],
-    ["Active rating run", `${escapeHtml(run.algorithm_version || "—")} · ${run.snapshot_count ?? 0} snapshots`],
-    [
-      "Calibrator candidate",
-      candidate
-        ? `${escapeHtml(candidate.id)} · T=${candidate.temperature} · ${candidate.compatible ? "compatible" : "incompatible"}`
-        : "—",
-    ],
-    ["Routing policy", escapeHtml(shadow.routing_policy || "—")],
-    ["Eligible ahora", `${s.eligible_current}/${total}`],
-    ["Eligible si se activa", `${s.eligible_if_enabled}/${total}`],
-    ["Rutearía si se activa", `${s.would_use_rating_model_if_enabled}/${total}`],
-    ["Bloqueadas por rating", `${s.blocked_by_rating}`],
-    ["Bloqueadas por sanity", `${s.blocked_by_sanity}`],
-    ["Bloqueadas por flag (OFF)", `${s.blocked_by_flag}`],
-    ["Posiciones elegibles", formatPositionRanges(s.positions_eligible_if_enabled)],
-    ["Posiciones que rutearían", formatPositionRanges(s.positions_would_route)],
-  ];
-  const grid = rows
-    .map(
-      ([k, v]) =>
-        `<div class="shadow-row"><span class="shadow-key">${escapeHtml(k)}</span><span class="shadow-val">${v}</span></div>`,
-    )
-    .join("");
+  const statusTone = candidate
+    ? (candidate.compatible ? "shadow-chip-ok" : "shadow-chip-warn")
+    : "";
+  const statusValue = candidate
+    ? `<span class="shadow-chip ${statusTone}">${candidate.compatible ? "compatible" : "incompatible"}</span>`
+    : "—";
+
+  const metaCards = [
+    metaCard("Modo", `${shadow.mode === "shadow_only" ? "Solo sombra" : escapeHtml(shadow.mode)} · gate ${gateOn ? "ON" : "OFF"}`),
+    metaCard("Active run", `${escapeHtml(run.algorithm_version || "—")} · ${run.snapshot_count ?? 0} snapshots`),
+    metaCard(
+      "Calibrator",
+      candidate ? escapeHtml(candidate.id) : "—",
+      { mono: true, title: candidate ? candidate.id : "" },
+    ),
+    metaCard("Temperature", candidate ? `T=${escapeHtml(candidate.temperature)}` : "—"),
+    metaCard("Calibrator status", statusValue),
+    metaCard("Routing policy", escapeHtml(shadow.routing_policy || "—"), {
+      mono: true,
+      title: shadow.routing_policy || "",
+    }),
+  ].join("");
+
+  const statCards = [
+    statCard("Eligible ahora", `${s.eligible_current}/${total}`),
+    statCard("Eligible si se activa", `${s.eligible_if_enabled}/${total}`, "shadow-stat-good"),
+    statCard("Rutearía si se activa", `${s.would_use_rating_model_if_enabled}/${total}`, "shadow-stat-good"),
+    statCard("Bloqueadas por rating", `${s.blocked_by_rating}`),
+    statCard("Bloqueadas por sanity", `${s.blocked_by_sanity}`),
+    statCard("Bloqueadas por flag", `${s.blocked_by_flag}`),
+  ].join("");
+
+  const positions = `
+    <div class="shadow-positions">
+      <div class="shadow-positions-item"><span class="shadow-card-label">Posiciones elegibles</span><span class="shadow-positions-value">${formatPositionRanges(s.positions_eligible_if_enabled)}</span></div>
+      <div class="shadow-positions-item"><span class="shadow-card-label">Posiciones que rutearían</span><span class="shadow-positions-value">${formatPositionRanges(s.positions_would_route)}</span></div>
+    </div>`;
 
   const blockedPositions = ratingBlockedPositions(shadow);
   const ratingNote = blockedPositions.length
-    ? `<p class="shadow-flag">Pos ${formatPositionRanges(blockedPositions)} bloqueada(s) por rating parcial / no-rating.</p>`
+    ? `<div class="shadow-alert" role="status">Pos ${formatPositionRanges(blockedPositions)} bloqueada(s) por rating parcial / no-rating.</div>`
     : "";
 
   const matchRows = (shadow.matches || [])
     .map((m) => {
-      const blockers = (m.blockers || []).length ? escapeHtml((m.blockers || []).join(", ")) : "—";
       return `<tr>
-        <td>${escapeHtml(m.position)}</td>
-        <td>${escapeHtml(m.home_team)} vs ${escapeHtml(m.away_team)}</td>
-        <td>${escapeHtml(m.rating_status)}</td>
+        <td class="shadow-col-pos">${escapeHtml(m.position)}</td>
+        <td class="shadow-col-match">${escapeHtml(m.home_team)} <span class="shadow-vs">vs</span> ${escapeHtml(m.away_team)}</td>
+        <td><span class="shadow-rating">${escapeHtml(m.rating_status)}</span></td>
         <td><span class="shadow-tag ${matchTag(m)}">${escapeHtml(matchStateLabel(m))}</span></td>
-        <td class="shadow-blockers">${blockers}</td>
+        <td class="shadow-blockers">${blockerChips(m.blockers)}</td>
       </tr>`;
     })
     .join("");
 
   return `
-    <div class="shadow-summary">
-      <span class="shadow-badge ${gateOn ? "shadow-on" : "shadow-off"}">Solo sombra · ${gateOn ? "ON" : "OFF"}</span>
-      <div class="shadow-grid">${grid}</div>
+    <div class="shadow-panel">
+      <div class="shadow-toprow">
+        <span class="shadow-badge ${gateOn ? "shadow-on" : "shadow-off"}">Solo sombra · ${gateOn ? "ON" : "OFF"}</span>
+      </div>
+      <div class="shadow-cards">${metaCards}</div>
+      <div class="shadow-stats">${statCards}</div>
+      ${positions}
       ${ratingNote}
+      <div class="shadow-table-wrap">
+        <table class="shadow-table">
+          <thead><tr><th>#</th><th>Partido</th><th>Rating</th><th>Estado</th><th>Blockers</th></tr></thead>
+          <tbody>${matchRows}</tbody>
+        </table>
+      </div>
+      <p class="meta-copy shadow-foot">Diagnóstico shadow-only: no modifica la predicción actual, el pick ni el ticket. El gate productivo sigue <strong>OFF</strong>.</p>
     </div>
-    <table class="shadow-table">
-      <thead><tr><th>#</th><th>Partido</th><th>Rating</th><th>Estado</th><th>Blockers</th></tr></thead>
-      <tbody>${matchRows}</tbody>
-    </table>
-    <p class="meta-copy">Diagnóstico shadow-only: no modifica la predicción actual, el pick ni el ticket. El gate productivo sigue <strong>OFF</strong>.</p>
   `;
 }

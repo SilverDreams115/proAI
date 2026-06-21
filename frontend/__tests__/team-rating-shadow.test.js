@@ -130,6 +130,22 @@ describe("renderTeamRatingShadowPanel", () => {
   it("states it does not change prediction/pick/ticket", () => {
     expect(html).toMatch(/no modifica la predicci[oó]n actual, el pick ni el ticket/i);
   });
+  it("separates calibrator, temperature and routing policy into their own fields", () => {
+    expect(html).toContain(">Calibrator<");
+    expect(html).toContain(">Temperature<");
+    expect(html).toContain(">Calibrator status<");
+    expect(html).toContain(">Routing policy<");
+    expect(html).toContain("T=2.22");
+  });
+  it("uses stat tiles and a scrollable table wrapper to avoid overflow", () => {
+    expect(html).toContain("shadow-cards");
+    expect(html).toContain("shadow-stat");
+    expect(html).toContain("shadow-table-wrap");
+  });
+  it("renders blockers as chips rather than a raw joined string", () => {
+    expect(html).toContain('shadow-chip">rating_not_present');
+    expect(html).toContain('shadow-chip">not_both_medium_plus');
+  });
   it("renders an empty state when there is no shadow data", () => {
     expect(renderTeamRatingShadowPanel(null)).toContain("Sin datos de team rating shadow");
   });
