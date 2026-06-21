@@ -5,6 +5,24 @@ from pydantic import BaseModel, Field
 from app.domain.entities import Outcome
 
 
+class MatchCanaryInfo(BaseModel):
+    """Per-match controlled-canary metadata (R5.6-B). Diagnostic only — it
+    never changes the persisted prediction, the ticket, or the legacy
+    probability fields."""
+
+    active: bool = False
+    engine: str = "current"
+    applied: bool = False
+    original_display_probabilities: dict[str, float] | None = None
+    probability_delta: dict[str, float] | None = None
+    max_abs_delta: float = 0.0
+    original_top_pick: str | None = None
+    effective_top_pick: str | None = None
+    top_pick_changed: bool = False
+    ticket_uses_canary: bool = False
+    warnings: list[str] = Field(default_factory=list)
+
+
 class MatchPredictionResponse(BaseModel):
     slate_id: str
     position: int
@@ -87,6 +105,19 @@ class MatchPredictionResponse(BaseModel):
     fallback_used: bool = False
     is_international_friendly: bool = False
     sanity_recommendation: str = ""
+
+    # --- R5.6-B controlled canary (additive, never overwrites the originals) -
+    # `effective_*` are what the UI should render when `canary.active` is true.
+    # When the canary is OFF or a position is out of scope they equal the
+    # `display_/decision_probabilities` above, so existing consumers are
+    # unaffected. The persisted prediction and the legacy fields never change.
+    effective_probabilities: dict[str, float] = Field(
+        default_factory=lambda: {"L": 0.0, "E": 0.0, "V": 0.0}
+    )
+    effective_decision_probabilities: dict[str, float] = Field(
+        default_factory=lambda: {"L": 0.0, "E": 0.0, "V": 0.0}
+    )
+    canary: MatchCanaryInfo | None = None
 
     # --- Accessors used by the ticket optimizer / coverage math ----------
     # Single chokepoint so decision code never reaches for the legacy

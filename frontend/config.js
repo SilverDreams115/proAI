@@ -44,6 +44,10 @@ const state = {
   // R5.6-A: read-only activation-readiness report for the active slate. Pure
   // diagnostic — never activates the gate or changes real data. Diagnóstico tab.
   teamRatingReadiness: null,
+  // R5.6-B: controlled-canary status for the active slate. The canary changes
+  // only the served effective probabilities for scoped positions; the ticket is
+  // never affected. Diagnóstico tab + per-card CANARY badge.
+  teamRatingCanary: null,
 };
 
 const qualityFilters = [

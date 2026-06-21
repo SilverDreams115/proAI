@@ -2749,3 +2749,18 @@ details.analysis-block summary h4 {
   font-weight: 700;
   flex-shrink: 0;
 }
+
+/* R5.6-B controlled canary. */
+.badge-canary {
+  background: rgba(53, 208, 186, 0.18);
+  color: var(--accent-2);
+  border: 1px solid var(--accent-2);
+}
+span.badge-canary {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}

@@ -35,6 +35,7 @@ import {
 import { renderTeamRatingShadowPanel } from "./team-rating-shadow.js";
 import { renderTeamRatingActivationDryRunPanel } from "./team-rating-activation-dry-run.js";
 import { renderTeamRatingActivationReadinessPanel } from "./team-rating-activation-readiness.js";
+import { renderTeamRatingCanaryPanel } from "./team-rating-canary.js";
 // NOTE: live-tracking is loaded via a guarded dynamic import in the
 // bootstrap (not a static import), so a failure to load/link that module
 // can never abort app.js and blank out the main selector.
@@ -657,6 +658,7 @@ function buildMatchCard(match) {
           <span class="badge-risk tone-${riskTone(riskLevel)}" title="Riesgo del partido para la quiniela">Riesgo ${escapeHtml(riskLevelLabel(riskLevel))}</span>
           ${decision.source === "manual" ? `<span class="badge-muted">Manual</span>` : ""}
           ${pred.is_knockout ? `<span class="badge-muted" title="Eliminatoria: empate descartado">Eliminatoria</span>` : ""}
+          ${renderCanaryBadge(pred)}
         </div>
         ${reasonMarkup ? `<div class="reason-row">${reasonMarkup}</div>` : ""}
         ${detailsToggle}
@@ -1380,10 +1382,23 @@ function renderSidebar() {
     `;
 }
 
+function renderCanaryBadge(pred) {
+  const c = pred && pred.canary;
+  if (!c || !c.active) return "";
+  const delta = typeof c.max_abs_delta === "number" ? c.max_abs_delta.toFixed(3) : "";
+  return `<span class="badge-canary" title="Team Rating Canary activo · Δ prob máx ${escapeHtml(delta)} · El ticket aún NO usa canary (motor: ${escapeHtml(c.engine || "")})">CANARY</span>`;
+}
+
 function renderTeamRatingShadow() {
   const node = getById("team-rating-shadow-body");
   if (!node) return;
   node.innerHTML = renderTeamRatingShadowPanel(state.teamRatingShadow);
+}
+
+function renderTeamRatingCanary() {
+  const node = getById("team-rating-canary-body");
+  if (!node) return;
+  node.innerHTML = renderTeamRatingCanaryPanel(state.teamRatingCanary);
 }
 
 function renderTeamRatingDryRun() {
@@ -1413,6 +1428,7 @@ function renderBoard() {
   renderTeamRatingShadow();
   renderTeamRatingDryRun();
   renderTeamRatingReadiness();
+  renderTeamRatingCanary();
   if (qualityFilterNode) qualityFilterNode.innerHTML = renderQualityFilterOptions();
 
   if (!state.authenticated) {
@@ -1836,7 +1852,7 @@ async function loadSlateDetails(slateId) {
   // batch endpoints (`/evidence/slates`, `/availability/slates`,
   // `/results/slates/{id}/context`) each return a {match_id: [...]}
   // mapping so the per-match loop below is a dict lookup, not a fetch.
-  const [predictions, features, ticketPlan, quality, evidenceBySlate, availabilityBySlate, resultsBySlate, teamRatingShadow, teamRatingDryRun, teamRatingReadiness] = await Promise.all([
+  const [predictions, features, ticketPlan, quality, evidenceBySlate, availabilityBySlate, resultsBySlate, teamRatingShadow, teamRatingDryRun, teamRatingReadiness, teamRatingCanary] = await Promise.all([
     safeFetch(`/predictions/slates/${slateId}`),
     safeFetch(`/predictions/slates/${slateId}/features`),
     safeFetch(`/predictions/slates/${slateId}/ticket`, {optional: true}),
@@ -1852,10 +1868,13 @@ async function loadSlateDetails(slateId) {
     safeFetch(`/predictions/slates/${slateId}/team-rating-activation-dry-run`, {optional: true}),
     // R5.6-A: read-only activation readiness diagnostic. Optional too.
     safeFetch(`/predictions/slates/${slateId}/team-rating-activation-readiness`, {optional: true}),
+    // R5.6-B: read-only controlled-canary status. Optional too.
+    safeFetch(`/predictions/slates/${slateId}/team-rating-canary-status`, {optional: true}),
   ]);
   state.teamRatingShadow = (teamRatingShadow && !Array.isArray(teamRatingShadow)) ? teamRatingShadow : null;
   state.teamRatingDryRun = (teamRatingDryRun && !Array.isArray(teamRatingDryRun)) ? teamRatingDryRun : null;
   state.teamRatingReadiness = (teamRatingReadiness && !Array.isArray(teamRatingReadiness)) ? teamRatingReadiness : null;
+  state.teamRatingCanary = (teamRatingCanary && !Array.isArray(teamRatingCanary)) ? teamRatingCanary : null;
   if (!Array.isArray(predictions) || !Array.isArray(features)) {
     state.matches = [];
     state.ticketPlan = null;

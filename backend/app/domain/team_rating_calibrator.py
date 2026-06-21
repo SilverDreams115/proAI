@@ -43,10 +43,16 @@ class TeamRatingCalibratorCandidate:
     approval_status: str = "candidate"
     active: bool = False
     activation_allowed_by_default: bool = False
+    # R5.6-B: cleared for the controlled canary while full activation stays
+    # blocked. canary_allowed=True does NOT make the candidate productive or
+    # active; full_activation_allowed stays False until a productive artifact
+    # exists.
+    canary_allowed: bool = False
+    full_activation_allowed: bool = False
 
     @property
     def approved_for_canary(self) -> bool:
-        return self.approval_status == "approved_inactive"
+        return self.approval_status in {"approved_inactive", "approved_canary"}
 
     def as_dict(self) -> dict[str, object]:
         return asdict(self)
@@ -70,11 +76,13 @@ INTERNATIONAL_FRIENDLIES_TEMPERATURE_V1 = TeamRatingCalibratorCandidate(
     baseline_ece=0.2346,
     calibrated_ece=0.1074,
     productive_available=False,
-    # Cleared for a future minimal canary (R5.6-B), but still inactive: the
-    # gate stays OFF and there is no productive artifact yet.
+    # Cleared for the controlled minimal canary (R5.6-B), but still inactive:
+    # no productive artifact, full activation stays blocked.
     approval_status="approved_inactive",
     active=False,
     activation_allowed_by_default=False,
+    canary_allowed=True,
+    full_activation_allowed=False,
 )
 
 TEAM_RATING_CALIBRATOR_CANDIDATES: Mapping[str, TeamRatingCalibratorCandidate] = (

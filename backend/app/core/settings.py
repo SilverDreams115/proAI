@@ -122,6 +122,24 @@ class Settings(BaseModel):
     team_rating_gate_require_calibrator: bool = Field(default=True)
     team_rating_gate_min_test_rows: int = Field(default=150)
 
+    # Team-rating controlled canary (R5.6-B). OFF by default. When enabled it
+    # only post-processes the prediction API response for the configured
+    # draw-codes/positions/competition: it recalibrates the *served* effective
+    # probabilities via the approved temperature candidate. It never writes the
+    # DB, never regenerates predictions, and never touches the ticket optimizer.
+    team_rating_canary_enabled: bool = Field(default=False)
+    team_rating_canary_draw_codes: list[str] = Field(default_factory=list)
+    team_rating_canary_positions: list[int] = Field(default_factory=list)
+    team_rating_canary_calibrator_id: str = Field(
+        default="international_friendlies_temperature_v1"
+    )
+    team_rating_canary_routing_policy: str = Field(
+        default="rating_replaces_fallback"
+    )
+    team_rating_canary_competition_allowlist: list[str] = Field(
+        default_factory=lambda: ["International Friendlies"]
+    )
+
     @property
     def docs_url(self) -> str | None:
         return "/docs" if self.docs_enabled else None
@@ -259,6 +277,25 @@ def load_settings() -> Settings:
         ),
         team_rating_gate_min_test_rows=int(
             os.getenv("PROAI_TEAM_RATING_GATE_MIN_TEST_ROWS", "150")
+        ),
+        team_rating_canary_enabled=_get_bool("PROAI_TEAM_RATING_CANARY_ENABLED", False),
+        team_rating_canary_draw_codes=_get_csv(
+            "PROAI_TEAM_RATING_CANARY_DRAW_CODES", []
+        ),
+        team_rating_canary_positions=[
+            int(pos)
+            for pos in _get_csv("PROAI_TEAM_RATING_CANARY_POSITIONS", [])
+            if pos.lstrip("-").isdigit()
+        ],
+        team_rating_canary_calibrator_id=os.getenv(
+            "PROAI_TEAM_RATING_CANARY_CALIBRATOR_ID",
+            "international_friendlies_temperature_v1",
+        ),
+        team_rating_canary_routing_policy=os.getenv(
+            "PROAI_TEAM_RATING_CANARY_ROUTING_POLICY", "rating_replaces_fallback"
+        ),
+        team_rating_canary_competition_allowlist=_get_csv(
+            "PROAI_TEAM_RATING_CANARY_COMPETITION_ALLOWLIST", ["International Friendlies"]
         ),
         rate_limit_window_seconds=int(
             os.getenv("PROAI_RATE_LIMIT_WINDOW_SECONDS", "60")

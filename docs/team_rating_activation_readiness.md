@@ -127,3 +127,11 @@ rollback plan.
 - Observe the canary positions only, with the rollback plan above on standby.
 
 Until then R5.6-A stays a read-only readiness report: it activates nothing.
+
+## R5.6-B — Controlled canary (served)
+
+R5.6-B then turns this readiness into a **scoped, reversible canary** that
+changes only the served effective probabilities for PG-2338 positions
+`1,2,3,5,8,11` (additive `effective_*` / `canary` response fields), keeping the
+ticket optimizer, full activation and the DB untouched. See
+[team_rating_canary.md](team_rating_canary.md).
