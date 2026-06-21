@@ -84,8 +84,21 @@ class FeatureService:
         self.result_repository = result_repository
 
     def build_match_features(
-        self, match_id: str, *, use_cache: bool = True
+        self, match_id: str, *, use_cache: bool = True, persist: bool = False
     ) -> tuple[MatchModel, dict[str, Any], datetime]:
+        """Return the feature payload for a match.
+
+        Read-only by default: when ``persist`` is ``False`` (the default,
+        used by every ``GET`` endpoint) a cache miss recomputes the payload
+        *in memory* and returns it without ever writing a
+        ``match_feature_snapshots`` row. Lazy-writing from read paths was the
+        source of the snapshot drift (1110 -> 1124) observed while the API
+        served PG-2338 GET requests with an expired cache.
+
+        Persisting a fresh snapshot must be an explicit, non-GET action:
+        callers that genuinely want to refresh the cache pass
+        ``persist=True``.
+        """
         match = self.repository.get_match(match_id)
         if match is None:
             raise NotFoundError("Match not found.")
@@ -145,6 +158,12 @@ class FeatureService:
             **head_to_head_form,
             **narrative,
         }
+        if not persist:
+            # Read-only path: never touch the session. Return the in-memory
+            # payload stamped with the recompute time. No snapshot row is
+            # created, so GET endpoints cannot grow match_feature_snapshots.
+            return match, payload, now
+
         with managed_transaction(self.repository.session):
             snapshot = self.repository.save_snapshot(match_id, self.FEATURE_SET_VERSION, payload)
         generated_at = snapshot.generated_at

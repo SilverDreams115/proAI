@@ -93,7 +93,9 @@ async def get_slate_feature_snapshots(
     feature_service = FeatureService(FeatureRepository(session), ResultRepository(session))
     responses: list[MatchFeatureResponse] = []
     for slate_match in sorted(slate.matches, key=lambda item: item.position):
-        match, payload, generated_at = feature_service.build_match_features(slate_match.match.id)
+        match, payload, generated_at = feature_service.build_match_features(
+            slate_match.match.id, persist=False
+        )
         responses.append(
             MatchFeatureResponse(
                 match_id=match.id,
@@ -132,7 +134,9 @@ async def get_slate_data_quality(
     feature_service = FeatureService(feature_repository, ResultRepository(session))
     responses: list[MatchDataQualityResponse] = []
     for slate_match in sorted(slate.matches, key=lambda item: item.position):
-        match, payload, _generated_at = feature_service.build_match_features(slate_match.match.id)
+        match, payload, _generated_at = feature_service.build_match_features(
+            slate_match.match.id, persist=False
+        )
         prediction = policies[match.id]
         evidence_count = max(
             int(payload.get("evidence_items", 0) or 0),
@@ -308,7 +312,9 @@ async def get_slate_ticket_recommendations(
 
     feature_payloads_by_match: dict[str, dict[str, object]] = {}
     for slate_match in sorted(slate.matches, key=lambda item: item.position):
-        _match, payload, _generated_at = feature_service.build_match_features(slate_match.match.id)
+        _match, payload, _generated_at = feature_service.build_match_features(
+            slate_match.match.id, persist=False
+        )
         feature_payloads_by_match[slate_match.match.id] = payload
     return ticket_service.build_read_only(
         slate=slate,
