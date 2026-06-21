@@ -143,3 +143,8 @@ change real probabilities / picks / tickets. See
 [team_rating_activation_dry_run.md](team_rating_activation_dry_run.md) for the
 policy, the simulated probability model, the endpoint/CLI/UI, and what is still
 required for R5.6 (real controlled activation).
+
+R5.6-A then adds an **activation-readiness** report on top of the dry-run
+(readiness checks, canary plan, `approved_inactive` calibrator state, rollback
+plan) — still read-only and activating nothing. See
+[team_rating_activation_readiness.md](team_rating_activation_readiness.md).

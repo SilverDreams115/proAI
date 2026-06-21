@@ -2725,3 +2725,27 @@ details.analysis-block summary h4 {
 .dryrun-activation { display: flex; flex-direction: column; gap: 6px; }
 .dryrun-blockers { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
 .dryrun-blockers li { margin: 0; }
+
+/* R5.6-A Team Rating Activation Readiness panel (read-only, diagnostic only). */
+.readiness-badge { background: rgba(170, 120, 255, 0.16); color: #aa78ff; border: 1px solid #aa78ff; }
+.readiness-chip-partial { background: rgba(220, 200, 70, 0.16); color: #d4c046; }
+.readiness-chip-canary { background: rgba(90, 140, 255, 0.16); color: #5a8cff; }
+.readiness-chip-block { background: rgba(240, 90, 90, 0.16); color: #f05a5a; }
+.readiness-count { color: var(--muted); font-size: 0.74rem; }
+.readiness-details { color: var(--muted); font-size: 0.78rem; }
+.readiness-rollback { display: flex; flex-direction: column; gap: 6px; }
+.readiness-rollback-list { margin: 0; padding-left: 4px; list-style: none; display: flex; flex-direction: column; gap: 6px; }
+.readiness-rollback-list li { display: flex; align-items: center; gap: 8px; color: var(--ink); font-size: 0.84rem; }
+.readiness-step {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: rgba(170, 120, 255, 0.16);
+  color: #aa78ff;
+  font-size: 0.72rem;
+  font-weight: 700;
+  flex-shrink: 0;
+}

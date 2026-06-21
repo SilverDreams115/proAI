@@ -41,6 +41,9 @@ const state = {
   // simulation of enabling the gate — never changes real predictions, picks,
   // tickets or probabilities. Rendered in the Diagnóstico tab.
   teamRatingDryRun: null,
+  // R5.6-A: read-only activation-readiness report for the active slate. Pure
+  // diagnostic — never activates the gate or changes real data. Diagnóstico tab.
+  teamRatingReadiness: null,
 };
 
 const qualityFilters = [

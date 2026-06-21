@@ -16,6 +16,7 @@ from app.schemas.feature import MatchFeatureResponse
 from app.schemas.feature import MatchDataQualityResponse
 from app.schemas.team_rating_shadow import TeamRatingShadowResponse
 from app.schemas.team_rating_activation_dry_run import TeamRatingActivationDryRunResponse
+from app.schemas.team_rating_activation_readiness import TeamRatingActivationReadinessResponse
 from app.services.feature_service import FeatureService
 from app.services.ingestion_service import IngestionService
 from app.services.model_training_service import ModelTrainingService
@@ -159,6 +160,32 @@ async def get_slate_team_rating_activation_dry_run(
     if slate is None:
         raise HTTPException(status_code=404, detail="Slate not found.")
     return build_slate_activation_dry_run(session, slate)
+
+
+@router.get(
+    "/slates/{slate_id}/team-rating-activation-readiness",
+    response_model=TeamRatingActivationReadinessResponse,
+)
+async def get_slate_team_rating_activation_readiness(
+    slate_id: str,
+    session: Session = Depends(get_db_session),
+) -> TeamRatingActivationReadinessResponse:
+    """Read-only activation-readiness report for the slate (R5.6-A).
+
+    Reports whether the technical blockers before a minimal canary are cleared,
+    the canary plan and the calibrator approval state, without activating the
+    gate or changing real predictions, picks, tickets, probabilities or the
+    approval gate, and without writing any row.
+    """
+    from app.services.team_rating_activation_readiness_service import (
+        build_slate_activation_readiness,
+    )
+
+    slate_service = SlateService(SlateRepository(session))
+    slate = slate_service.get_slate(slate_id)
+    if slate is None:
+        raise HTTPException(status_code=404, detail="Slate not found.")
+    return build_slate_activation_readiness(session, slate)
 
 
 @router.get("/slates/{slate_id}/quality", response_model=list[MatchDataQualityResponse])

@@ -34,6 +34,7 @@ import {
 } from "./helpers.js";
 import { renderTeamRatingShadowPanel } from "./team-rating-shadow.js";
 import { renderTeamRatingActivationDryRunPanel } from "./team-rating-activation-dry-run.js";
+import { renderTeamRatingActivationReadinessPanel } from "./team-rating-activation-readiness.js";
 // NOTE: live-tracking is loaded via a guarded dynamic import in the
 // bootstrap (not a static import), so a failure to load/link that module
 // can never abort app.js and blank out the main selector.
@@ -1391,6 +1392,12 @@ function renderTeamRatingDryRun() {
   node.innerHTML = renderTeamRatingActivationDryRunPanel(state.teamRatingDryRun);
 }
 
+function renderTeamRatingReadiness() {
+  const node = getById("team-rating-readiness-body");
+  if (!node) return;
+  node.innerHTML = renderTeamRatingActivationReadinessPanel(state.teamRatingReadiness);
+}
+
 function renderBoard() {
   const labelNode = getById("ticket-label");
   const codeNode = getById("ticket-code");
@@ -1405,6 +1412,7 @@ function renderBoard() {
   renderProductionStatus();
   renderTeamRatingShadow();
   renderTeamRatingDryRun();
+  renderTeamRatingReadiness();
   if (qualityFilterNode) qualityFilterNode.innerHTML = renderQualityFilterOptions();
 
   if (!state.authenticated) {
@@ -1828,7 +1836,7 @@ async function loadSlateDetails(slateId) {
   // batch endpoints (`/evidence/slates`, `/availability/slates`,
   // `/results/slates/{id}/context`) each return a {match_id: [...]}
   // mapping so the per-match loop below is a dict lookup, not a fetch.
-  const [predictions, features, ticketPlan, quality, evidenceBySlate, availabilityBySlate, resultsBySlate, teamRatingShadow, teamRatingDryRun] = await Promise.all([
+  const [predictions, features, ticketPlan, quality, evidenceBySlate, availabilityBySlate, resultsBySlate, teamRatingShadow, teamRatingDryRun, teamRatingReadiness] = await Promise.all([
     safeFetch(`/predictions/slates/${slateId}`),
     safeFetch(`/predictions/slates/${slateId}/features`),
     safeFetch(`/predictions/slates/${slateId}/ticket`, {optional: true}),
@@ -1842,9 +1850,12 @@ async function loadSlateDetails(slateId) {
     // R5.5: read-only activation dry-run diagnostic. Optional for the same
     // reason — never blocks the prediction board.
     safeFetch(`/predictions/slates/${slateId}/team-rating-activation-dry-run`, {optional: true}),
+    // R5.6-A: read-only activation readiness diagnostic. Optional too.
+    safeFetch(`/predictions/slates/${slateId}/team-rating-activation-readiness`, {optional: true}),
   ]);
   state.teamRatingShadow = (teamRatingShadow && !Array.isArray(teamRatingShadow)) ? teamRatingShadow : null;
   state.teamRatingDryRun = (teamRatingDryRun && !Array.isArray(teamRatingDryRun)) ? teamRatingDryRun : null;
+  state.teamRatingReadiness = (teamRatingReadiness && !Array.isArray(teamRatingReadiness)) ? teamRatingReadiness : null;
   if (!Array.isArray(predictions) || !Array.isArray(features)) {
     state.matches = [];
     state.ticketPlan = null;

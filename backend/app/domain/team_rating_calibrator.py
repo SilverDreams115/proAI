@@ -36,6 +36,17 @@ class TeamRatingCalibratorCandidate:
     baseline_ece: float
     calibrated_ece: float
     productive_available: bool
+    # R5.6-A activation-readiness metadata. ``approved_inactive`` means the
+    # candidate passed held-out validation and is cleared *for a future canary*,
+    # but it is NOT active and NOT a productive artifact: ``active`` and
+    # ``productive_available`` stay False, so the gate cannot route on it yet.
+    approval_status: str = "candidate"
+    active: bool = False
+    activation_allowed_by_default: bool = False
+
+    @property
+    def approved_for_canary(self) -> bool:
+        return self.approval_status == "approved_inactive"
 
     def as_dict(self) -> dict[str, object]:
         return asdict(self)
@@ -59,6 +70,11 @@ INTERNATIONAL_FRIENDLIES_TEMPERATURE_V1 = TeamRatingCalibratorCandidate(
     baseline_ece=0.2346,
     calibrated_ece=0.1074,
     productive_available=False,
+    # Cleared for a future minimal canary (R5.6-B), but still inactive: the
+    # gate stays OFF and there is no productive artifact yet.
+    approval_status="approved_inactive",
+    active=False,
+    activation_allowed_by_default=False,
 )
 
 TEAM_RATING_CALIBRATOR_CANDIDATES: Mapping[str, TeamRatingCalibratorCandidate] = (

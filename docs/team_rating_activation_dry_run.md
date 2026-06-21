@@ -91,3 +91,10 @@ status, blockers).
 - Sign-off that routed matches keep correct L/E/V mapping and ticket behaviour.
 
 Until then R5.5 stays a simulation: read-only, shadow/diagnostic only.
+
+## R5.6-A — Activation readiness
+
+The dry-run is consumed by the **activation-readiness** report
+([team_rating_activation_readiness.md](team_rating_activation_readiness.md)),
+which adds readiness checks, a canary plan, the `approved_inactive` calibrator
+state and the rollback plan — still read-only, still activating nothing.
