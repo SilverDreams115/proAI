@@ -1,16 +1,16 @@
 """Progol MS / PGM visibility regression (PGM-801 scenario).
 
-PGM-801 is a midweek (Media Semana) concurso that gets archived once its
-registration window closes. The grouped sidebar can show archived concursos,
-but only if the frontend asks for them — it now fetches
-``/api/slates?include_closed=true``. These tests lock the backend contract that
-fix depends on:
+PGM-801 is a midweek (Media Semana) concurso. The main sidebar shows only
+active/upcoming concursos (default ``/api/slates``); archived jornadas are
+reachable only via the explicit ``/api/slates?include_closed=true`` history
+query and are never mixed into the main list. These tests lock that contract:
 
-- an archived midweek/MS slate is hidden from the default listing but returned
-  with ``include_closed=true`` (so it stays reachable as history);
-- when an active weekend slate coexists, the open slate sorts FIRST, so the
-  frontend's ``state.slates[0]`` auto-selection remains the active weekend slate
-  and never silently jumps to an archived MS one.
+- an active (non-archived, future-cierre) MS like the corrected PGM-801 appears
+  in the DEFAULT listing alongside the active weekend slate;
+- an archived MS is hidden from the default listing but returned with
+  ``include_closed=true`` (so it stays reachable as history);
+- when an active weekend slate coexists with an archived MS, the default list
+  contains only the active slate and the open slate sorts FIRST.
 """
 from __future__ import annotations
 
@@ -84,3 +84,27 @@ async def test_active_weekend_sorts_before_archived_ms(client):
     # Default listing still shows the active weekend slate and only it.
     default_codes = [s["draw_code"] for s in (await client.get("/api/slates")).json()]
     assert default_codes == ["PG-2338"]
+
+
+@pytest.mark.anyio
+async def test_active_ms_slate_appears_in_default_list(client):
+    """An active (non-archived, future-cierre) Progol MS — e.g. the corrected
+    PGM-801 — must appear in the DEFAULT /api/slates list alongside the active
+    weekend slate, while an archived MS stays out of the default view."""
+    from app.db.session import SessionLocal
+
+    with SessionLocal() as session:
+        _seed_slate(session, draw_code="PG-2338", week_type="weekend", is_archived=False)
+        _seed_slate(session, draw_code="PGM-801", week_type="midweek", is_archived=False)
+        _seed_slate(session, draw_code="PGM-800", week_type="midweek", is_archived=True)
+
+    default = await client.get("/api/slates")
+    assert default.status_code == 200
+    codes = {s["draw_code"] for s in default.json()}
+    assert "PGM-801" in codes  # active MS visible in the main list
+    assert "PG-2338" in codes  # active weekend still visible
+    assert "PGM-800" not in codes  # archived MS NOT mixed into the main list
+
+    ms = next(s for s in default.json() if s["draw_code"] == "PGM-801")
+    assert ms["week_type"] == "midweek"
+    assert ms["is_archived"] is False

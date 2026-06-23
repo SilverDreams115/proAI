@@ -1949,10 +1949,11 @@ async function boot() {
   }
 
   const [slates, providers, worker] = await Promise.all([
-    // include_closed=true so archived concursos (e.g. past Progol MS/PGM
-    // jornadas) remain reachable in the grouped sidebar. The backend sorts
-    // open slates first, so state.slates[0] is still the active weekend slate.
-    safeFetch("/slates?include_closed=true"),
+    // Main sidebar shows only active/upcoming concursos. Archived jornadas are
+    // intentionally excluded here (they are reachable via the explicit
+    // include_closed=true history/diagnostic query, not mixed into the main
+    // list). The default endpoint already filters out closed/archived slates.
+    safeFetch("/slates"),
     safeFetch("/sources/providers"),
     safeFetch("/worker/scheduler/status", {optional: true}),
   ]);
@@ -2025,7 +2026,7 @@ async function pollActiveSlate() {
       state.transitionBanner = null;
       renderTransitionBanner();
     }, 8000);
-    const slates = await safeFetch("/slates?include_closed=true");
+    const slates = await safeFetch("/slates");
     if (Array.isArray(slates)) state.slates = slates;
     state.activeSlateId = meta.slate.id;
     state.selectedMatchId = null;
