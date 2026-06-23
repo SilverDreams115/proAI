@@ -23,6 +23,22 @@ class MatchCanaryInfo(BaseModel):
     warnings: list[str] = Field(default_factory=list)
 
 
+class PresentationGuardInfo(BaseModel):
+    """R5.6-D read-only presentation contract.
+
+    Prevents the UI from showing a risky/blocked prediction as a simple
+    playable suggestion. Derived from existing sanity metadata; never changes
+    probabilities or persisted data.
+    """
+
+    simple_allowed: bool = False
+    primary_signal: str = ""
+    recommendation_label: str = "NO SIMPLE"
+    risk_level: str = "high"
+    confidence: str = "baja"
+    reason: list[str] = Field(default_factory=list)
+
+
 class MatchPredictionResponse(BaseModel):
     slate_id: str
     position: int
@@ -118,6 +134,9 @@ class MatchPredictionResponse(BaseModel):
         default_factory=lambda: {"L": 0.0, "E": 0.0, "V": 0.0}
     )
     canary: MatchCanaryInfo | None = None
+
+    # --- R5.6-D presentation guard (read-only, derived) ------------------
+    presentation_guard: PresentationGuardInfo | None = None
 
     # --- Accessors used by the ticket optimizer / coverage math ----------
     # Single chokepoint so decision code never reaches for the legacy

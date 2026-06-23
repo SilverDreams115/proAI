@@ -1,10 +1,12 @@
 import json
 import logging
 import time
+from dataclasses import asdict
 from datetime import datetime, timezone
 from typing import Any
 
 from app.domain.entities import Outcome, Prediction
+from app.domain.presentation_guard import derive_presentation_guard
 from app.models.tables import MatchModel
 from app.models.tables import ProgolSlateModel
 from app.repositories.feature_repository import FeatureRepository
@@ -18,6 +20,7 @@ from app.services.sanity_service import (
     apply_sanity_layer,
 )
 from app.schemas.prediction import MatchPredictionResponse
+from app.schemas.prediction import PresentationGuardInfo
 
 
 logger = logging.getLogger(__name__)
@@ -313,6 +316,19 @@ class PredictionService:
                     fallback_used=fallback_used,
                     is_international_friendly=is_friendly,
                     sanity_recommendation=sanity.recommendation,
+                    presentation_guard=PresentationGuardInfo(
+                        **asdict(
+                            derive_presentation_guard(
+                                recommended_outcome=recommended_outcome.value,
+                                final_status=sanity.final_status.value,
+                                risk_level=sanity.risk_level.value,
+                                ticket_strategy=sanity.ticket_strategy,
+                                flags=sanity.flag_values(),
+                                fallback_used=fallback_used,
+                                visible_confidence=sanity.visible_confidence,
+                            )
+                        )
+                    ),
                 )
             )
             # Full guardrail trace for the DB audit. `optimizer_probabilities`

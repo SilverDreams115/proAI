@@ -60,6 +60,28 @@ def _normalize(value: str) -> str:
     return value.strip().lower()
 
 
+def _slate_in_canary_scope(session: Session, slate: ProgolSlateModel, draw_code: str | None) -> bool:
+    """Decide whether a slate is in canary scope, by rule (not hardcoded).
+
+    - ``draw_code_allowlist`` (default): the draw_code must be in the configured
+      allowlist.
+    - ``active_upcoming``: the slate must be active/upcoming; if an allowlist is
+      also configured it further restricts to those draw_codes.
+
+    Either way this only decides *scope*; per-position gating still runs the
+    audited dry-run, so blockers are never ignored.
+    """
+    draw_codes = settings.team_rating_canary_draw_codes
+    if settings.team_rating_canary_scope == "active_upcoming":
+        from app.services.active_slate_scope import is_slate_active_upcoming
+
+        if not is_slate_active_upcoming(session, slate):
+            return False
+        return (not draw_codes) or (bool(draw_code) and draw_code in draw_codes)
+    # Default: draw_code allowlist.
+    return bool(draw_code) and draw_code in draw_codes
+
+
 def compute_canary_plan(session: Session, slate: ProgolSlateModel) -> CanaryPlan:
     """Decide, read-only, which positions are canary-active for this slate."""
     candidate = get_team_rating_calibrator_candidate(
@@ -67,7 +89,7 @@ def compute_canary_plan(session: Session, slate: ProgolSlateModel) -> CanaryPlan
     )
     enabled = bool(settings.team_rating_canary_enabled) and bool(candidate.canary_allowed)
     draw_code = getattr(slate, "draw_code", None)
-    in_scope = bool(draw_code) and draw_code in settings.team_rating_canary_draw_codes
+    in_scope = _slate_in_canary_scope(session, slate, draw_code)
 
     all_positions = sorted(link.position for link in slate.matches)
     allowed_positions = sorted(settings.team_rating_canary_positions)

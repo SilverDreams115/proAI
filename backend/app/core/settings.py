@@ -128,6 +128,11 @@ class Settings(BaseModel):
     # probabilities via the approved temperature candidate. It never writes the
     # DB, never regenerates predictions, and never touches the ticket optimizer.
     team_rating_canary_enabled: bool = Field(default=False)
+    # Scope policy (R5.6-D). "draw_code_allowlist" (default) limits the canary
+    # to the configured draw_codes. "active_upcoming" applies it to every
+    # active/upcoming slate by rule (and, if draw_codes is non-empty, still
+    # restricted to those). In every case blockers/gating are never ignored.
+    team_rating_canary_scope: str = Field(default="draw_code_allowlist")
     team_rating_canary_draw_codes: list[str] = Field(default_factory=list)
     team_rating_canary_positions: list[int] = Field(default_factory=list)
     team_rating_canary_calibrator_id: str = Field(
@@ -279,6 +284,9 @@ def load_settings() -> Settings:
             os.getenv("PROAI_TEAM_RATING_GATE_MIN_TEST_ROWS", "150")
         ),
         team_rating_canary_enabled=_get_bool("PROAI_TEAM_RATING_CANARY_ENABLED", False),
+        team_rating_canary_scope=os.getenv(
+            "PROAI_TEAM_RATING_CANARY_SCOPE", "draw_code_allowlist"
+        ),
         team_rating_canary_draw_codes=_get_csv(
             "PROAI_TEAM_RATING_CANARY_DRAW_CODES", []
         ),

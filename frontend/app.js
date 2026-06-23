@@ -36,6 +36,7 @@ import { renderTeamRatingShadowPanel } from "./team-rating-shadow.js";
 import { renderTeamRatingActivationDryRunPanel } from "./team-rating-activation-dry-run.js";
 import { renderTeamRatingActivationReadinessPanel } from "./team-rating-activation-readiness.js";
 import { renderTeamRatingCanaryPanel } from "./team-rating-canary.js";
+import { presentationGuardOf, SIGNAL_LABEL } from "./presentation-guard.js";
 // NOTE: live-tracking is loaded via a guarded dynamic import in the
 // bootstrap (not a static import), so a failure to load/link that module
 // can never abort app.js and blank out the main selector.
@@ -666,14 +667,31 @@ function buildMatchCard(match) {
       <div class="pick-options">
         <div class="options-grid">${optionsMarkup}</div>
         <div class="double-row">
-          <div class="double-tag">
-            ${decision.source === "manual" ? "Selección manual" : "Sugerencia"}:
-            ${escapeHtml(displayPicks(decision.picks))} · Confianza ${escapeHtml(visibleConfidenceLabel(visibleConf))}
-          </div>
+          ${renderRecommendationBlock(pred, decision, visibleConf)}
         </div>
       </div>
     </article>
   `;
+}
+
+// The bottom-of-card recommendation block. When the pick is not simple-playable
+// the "señal principal" is shown separately from a warning "Recomendación",
+// so a high-risk V can never read as "Sugerencia: V".
+function renderRecommendationBlock(pred, decision, visibleConf) {
+  if (decision && decision.source === "manual") {
+    return `<div class="double-tag">Selección manual: ${escapeHtml(displayPicks(decision.picks))} · Confianza ${escapeHtml(visibleConfidenceLabel(visibleConf))}</div>`;
+  }
+  const g = presentationGuardOf(pred);
+  if (g.simple_allowed) {
+    return `<div class="double-tag">Sugerencia: ${escapeHtml(displayPicks(decision.picks))} · Confianza ${escapeHtml(visibleConfidenceLabel(visibleConf))}</div>`;
+  }
+  const signal = SIGNAL_LABEL[g.primary_signal] || g.primary_signal || "—";
+  return `
+    <div class="double-tag double-tag-warn" data-not-simple="true">
+      <span class="reco-signal">Señal principal: <strong>${escapeHtml(signal)}</strong></span>
+      <span class="reco-label badge-risk tone-warn">Recomendación: ${escapeHtml(g.recommendation_label)}</span>
+      <span class="reco-meta">Confianza ${escapeHtml(visibleConfidenceLabel(visibleConf))} · Riesgo ${escapeHtml(riskLevelLabel(g.risk_level))}</span>
+    </div>`;
 }
 
 // Compact "55/26/19" formatter for an {L,E,V} vector (accordion display).
@@ -1246,10 +1264,17 @@ function buildAnalysis(match) {
     <div class="analysis-card">
       <div class="analysis-head">
         <h3>${escapeHtml(match.prediction.home_team_name)} vs ${escapeHtml(match.prediction.away_team_name)} ${renderDrawChips(drawRisk)}</h3>
-        <p class="meta-copy">
-          Jugada: <strong>${escapeHtml(displayPicks(decision.picks))}</strong>
-          · ${decision.source === "manual" ? "ajustada manualmente" : "sugerida por el modelo"}
-        </p>
+        ${(() => {
+          const g = presentationGuardOf(match.prediction);
+          if (decision.source === "manual") {
+            return `<p class="meta-copy">Jugada: <strong>${escapeHtml(displayPicks(decision.picks))}</strong> · ajustada manualmente</p>`;
+          }
+          if (g.simple_allowed) {
+            return `<p class="meta-copy">Jugada: <strong>${escapeHtml(displayPicks(decision.picks))}</strong> · sugerida por el modelo</p>`;
+          }
+          const signal = SIGNAL_LABEL[g.primary_signal] || g.primary_signal || "—";
+          return `<p class="meta-copy meta-copy-warn" data-not-simple="true">Señal principal: <strong>${escapeHtml(signal)}</strong> · Recomendación: <strong>${escapeHtml(g.recommendation_label)}</strong> · requiere cobertura / revisión</p>`;
+        })()}
       </div>
       ${(() => {
         const pred = match.prediction;

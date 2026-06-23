@@ -1674,6 +1674,18 @@ details.ops-details[open] .ops-summary::after {
   background: rgba(12, 12, 17, 0.92);
 }
 
+/* R5.6-D: risky pick — warning tone, never the confident/green simple look. */
+.double-tag-warn {
+  border-color: rgba(255, 209, 102, 0.45);
+  background: rgba(255, 209, 102, 0.08);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.double-tag-warn .reco-label { color: var(--warn); font-weight: 600; }
+.double-tag-warn .reco-meta { color: var(--muted); font-size: 0.85em; }
+.meta-copy-warn { color: var(--warn); }
+
 .empty-state {
   padding: 20px;
   border: 1px dashed var(--line);
