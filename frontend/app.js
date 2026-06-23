@@ -37,6 +37,7 @@ import { renderTeamRatingActivationDryRunPanel } from "./team-rating-activation-
 import { renderTeamRatingActivationReadinessPanel } from "./team-rating-activation-readiness.js";
 import { renderTeamRatingCanaryPanel } from "./team-rating-canary.js";
 import { presentationGuardOf, SIGNAL_LABEL } from "./presentation-guard.js";
+import { resolveActiveSelection, selectedSlateCountdownMs } from "./slate-selection.js";
 // NOTE: live-tracking is loaded via a guarded dynamic import in the
 // bootstrap (not a static import), so a failure to load/link that module
 // can never abort app.js and blank out the main selector.
@@ -735,7 +736,10 @@ function renderAsideSlates() {
   const STATUS_CLASS = {
     "Con ticket": "ok",
     "Con predicciones": "ok",
+    "Predicción live": "ok",
+    "Pendiente de predicción": "warn",
     "Sin predicción": "warn",
+    "Sin datos": "warn",
     "Archivada": "muted",
     "Cerrada": "muted",
   };
@@ -1575,6 +1579,24 @@ function renderBoard() {
 // click and dispatches by data-attribute, so no per-render bookkeeping
 // is needed at all.
 let _eventsAttached = false;
+// Monotonic token so a late slate-detail fetch can't overwrite a newer switch.
+let slateRequestSeq = 0;
+
+const SELECTED_SLATE_KEY = "proai.selectedSlateId";
+function readSavedSlateId() {
+  try {
+    return typeof localStorage !== "undefined" ? localStorage.getItem(SELECTED_SLATE_KEY) : null;
+  } catch (_e) {
+    return null;
+  }
+}
+function saveSelectedSlateId(slateId) {
+  try {
+    if (typeof localStorage !== "undefined" && slateId) localStorage.setItem(SELECTED_SLATE_KEY, slateId);
+  } catch (_e) {
+    /* storage unavailable (private mode) — selection still holds in memory */
+  }
+}
 
 async function _handleDelegatedClick(event) {
   const target = event.target instanceof Element ? event.target : null;
@@ -1599,11 +1621,25 @@ async function _handleDelegatedClick(event) {
   const slateNode = target.closest("[data-slate-id]");
   if (slateNode) {
     const slateId = slateNode.getAttribute("data-slate-id");
-    if (slateId) {
+    if (slateId && slateId !== state.activeSlateId) {
+      // Manual selection is authoritative. Switch immediately to a loading
+      // state for the chosen slate (no waiting on ticket/quality/diagnostics),
+      // then fill in details when they arrive.
       state.activeSlateId = slateId;
-      await loadSlateDetails(slateId);
+      saveSelectedSlateId(slateId);
+      state.selectedMatchId = null;
+      state.matches = [];
+      state.ticketPlan = null;
+      state.isLoading = true;
       renderSidebar();
       renderBoard();
+      await loadSlateDetails(slateId);
+      // Ignore if another switch happened while loading (stale guard handled it).
+      if (state.activeSlateId === slateId) {
+        state.isLoading = false;
+        renderSidebar();
+        renderBoard();
+      }
     }
     return;
   }
@@ -1873,6 +1909,10 @@ function renderLoadingRows() {
 }
 
 async function loadSlateDetails(slateId) {
+  // Stale-response guard: every switch bumps the sequence; if a newer switch
+  // started while these fetches were in flight, we drop this (older) result so
+  // a late response can never clobber the slate the user is now viewing.
+  const seq = ++slateRequestSeq;
   // Seven parallel fetches replace ~50 sequential round-trips. The three
   // batch endpoints (`/evidence/slates`, `/availability/slates`,
   // `/results/slates/{id}/context`) each return a {match_id: [...]}
@@ -1896,6 +1936,8 @@ async function loadSlateDetails(slateId) {
     // R5.6-B: read-only controlled-canary status. Optional too.
     safeFetch(`/predictions/slates/${slateId}/team-rating-canary-status`, {optional: true}),
   ]);
+  // A newer slate switch superseded this request — discard the stale payload.
+  if (seq !== slateRequestSeq) return;
   state.teamRatingShadow = (teamRatingShadow && !Array.isArray(teamRatingShadow)) ? teamRatingShadow : null;
   state.teamRatingDryRun = (teamRatingDryRun && !Array.isArray(teamRatingDryRun)) ? teamRatingDryRun : null;
   state.teamRatingReadiness = (teamRatingReadiness && !Array.isArray(teamRatingReadiness)) ? teamRatingReadiness : null;
@@ -1998,7 +2040,12 @@ async function boot() {
     demoLoadAttempted = true;
   }
 
-  state.activeSlateId = state.slates[0]?.id || null;
+  // Restore the last manually-selected slate if it is still active; otherwise
+  // fall back to the most-urgent (first) active slate.
+  const savedSlateId = readSavedSlateId();
+  state.activeSlateId = (savedSlateId && state.slates.some((s) => s.id === savedSlateId))
+    ? savedSlateId
+    : (state.slates[0]?.id || null);
 
   if (state.activeSlateId) {
     await loadSlateDetails(state.activeSlateId);
@@ -2021,45 +2068,61 @@ async function boot() {
 }
 
 async function pollActiveSlate() {
-  // Auto-transition heart-beat. /slates/active is authoritative: when the
-  // worker archives the closing slate, the next call returns whatever's
-  // open with the closest cierre. The frontend reacts by loading details
-  // for the new id (if changed) and showing a transient banner.
+  // Heart-beat. With MULTIPLE active slates (e.g. weekend PG + midweek MS),
+  // /slates/active only reports the single most-urgent one — it must NOT drive
+  // the user's selection. Manual selection is authoritative: we only auto-switch
+  // when the slate the user is viewing has actually disappeared from the active
+  // list (closed/archived). Otherwise we just refresh the list + countdown.
   if (!state.authenticated) return;
-  const meta = await safeFetch("/slates/active", {optional: true});
-  if (!meta || !meta.slate) {
-    state.activeMeta = null;
-    state.closesAtMs = null;
-    tickCountdown();
-    return;
+  const [meta, slates] = await Promise.all([
+    safeFetch("/slates/active", {optional: true}),
+    safeFetch("/slates", {optional: true}),
+  ]);
+  state.activeMeta = meta && meta.slate ? meta : null;
+  if (meta && meta.server_time) {
+    state.serverSkewMs = Date.now() - new Date(meta.server_time).getTime();
   }
   const previousId = state.activeSlateId;
   const previousCode = previousId
     ? (state.slates.find((slate) => slate.id === previousId)?.draw_code || previousId)
     : null;
-  state.activeMeta = meta;
-  if (meta.slate.registration_closes_at) {
-    state.closesAtMs = new Date(meta.slate.registration_closes_at).getTime();
-    state.serverSkewMs = Date.now() - new Date(meta.server_time).getTime();
-  } else {
-    state.closesAtMs = null;
-  }
-  if (previousId && previousId !== meta.slate.id) {
-    state.transitionBanner = `Concurso ${previousCode} cerrado. Cargando ${meta.slate.draw_code}…`;
-    renderTransitionBanner();
-    setTimeout(() => {
-      state.transitionBanner = null;
-      renderTransitionBanner();
-    }, 8000);
-    const slates = await safeFetch("/slates");
-    if (Array.isArray(slates)) state.slates = slates;
-    state.activeSlateId = meta.slate.id;
-    state.selectedMatchId = null;
-    await loadSlateDetails(meta.slate.id);
+  // Refresh the active list without clobbering the manual selection.
+  if (Array.isArray(slates)) state.slates = slates;
+
+  const decision = resolveActiveSelection({
+    selectedId: previousId,
+    slates: state.slates,
+    activeMeta: meta,
+  });
+
+  if (decision.switched) {
+    // The viewed slate closed / disappeared → move to the most-urgent active one.
+    if (decision.selectedId) {
+      const next = decision.next;
+      if (previousId && previousCode && previousId !== decision.selectedId) {
+        state.transitionBanner = `Concurso ${previousCode} cerrado. Cargando ${next.draw_code}…`;
+        renderTransitionBanner();
+        setTimeout(() => {
+          state.transitionBanner = null;
+          renderTransitionBanner();
+        }, 8000);
+      }
+      state.activeSlateId = decision.selectedId;
+      state.selectedMatchId = null;
+      await loadSlateDetails(decision.selectedId);
+    } else {
+      state.activeSlateId = null;
+    }
     renderSidebar();
     renderBoard();
     attachEvents();
+  } else {
+    // Selection preserved — refresh the sidebar so status labels stay current.
+    renderSidebar();
   }
+
+  // Countdown always reflects the SELECTED slate's cierre, not the most-urgent.
+  state.closesAtMs = selectedSlateCountdownMs(state.slates, state.activeSlateId);
   tickCountdown();
 }
 

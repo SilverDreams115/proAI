@@ -91,7 +91,11 @@ async def test_list_slates_includes_status_fields(client) -> None:
     assert "status_label" in slate
     assert slate["has_predictions"] is False
     assert slate["has_valid_snapshot"] is False
-    assert slate["status_label"] == "Sin predicción"
+    # R5.6 hotfix: an active slate with matches but no persisted predictions
+    # reads "Predicción live" (served read-only on demand), never a false
+    # "Sin predicción".
+    assert slate["status_label"] == "Predicción live"
+    assert slate["prediction_status"] == "live_available"
 
 
 @pytest.mark.anyio

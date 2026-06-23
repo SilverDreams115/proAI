@@ -9,7 +9,7 @@ from fastapi import APIRouter
 from fastapi import Depends
 from fastapi import HTTPException
 from fastapi import Query
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_db_session
@@ -45,12 +45,17 @@ def _serialize_slate(
 ) -> ProgolSlateResponse:
     has_predictions = False
     has_valid_snapshot = False
+    persisted_prediction_count = 0
     if session is not None:
-        has_predictions = session.scalar(
-            select(PredictionModel.id)
-            .where(PredictionModel.slate_id == slate.id)
-            .limit(1)
-        ) is not None
+        persisted_prediction_count = int(
+            session.scalar(
+                select(func.count(PredictionModel.id)).where(
+                    PredictionModel.slate_id == slate.id
+                )
+            )
+            or 0
+        )
+        has_predictions = persisted_prediction_count > 0
         has_valid_snapshot = session.scalar(
             select(TicketRecommendationSnapshotModel.id)
             .where(
@@ -61,6 +66,19 @@ def _serialize_slate(
             .limit(1)
         ) is not None
     is_closed = service.is_closed(slate)
+    match_count = len(slate.matches)
+    # Live predictions are computable read-only for any active slate that has
+    # matches, even with zero persisted rows — the GET predictions endpoint
+    # scores them on demand. So an active slate is never a true "Sin predicción".
+    live_prediction_available = bool(match_count) and not slate.is_archived and not is_closed
+    if has_predictions:
+        prediction_status = "persisted"
+    elif live_prediction_available:
+        prediction_status = "live_available"
+    elif match_count:
+        prediction_status = "pending"
+    else:
+        prediction_status = "missing"
     if slate.is_archived:
         status_label = "Archivada"
     elif is_closed:
@@ -69,8 +87,12 @@ def _serialize_slate(
         status_label = "Con ticket"
     elif has_predictions:
         status_label = "Con predicciones"
+    elif live_prediction_available:
+        status_label = "Predicción live"
+    elif match_count:
+        status_label = "Pendiente de predicción"
     else:
-        status_label = "Sin predicción"
+        status_label = "Sin datos"
     return ProgolSlateResponse(
         id=slate.id,
         label=slate.label,
@@ -95,6 +117,10 @@ def _serialize_slate(
         has_predictions=has_predictions,
         has_valid_snapshot=has_valid_snapshot,
         status_label=status_label,
+        prediction_status=prediction_status,
+        persisted_prediction_count=persisted_prediction_count,
+        match_count=match_count,
+        live_prediction_available=live_prediction_available,
     )
 
 
