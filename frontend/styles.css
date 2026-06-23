@@ -1686,6 +1686,12 @@ details.ops-details[open] .ops-summary::after {
 .double-tag-warn .reco-meta { color: var(--muted); font-size: 0.85em; }
 .meta-copy-warn { color: var(--warn); }
 
+/* R5.7 ticket canary dry-run table */
+.dryrun-table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 0.86em; }
+.dryrun-table th, .dryrun-table td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--line); }
+.dryrun-table th { color: var(--muted); font-weight: 600; }
+.dryrun-table tr.row-changed { background: rgba(255, 209, 102, 0.07); }
+
 .empty-state {
   padding: 20px;
   border: 1px dashed var(--line);

@@ -213,6 +213,43 @@ async def get_slate_team_rating_canary_status(
     return TeamRatingCanaryStatusResponse(**build_canary_status(session, slate))
 
 
+@router.get("/active-slates/ticket-canary-dry-run")
+async def get_active_slates_ticket_canary_dry_run(
+    session: Session = Depends(get_db_session),
+) -> dict:
+    """R5.7 read-only ticket/optimizer dry-run for every active/upcoming slate.
+
+    Compares the current ticket against the ticket the optimizer *would* produce
+    from the canary effective probabilities. In-memory only: never activates the
+    real ticket, never integrates the optimizer, never writes a row.
+    """
+    from app.services.ticket_canary_dry_run_service import (
+        build_active_slates_ticket_canary_dry_run,
+    )
+
+    return build_active_slates_ticket_canary_dry_run(session)
+
+
+@router.get("/slates/{slate_id}/ticket-canary-dry-run")
+async def get_slate_ticket_canary_dry_run(
+    slate_id: str,
+    session: Session = Depends(get_db_session),
+) -> dict:
+    """R5.7 read-only ticket/optimizer dry-run for one slate (current vs canary).
+
+    Reuses the pure ticket builder (no snapshot) and the canary effective
+    probabilities. Strictly read-only: no ticket activation, no snapshot writes,
+    no prediction regeneration.
+    """
+    from app.services.ticket_canary_dry_run_service import build_ticket_canary_dry_run
+
+    slate_service = SlateService(SlateRepository(session))
+    slate = slate_service.get_slate(slate_id)
+    if slate is None:
+        raise HTTPException(status_code=404, detail="Slate not found.")
+    return build_ticket_canary_dry_run(session, slate)
+
+
 @router.get("/slates/{slate_id}/quality", response_model=list[MatchDataQualityResponse])
 async def get_slate_data_quality(
     slate_id: str,
