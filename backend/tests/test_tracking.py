@@ -391,6 +391,48 @@ def test_persist_audit_true_writes_audit_row(db):
     assert _count_predictions(db, slate.id) > before
 
 
+def test_readonly_compute_caches_for_sharing_without_seeding_persist_cache(db):
+    """Perf: the three read-only slate GETs share one recompute via a read-only
+    cache, but that cache never lets a later persist_audit=True call skip its
+    audit write (they are separate caches)."""
+    from app.services import prediction_service as ps
+
+    ps.invalidate_slate_prediction_cache()
+    slate = _seed_slate(db, draw_code="PG-RO-CACHE", n=2, closes_at=_past())
+
+    # First read-only build seeds ONLY the read-only cache.
+    _prediction_service(db).build_slate_predictions(slate, persist_audit=False)
+    assert ps._cached_readonly_slate_predictions(slate.id) is not None
+    assert ps._cached_slate_predictions(slate.id) is None
+
+    # A second read-only build (e.g. the /ticket or /quality endpoint) reuses
+    # the cached result — same object identity, no extra audit rows.
+    before = _count_predictions(db, slate.id)
+    again = _prediction_service(db).build_slate_predictions(slate, persist_audit=False)
+    assert again is ps._cached_readonly_slate_predictions(slate.id)
+    assert _count_predictions(db, slate.id) == before
+
+    # Despite the warm read-only cache, a persist_audit=True call MUST still
+    # recompute and write its audit row (no cross-cache skip).
+    _prediction_service(db).build_slate_predictions(slate, persist_audit=True)
+    assert _count_predictions(db, slate.id) > before
+
+
+def test_invalidate_clears_both_prediction_caches(db):
+    from app.services import prediction_service as ps
+
+    ps.invalidate_slate_prediction_cache()
+    slate = _seed_slate(db, draw_code="PG-RO-INVAL", n=2, closes_at=_past())
+    _prediction_service(db).build_slate_predictions(slate, persist_audit=False)
+    _prediction_service(db).build_slate_predictions(slate, persist_audit=True)
+    assert ps._cached_readonly_slate_predictions(slate.id) is not None
+    assert ps._cached_slate_predictions(slate.id) is not None
+
+    ps.invalidate_slate_prediction_cache(slate.id)
+    assert ps._cached_readonly_slate_predictions(slate.id) is None
+    assert ps._cached_slate_predictions(slate.id) is None
+
+
 @pytest.mark.anyio
 async def test_tracking_endpoint_writes_no_audit_rows(client):
     from app.db.session import SessionLocal

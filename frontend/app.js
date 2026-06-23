@@ -1949,7 +1949,10 @@ async function boot() {
   }
 
   const [slates, providers, worker] = await Promise.all([
-    safeFetch("/slates"),
+    // include_closed=true so archived concursos (e.g. past Progol MS/PGM
+    // jornadas) remain reachable in the grouped sidebar. The backend sorts
+    // open slates first, so state.slates[0] is still the active weekend slate.
+    safeFetch("/slates?include_closed=true"),
     safeFetch("/sources/providers"),
     safeFetch("/worker/scheduler/status", {optional: true}),
   ]);
@@ -2022,7 +2025,7 @@ async function pollActiveSlate() {
       state.transitionBanner = null;
       renderTransitionBanner();
     }, 8000);
-    const slates = await safeFetch("/slates");
+    const slates = await safeFetch("/slates?include_closed=true");
     if (Array.isArray(slates)) state.slates = slates;
     state.activeSlateId = meta.slate.id;
     state.selectedMatchId = null;
