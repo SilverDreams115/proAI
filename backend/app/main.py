@@ -22,6 +22,7 @@ from app.api.routes import training_adaptive
 from app.api.routes import training_neural
 from app.api.routes import auth
 from app.api.routes import operations
+from app.api.routes import tracking
 from app.api.routes.health import router as health_router
 from app.core.auth import verify_session_token
 from app.core.errors import AppError
@@ -318,6 +319,7 @@ app.include_router(sources.router, prefix="/api")
 app.include_router(slates.router, prefix="/api")
 app.include_router(predictions.router, prefix="/api")
 app.include_router(operations.router, prefix="/api")
+app.include_router(tracking.router, prefix="/api")
 app.include_router(ingestion.router, prefix="/api")
 app.include_router(history.router, prefix="/api")
 app.include_router(normalization.router, prefix="/api")

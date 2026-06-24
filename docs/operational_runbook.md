@@ -188,3 +188,26 @@ intento de escribir DB productiva o activar el ticket real es un **stop inmediat
   `readiness_expansion_summary` y `performance_note` por defecto (rápido), y el
   estado del proveedor solo con `--with-results-provider` (sin red salvo que el
   proveedor esté habilitado).
+
+---
+
+## R6.4 — Opciones por slate, pricing y validación de slates terminadas
+
+### Opciones de boleto (siempre visibles)
+- Ver `docs/progol_pricing_and_options.md`. Aunque Money Mode diga NO JUGAR, el
+  panel **Opciones de boleto** muestra agresiva/balanceada/conservadora/manual
+  como simulaciones no recomendadas, con combinaciones y costo.
+- Precio **no verificado** por defecto → costo "no verificado" (nunca $0).
+- CLI: `python -m scripts.audit_slate_options --active-upcoming`.
+- Probe pricing: `python -m scripts.probe_progol_pricing`.
+
+### Validación de slates terminadas (PG-2337 / PGM-800)
+- Panel **Validación de resultados** + endpoints
+  `GET /api/tracking/completed-slates/results-validation` y
+  `/api/tracking/slates/{id}/results-validation`.
+- CLI: `python -m scripts.validate_completed_slate_results --draw-code PG-2337`
+  (o `--all-completed`). Solo lectura; reporta coverage, conflictos y qué falta.
+- Aplicar resultados: **bloqueado**
+  (`scripts/apply_completed_slate_results.py --apply --confirm
+  APPLY-COMPLETED-SLATE-RESULTS`), y aun así exige `ready_to_apply=true`. En R6.4
+  PG-2337/PGM-800 tienen 0 resultados → NOT READY → no se aplica nada.

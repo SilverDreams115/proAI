@@ -41,6 +41,8 @@ import { renderTicketCanaryDryRunPanel } from "./ticket-canary-dry-run.js";
 import { renderMoneyModePanel } from "./money-mode.js";
 import { renderOperationalMoneyModeStatusPanel } from "./operational-money-mode-status.js";
 import { renderExternalResultsPanel } from "./external-results.js";
+import { renderSlateOptionsPanel } from "./slate-options.js";
+import { renderTrackingResultsValidationPanel } from "./tracking-results-validation.js";
 import {
   getCachedDiagnostics,
   setCachedDiagnostics,
@@ -1463,6 +1465,14 @@ function renderExternalResults() {
   _diagBody("external-results-body", renderExternalResultsPanel, state.externalResults);
 }
 
+function renderSlateOptions() {
+  _diagBody("slate-options-body", renderSlateOptionsPanel, state.slateOptions);
+}
+
+function renderTrackingResultsValidation() {
+  _diagBody("tracking-results-validation-body", renderTrackingResultsValidationPanel, state.resultsValidation);
+}
+
 function renderTeamRatingDryRun() {
   _diagBody("team-rating-dry-run-body", renderTeamRatingActivationDryRunPanel, state.teamRatingDryRun);
 }
@@ -1476,6 +1486,8 @@ function renderTeamRatingReadiness() {
 function renderDiagnosticsPanels() {
   renderOperationalMoneyModeStatus();
   renderMoneyMode();
+  renderSlateOptions();
+  renderTrackingResultsValidation();
   renderTicketCanaryDryRun();
   renderExternalResults();
   renderTeamRatingShadow();
@@ -2033,7 +2045,7 @@ async function loadSlateDetails(slateId) {
 let diagnosticsRequestSeq = 0;
 
 function _applyDiagnostics(payload) {
-  const [shadow, dryRun, readiness, canary, ticketCanaryDryRun, moneyMode, opsStatus, externalResults] = payload;
+  const [shadow, dryRun, readiness, canary, ticketCanaryDryRun, moneyMode, opsStatus, externalResults, slateOptions, resultsValidation] = payload;
   state.teamRatingShadow = (shadow && !Array.isArray(shadow)) ? shadow : null;
   state.teamRatingDryRun = (dryRun && !Array.isArray(dryRun)) ? dryRun : null;
   state.teamRatingReadiness = (readiness && !Array.isArray(readiness)) ? readiness : null;
@@ -2042,6 +2054,8 @@ function _applyDiagnostics(payload) {
   state.moneyMode = (moneyMode && !Array.isArray(moneyMode)) ? moneyMode : null;
   state.moneyModeOpsStatus = (opsStatus && !Array.isArray(opsStatus)) ? opsStatus : null;
   state.externalResults = (externalResults && !Array.isArray(externalResults)) ? externalResults : null;
+  state.slateOptions = (slateOptions && !Array.isArray(slateOptions)) ? slateOptions : null;
+  state.resultsValidation = (resultsValidation && !Array.isArray(resultsValidation)) ? resultsValidation : null;
 }
 
 // R6.3: deferred, cached, cancellable load of the heavy Diagnóstico panels.
@@ -2070,6 +2084,9 @@ async function loadSlateDiagnostics(slateId) {
     safeFetch(`/predictions/slates/${slateId}/money-mode`, {optional: true}),
     safeFetch(`/operations/money-mode/status`, {optional: true}),
     safeFetch(`/results/slates/${slateId}/provider-dry-run`, {optional: true}),
+    // R6.4: always-present ticket options + completed-slate result validation.
+    safeFetch(`/predictions/slates/${slateId}/options`, {optional: true}),
+    safeFetch(`/tracking/completed-slates/results-validation`, {optional: true}),
   ]);
   // A newer slate switch / diagnostics load superseded this one — drop it.
   if (seq !== diagnosticsRequestSeq) return;
