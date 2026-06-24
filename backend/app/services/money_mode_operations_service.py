@@ -84,6 +84,17 @@ def _slate_status(report: dict[str, Any]) -> dict[str, Any]:
     slate = report["slate"]
     decision = report["decision"]
     validation = report.get("validation", {})
+    playable = decision["status"] in _PLAYABLE_STATUSES
+    # Presentation-only fields (R6.2): a count of the critical matches the most
+    # protective ticket still cannot cover, and a plain operator action. These
+    # derive entirely from the existing decision/ticket data — they change no
+    # model, prediction, canary or ticket logic.
+    conservative = report.get("tickets", {}).get("conservative", {})
+    critical_uncovered = len(conservative.get("uncovered_no_simple_positions", []))
+    if playable and decision["recommended_ticket"]:
+        recommended_action = f"Jugar boleto {decision['recommended_ticket']}"
+    else:
+        recommended_action = "No comprar boleto"
     return {
         "draw_code": slate["draw_code"],
         "slate_id": slate["slate_id"],
@@ -93,13 +104,15 @@ def _slate_status(report: dict[str, Any]) -> dict[str, Any]:
         "reason": decision["reason"],
         "confidence": decision["confidence"],
         "recommended_ticket": decision["recommended_ticket"],
+        "recommended_action": recommended_action,
+        "critical_uncovered_count": critical_uncovered,
         "prediction_status": validation.get("prediction_status"),
         "data_blockers": validation.get("data_blockers", []),
         "warnings": validation.get("warnings", []),
         "do_not_simple_positions": report.get("do_not_simple_positions", []),
         "must_review_positions": report.get("must_review_positions", []),
         "money_mode_ready": _money_mode_ready(report),
-        "playable": decision["status"] in _PLAYABLE_STATUSES,
+        "playable": playable,
     }
 
 

@@ -1,9 +1,11 @@
-// R6.0 — Money Mode Release Candidate panel (Diagnóstico / final).
+// R6.0/R6.2 — Money Mode Release Candidate panel (executive-first).
 //
 // Pure render helper (returns an HTML string, no DOM/fetch) so it can be locked
-// with Vitest. It surfaces the operational play/don't-play decision plus the
-// aggressive/balanced/conservative tickets the system would build IN MEMORY.
-// It never activates or changes the real ticket and writes nothing.
+// with Vitest. It leads with the play/don't-play decision and a plain action,
+// then shows the aggressive/balanced/conservative tickets the system would build
+// IN MEMORY, then a collapsible technical detail. When the decision is NO JUGAR
+// the tickets are shown as non-recommended simulations — never as playable
+// options. It never activates or changes the real ticket and writes nothing.
 import { escapeHtml } from "./helpers.js";
 
 const DECISION_TONE = {
@@ -32,35 +34,96 @@ const TICKET_LABEL = {
 
 const PICK_TYPE_LABEL = {
   simple: "Simple",
-  no_simple: "NO SIMPLE",
+  no_simple: "Sin cobertura",
   double: "Doble",
   triple: "Triple",
   unknown: "—",
 };
 
-function ticketCard(key, ticket) {
+// Plain operator action derived from the decision (no logic change).
+function decisionAction(decision) {
+  if (decision.status === "NO_JUGAR") return "No comprar boleto";
+  const label = TICKET_LABEL[decision.recommended_ticket] || decision.recommended_ticket;
+  return label ? `Jugar boleto ${label.toLowerCase()}` : "Revisar boleto recomendado";
+}
+
+// Critical matches the most protective ticket still cannot cover.
+function criticalCount(report) {
+  const cons = (report.tickets || {}).conservative || {};
+  return (cons.uncovered_no_simple_positions || []).length;
+}
+
+// Short, operator-friendly motivo. Never echoes raw backend wording such as
+// "fijo forzado"; derived from the critical-match count.
+function shortReason(report) {
+  const d = report.decision;
+  const n = criticalCount(report);
+  if (d.status === "NO_JUGAR") {
+    if (n > 0) {
+      return `${n} partido${n === 1 ? "" : "s"} sin cobertura suficiente, incluso en el boleto conservador. El riesgo no es cubrible con las reglas actuales.`;
+    }
+    return "Riesgo no cubrible con las reglas actuales.";
+  }
+  return d.reason ? humanizeReason(d.reason) : "Boleto recomendado disponible.";
+}
+
+// Defensive copy sanitiser: a technical phrase never reaches the operator view.
+function humanizeReason(text) {
+  return String(text || "").replace(/fijo[s]? forzado[s]?/gi, "sin cobertura suficiente");
+}
+
+function countsTitle(ticket) {
+  return `S${ticket.simple_count} · NS${ticket.no_simple_count} · D${ticket.double_count} · T${ticket.triple_count}`;
+}
+
+function ticketCard(key, ticket, noPlay) {
   if (!ticket) return "";
-  const star = ticket.recommended
-    ? `<span class="badge-risk tone-ok">RECOMENDADO</span>`
-    : "";
-  const cov = ticket.coverage_estimate || {};
+  let badge;
+  if (noPlay) {
+    badge = `<span class="badge-muted mm-sim-badge">Simulación · no recomendada</span>`;
+  } else if (ticket.recommended) {
+    badge = `<span class="badge-risk tone-ok">RECOMENDADO</span>`;
+  } else {
+    badge = `<span class="badge-muted">alternativa</span>`;
+  }
   const cost =
     ticket.estimated_cost == null
-      ? `n/d <span class="meta-copy">(${escapeHtml(ticket.cost_note || "costo no configurado")})</span>`
+      ? `no configurado`
       : `$${escapeHtml(ticket.estimated_cost)}`;
-  const uncovered = (ticket.uncovered_no_simple_positions || []).join(", ") || "ninguna";
+  const blockedClass = noPlay ? " mm-ticket-sim" : "";
+  // Expanded, plain-language counts (siglas only as a tooltip).
+  const counts = `
+    <div class="mm-counts-grid" title="${escapeHtml(countsTitle(ticket))}">
+      <div class="mm-count"><span class="mm-count-label">Simples</span><span class="mm-count-value">${escapeHtml(ticket.simple_count)}</span></div>
+      <div class="mm-count"><span class="mm-count-label">Sin cobertura</span><span class="mm-count-value">${escapeHtml(ticket.no_simple_count)}</span></div>
+      <div class="mm-count"><span class="mm-count-label">Dobles</span><span class="mm-count-value">${escapeHtml(ticket.double_count)}</span></div>
+      <div class="mm-count"><span class="mm-count-label">Triples</span><span class="mm-count-value">${escapeHtml(ticket.triple_count)}</span></div>
+    </div>`;
   return `
-    <div class="shadow-card money-ticket money-ticket-${escapeHtml(key)}">
+    <div class="shadow-card money-ticket money-ticket-${escapeHtml(key)}${blockedClass}">
       <div class="money-ticket-head">
         <span class="shadow-card-label">${escapeHtml(TICKET_LABEL[key] || key)}</span>
-        ${star}
-        <span class="badge-risk tone-${escapeHtml(ticket.risk_level === "low" ? "ok" : ticket.risk_level === "medium" ? "warn" : "danger")}">riesgo ${escapeHtml(ticket.risk_level)}</span>
+        ${badge}
       </div>
-      <div class="money-ticket-counts">S ${escapeHtml(ticket.simple_count)} · NS ${escapeHtml(ticket.no_simple_count)} · D ${escapeHtml(ticket.double_count)} · T ${escapeHtml(ticket.triple_count)}</div>
-      <div class="money-ticket-meta">Combinaciones: <strong>${escapeHtml(ticket.estimated_combinations)}</strong> · Costo: ${cost}</div>
-      <div class="money-ticket-meta">Cubre NO SIMPLE: <strong>${ticket.covers_all_no_simple ? "sí" : "no"}</strong> · No cubiertos: ${escapeHtml(uncovered)}</div>
-      <div class="money-ticket-meta meta-copy">E[aciertos] ${escapeHtml(cov.expected_correct ?? "—")} · jackpot ${escapeHtml(cov.jackpot_probability ?? "—")} · target ${cov.target_met ? "sí" : "no"}</div>
+      ${counts}
+      <div class="money-ticket-meta meta-copy">Combinaciones: ${escapeHtml(ticket.estimated_combinations)} · Costo: ${cost}</div>
     </div>`;
+}
+
+function ticketTechRow(key, ticket) {
+  if (!ticket) return "";
+  const cov = ticket.coverage_estimate || {};
+  const uncovered = (ticket.uncovered_no_simple_positions || []).join(", ") || "ninguna";
+  return `<tr>
+    <td>${escapeHtml(TICKET_LABEL[key] || key)}</td>
+    <td class="mono">${escapeHtml(countsTitle(ticket))}</td>
+    <td>${escapeHtml(ticket.estimated_combinations)}</td>
+    <td>${escapeHtml(cov.expected_correct ?? "—")}</td>
+    <td>${escapeHtml(cov.jackpot_probability ?? "—")}</td>
+    <td>${cov.target_met ? "sí" : "no"}</td>
+    <td>${ticket.covers_all_no_simple ? "sí" : "no"}</td>
+    <td class="meta-copy">${escapeHtml(uncovered)}</td>
+  </tr>`;
 }
 
 export function renderMoneyModePanel(report) {
@@ -71,27 +134,55 @@ export function renderMoneyModePanel(report) {
   const d = report.decision;
   const tone = DECISION_TONE[d.status] || "muted";
   const label = DECISION_LABEL[d.status] || d.status;
-  const badge = `<span class="shadow-badge badge-canary">MONEY MODE RC · READ-ONLY</span>`;
+  const noPlay = d.status === "NO_JUGAR";
+  const badge = `<span class="shadow-badge badge-canary">MONEY MODE · SOLO LECTURA</span>`;
 
   const validation = report.validation || {};
   const livePredictions =
     validation.prediction_status === "live_available" ||
     (validation.warnings || []).includes("live_predictions_only");
   const liveNote = livePredictions
-    ? `<p class="meta-copy money-live-note">Sin ticket persistido · Money Mode calculado en vivo (predicciones live).</p>`
+    ? `<p class="meta-copy money-live-note">Sin ticket persistido · Money Mode calculado en vivo.</p>`
     : "";
 
+  // --- Executive hero --------------------------------------------------------
+  const hero = `
+    <div class="mm-hero mm-hero-${escapeHtml(tone)}">
+      <div class="mm-hero-top">
+        <span class="mm-hero-slate">${escapeHtml(slate.draw_code)} · ${escapeHtml(slate.match_count)} partidos</span>
+      </div>
+      <div class="mm-hero-decision">${escapeHtml(label)}</div>
+      <div class="mm-hero-action"><strong>Acción:</strong> ${escapeHtml(decisionAction(d))}</div>
+      <div class="mm-hero-reason">${escapeHtml(shortReason(report))}</div>
+    </div>`;
+
+  // --- Recommended ticket line ----------------------------------------------
+  const recommended = d.recommended_ticket
+    ? escapeHtml(TICKET_LABEL[d.recommended_ticket] || d.recommended_ticket)
+    : "ninguno";
+  const recommendedLine = noPlay
+    ? `<div class="mm-recommended mm-recommended-none">Boleto recomendado: <strong>ninguno</strong> · Motivo: riesgo no cubrible.</div>`
+    : `<div class="mm-recommended">Boleto recomendado: <strong>${recommended}</strong></div>`;
+
+  // --- Ticket simulations ----------------------------------------------------
   const tickets = report.tickets || {};
+  const ticketsHeading = noPlay
+    ? `<div class="mm-tickets-heading">Simulaciones de boleto <span class="meta-copy">(ninguna recomendada hoy)</span></div>`
+    : `<div class="mm-tickets-heading">Boletos</div>`;
   const cards = ["aggressive", "balanced", "conservative"]
-    .map((k) => ticketCard(k, tickets[k]))
+    .map((k) => ticketCard(k, tickets[k], noPlay))
     .join("");
 
-  const rows = (report.matches || [])
+  // --- Collapsible technical detail -----------------------------------------
+  const techRows = ["aggressive", "balanced", "conservative"]
+    .map((k) => ticketTechRow(k, tickets[k]))
+    .join("");
+  const matchRows = (report.matches || [])
     .map((m) => {
       const reason = (m.reason || []).join(", ");
       const pick = (m.money_mode_pick || []).join("/") || "—";
       const noSimple = !m.simple_allowed
-        ? `<span class="badge-risk tone-danger">NO SIMPLE</span>`
+        ? `<span class="badge-risk tone-danger">Sin cobertura</span>`
         : `<span class="badge-muted">simple ok</span>`;
       const canary = m.canary_active ? `<span class="badge-canary">canary</span>` : "";
       return `<tr${!m.simple_allowed ? ' class="row-changed"' : ""}>
@@ -105,31 +196,36 @@ export function renderMoneyModePanel(report) {
     })
     .join("");
 
-  const recommended = d.recommended_ticket
-    ? escapeHtml(TICKET_LABEL[d.recommended_ticket] || d.recommended_ticket)
-    : "ninguno";
+  const technical = `
+    <details class="mm-technical">
+      <summary>Detalles técnicos</summary>
+      <div class="shadow-positions">
+        <div class="shadow-positions-item"><span class="shadow-card-label">Partidos sin cobertura permitida</span><span class="shadow-positions-value">${escapeHtml((report.do_not_simple_positions || []).join(", ") || "ninguno")}</span></div>
+        <div class="shadow-positions-item"><span class="shadow-card-label">Revisión obligatoria</span><span class="shadow-positions-value">${escapeHtml((report.must_review_positions || []).join(", ") || "ninguna")}</span></div>
+        <div class="shadow-positions-item"><span class="shadow-card-label">Canary influye en</span><span class="shadow-positions-value">${escapeHtml((report.canary_influence_positions || []).join(", ") || "ninguna")}</span></div>
+        <div class="shadow-positions-item"><span class="shadow-card-label">Warnings</span><span class="shadow-positions-value">${escapeHtml((validation.warnings || []).join(", ") || "ninguno")}</span></div>
+      </div>
+      <table class="dryrun-table mm-tech-table">
+        <thead><tr><th>Boleto</th><th>Conteos</th><th>Comb.</th><th>E[aciertos]</th><th>Jackpot</th><th>Target</th><th>Cubre</th><th>No cubiertos</th></tr></thead>
+        <tbody>${techRows}</tbody>
+      </table>
+      <table class="dryrun-table money-mode-table">
+        <thead><tr><th>#</th><th>Partido</th><th>Señal</th><th>Money pick</th><th>Riesgo</th><th>Justificación</th></tr></thead>
+        <tbody>${matchRows}</tbody>
+      </table>
+      <p class="meta-copy">Motivo técnico completo: ${escapeHtml(humanizeReason(d.reason))}</p>
+    </details>`;
 
   return `
     <div class="shadow-panel money-mode-panel">
       <div class="shadow-toprow">${badge}</div>
-      <div class="money-decision money-decision-${escapeHtml(tone)}">
-        <span class="money-decision-label badge-risk tone-${escapeHtml(tone)}">${escapeHtml(label)}</span>
-        <span class="money-decision-confidence">confianza: ${escapeHtml(d.confidence)}</span>
-      </div>
-      <p class="money-decision-reason">${escapeHtml(d.reason)}</p>
+      ${hero}
       ${liveNote}
-      <div class="shadow-positions">
-        <div class="shadow-positions-item"><span class="shadow-card-label">Boleto recomendado</span><span class="shadow-positions-value">${recommended}</span></div>
-        <div class="shadow-positions-item"><span class="shadow-card-label">Partidos NO SIMPLE</span><span class="shadow-positions-value">${escapeHtml((report.do_not_simple_positions || []).join(", ") || "ninguno")}</span></div>
-        <div class="shadow-positions-item"><span class="shadow-card-label">Revisión obligatoria</span><span class="shadow-positions-value">${escapeHtml((report.must_review_positions || []).join(", ") || "ninguna")}</span></div>
-        <div class="shadow-positions-item"><span class="shadow-card-label">Canary influye en</span><span class="shadow-positions-value">${escapeHtml((report.canary_influence_positions || []).join(", ") || "ninguna")}</span></div>
-      </div>
+      ${recommendedLine}
+      ${ticketsHeading}
       <div class="shadow-cards money-tickets">${cards}</div>
-      <table class="dryrun-table money-mode-table">
-        <thead><tr><th>#</th><th>Partido</th><th>Señal</th><th>Money pick</th><th>Riesgo</th><th>Justificación</th></tr></thead>
-        <tbody>${rows}</tbody>
-      </table>
-      <div class="shadow-alert">MONEY MODE RC: no activa el ticket real · no escribe snapshots ni predicciones · full activation OFF · ticket integration OFF.</div>
+      ${technical}
+      <div class="shadow-alert">Solo lectura · no activa ni cambia el ticket real · no escribe predicciones ni snapshots.</div>
     </div>
   `;
 }

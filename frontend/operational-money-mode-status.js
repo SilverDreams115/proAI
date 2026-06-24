@@ -1,10 +1,9 @@
-// R6.1 — Operational Money Mode Status panel.
+// R6.1/R6.2 — Operational Money Mode Status panel (executive-first).
 //
 // Pure render helper (returns an HTML string, no DOM/fetch) so it can be locked
-// with Vitest. It shows, for every active/upcoming slate, the operational
-// JUGAR / NO JUGAR decision and whether the slate is Money-Mode-ready. It NEVER
-// hides a NO JUGAR or the blocked-slate count, and changes nothing — strictly a
-// read-only status surface.
+// with Vitest. It leads with the single thing an operator needs — play or don't
+// play TODAY — and then a per-slate executive card. It NEVER hides a NO JUGAR or
+// the blocked-slate count, and changes nothing: strictly a read-only surface.
 import { escapeHtml } from "./helpers.js";
 
 const DECISION_TONE = {
@@ -25,64 +24,101 @@ const DECISION_LABEL = {
   NO_JUGAR: "NO JUGAR",
 };
 
+const PREDICTION_LABEL = {
+  persisted: "Predicciones listas",
+  live_available: "Predicción en vivo",
+  pending: "Sin predicción",
+  missing: "Sin datos",
+};
+
 function decisionLabel(status) {
   return DECISION_LABEL[status] || status || "—";
+}
+
+// Short, operator-friendly motivo. Never echoes raw backend wording such as
+// "fijo forzado"; it is derived from the critical-match count.
+function shortReason(slate) {
+  const n = Number(slate.critical_uncovered_count || 0);
+  if (slate.decision === "NO_JUGAR") {
+    if (n > 0) {
+      return `${n} partido${n === 1 ? "" : "s"} sin cobertura suficiente.`;
+    }
+    return "Riesgo no cubrible con las reglas actuales.";
+  }
+  return slate.recommended_ticket
+    ? `Boleto recomendado: ${slate.recommended_ticket}.`
+    : "Revisar detalle de la slate.";
+}
+
+function slateCard(slate) {
+  const tone = DECISION_TONE[slate.decision] || "muted";
+  const action = slate.recommended_action || (slate.decision === "NO_JUGAR" ? "No comprar boleto" : "Revisar");
+  const ready = slate.money_mode_ready
+    ? `<span class="badge-risk tone-ok">datos listos</span>`
+    : `<span class="badge-risk tone-danger">datos incompletos</span>`;
+  const prediction = PREDICTION_LABEL[slate.prediction_status] || slate.prediction_status || "—";
+  return `
+    <div class="ops-slate-card ops-slate-${escapeHtml(tone)}">
+      <div class="ops-slate-top">
+        <span class="ops-slate-code">${escapeHtml(slate.draw_code)}</span>
+        <span class="meta-copy">${escapeHtml(slate.week_type)} · ${escapeHtml(slate.match_count)} partidos</span>
+      </div>
+      <div class="ops-slate-decision badge-risk tone-${escapeHtml(tone)}">${escapeHtml(decisionLabel(slate.decision))}</div>
+      <div class="ops-slate-action"><strong>Acción:</strong> ${escapeHtml(action)}</div>
+      <div class="ops-slate-reason">${escapeHtml(shortReason(slate))}</div>
+      <div class="ops-slate-foot meta-copy">${ready} · ${escapeHtml(prediction)}</div>
+    </div>`;
 }
 
 export function renderOperationalMoneyModeStatusPanel(status) {
   if (!status || !Array.isArray(status.slates)) {
     return `<div class="empty-state">Sin estado operativo de Money Mode.</div>`;
   }
-  const badge = `<span class="shadow-badge badge-canary">OPERATIONAL · READ-ONLY</span>`;
+  const badge = `<span class="shadow-badge badge-canary">OPERATIVO · SOLO LECTURA</span>`;
 
   if (status.active_slate_count === 0) {
     return `
       <div class="shadow-panel ops-money-panel">
         <div class="shadow-toprow">${badge}</div>
-        <div class="empty-state">No hay slates activas/próximas en este momento.</div>
-        <div class="shadow-alert">Read-only · sin escrituras · esperando una nueva quiniela activa/próxima.</div>
+        <div class="ops-hero ops-hero-muted">
+          <div class="ops-hero-headline">HOY: SIN QUINIELA ACTIVA</div>
+          <div class="ops-hero-action">No hay nada que decidir ahora mismo.</div>
+        </div>
+        <div class="shadow-alert">Solo lectura · sin escrituras · esperando una nueva quiniela activa/próxima.</div>
       </div>`;
   }
 
-  const summary = `
-    <div class="shadow-positions ops-summary">
-      <div class="shadow-positions-item"><span class="shadow-card-label">Slates activas</span><span class="shadow-positions-value">${escapeHtml(status.active_slate_count)}</span></div>
-      <div class="shadow-positions-item"><span class="shadow-card-label">Jugables</span><span class="shadow-positions-value">${escapeHtml(status.playable_slate_count)}</span></div>
-      <div class="shadow-positions-item"><span class="shadow-card-label">Bloqueadas (NO JUGAR)</span><span class="shadow-positions-value badge-risk tone-danger">${escapeHtml(status.blocked_slate_count)}</span></div>
+  const playable = Number(status.playable_slate_count || 0);
+  const active = Number(status.active_slate_count || 0);
+  const blocked = Number(status.blocked_slate_count ?? active - playable);
+  const noPlay = playable === 0;
+
+  const headline = noPlay ? "HOY: NO JUGAR" : "HOY: HAY SLATES JUGABLES";
+  const action = noPlay
+    ? "Acción recomendada: no comprar boleto hoy."
+    : "Acción recomendada: revisar el boleto recomendado por slate.";
+  const heroTone = noPlay ? "danger" : "ok";
+
+  const hero = `
+    <div class="ops-hero ops-hero-${heroTone}">
+      <div class="ops-hero-headline">${escapeHtml(headline)}</div>
+      <div class="ops-hero-counts">${escapeHtml(playable)} de ${escapeHtml(active)} slates jugables · <strong>${escapeHtml(blocked)} bloqueada${blocked === 1 ? "" : "s"}</strong></div>
+      <div class="ops-hero-action">${escapeHtml(action)}</div>
     </div>`;
 
-  const rows = status.slates
-    .map((s) => {
-      const tone = DECISION_TONE[s.decision] || "muted";
-      const ready = s.money_mode_ready
-        ? `<span class="badge-risk tone-ok">ready</span>`
-        : `<span class="badge-risk tone-danger">no ready</span>`;
-      const warnings = (s.warnings || []).join(", ") || "—";
-      return `<tr class="ops-row ops-row-${escapeHtml(tone)}">
-        <td><strong>${escapeHtml(s.draw_code)}</strong><br><span class="meta-copy">${escapeHtml(s.week_type)} · ${escapeHtml(s.match_count)} partidos</span></td>
-        <td><span class="badge-risk tone-${escapeHtml(tone)} ops-decision">${escapeHtml(decisionLabel(s.decision))}</span></td>
-        <td class="meta-copy">${escapeHtml(s.reason)}</td>
-        <td>${ready}<br><span class="meta-copy">${escapeHtml(s.prediction_status || "—")}</span></td>
-        <td class="meta-copy">${escapeHtml(warnings)}</td>
-      </tr>`;
-    })
-    .join("");
+  const cards = status.slates.map(slateCard).join("");
 
   const generated = status.generated_at
-    ? `<p class="meta-copy">Última validación: ${escapeHtml(status.generated_at)}</p>`
+    ? `<p class="meta-copy ops-updated">Última validación: ${escapeHtml(status.generated_at)}</p>`
     : "";
 
   return `
     <div class="shadow-panel ops-money-panel">
       <div class="shadow-toprow">${badge}</div>
-      <p class="dryrun-lead">Decisión operativa por slate activa/próxima. JUGAR solo si Money Mode lo permite; un NO JUGAR nunca se oculta.</p>
+      ${hero}
+      <div class="ops-slate-grid">${cards}</div>
       ${generated}
-      ${summary}
-      <table class="dryrun-table ops-money-table">
-        <thead><tr><th>Slate</th><th>Decisión</th><th>Motivo</th><th>Money Mode</th><th>Warnings</th></tr></thead>
-        <tbody>${rows}</tbody>
-      </table>
-      <div class="shadow-alert">OPERATIONAL STATUS: solo lectura · no activa ni cambia el ticket real · no escribe snapshots ni predicciones.</div>
+      <div class="shadow-alert">Estado operativo de solo lectura · no activa ni cambia el ticket real · no escribe nada. Un NO JUGAR nunca se oculta.</div>
     </div>
   `;
 }
