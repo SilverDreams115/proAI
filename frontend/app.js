@@ -38,6 +38,7 @@ import { renderTeamRatingActivationReadinessPanel } from "./team-rating-activati
 import { renderTeamRatingCanaryPanel } from "./team-rating-canary.js";
 import { presentationGuardOf, SIGNAL_LABEL } from "./presentation-guard.js";
 import { renderTicketCanaryDryRunPanel } from "./ticket-canary-dry-run.js";
+import { renderMoneyModePanel } from "./money-mode.js";
 import { resolveActiveSelection, selectedSlateCountdownMs } from "./slate-selection.js";
 // NOTE: live-tracking is loaded via a guarded dynamic import in the
 // bootstrap (not a static import), so a failure to load/link that module
@@ -1437,6 +1438,12 @@ function renderTicketCanaryDryRun() {
   node.innerHTML = renderTicketCanaryDryRunPanel(state.ticketCanaryDryRun);
 }
 
+function renderMoneyMode() {
+  const node = getById("money-mode-body");
+  if (!node) return;
+  node.innerHTML = renderMoneyModePanel(state.moneyMode);
+}
+
 function renderTeamRatingDryRun() {
   const node = getById("team-rating-dry-run-body");
   if (!node) return;
@@ -1466,6 +1473,7 @@ function renderBoard() {
   renderTeamRatingReadiness();
   renderTeamRatingCanary();
   renderTicketCanaryDryRun();
+  renderMoneyMode();
   if (qualityFilterNode) qualityFilterNode.innerHTML = renderQualityFilterOptions();
 
   if (!state.authenticated) {
@@ -1925,7 +1933,7 @@ async function loadSlateDetails(slateId) {
   // batch endpoints (`/evidence/slates`, `/availability/slates`,
   // `/results/slates/{id}/context`) each return a {match_id: [...]}
   // mapping so the per-match loop below is a dict lookup, not a fetch.
-  const [predictions, features, ticketPlan, quality, evidenceBySlate, availabilityBySlate, resultsBySlate, teamRatingShadow, teamRatingDryRun, teamRatingReadiness, teamRatingCanary, ticketCanaryDryRun] = await Promise.all([
+  const [predictions, features, ticketPlan, quality, evidenceBySlate, availabilityBySlate, resultsBySlate, teamRatingShadow, teamRatingDryRun, teamRatingReadiness, teamRatingCanary, ticketCanaryDryRun, moneyMode] = await Promise.all([
     safeFetch(`/predictions/slates/${slateId}`),
     safeFetch(`/predictions/slates/${slateId}/features`),
     safeFetch(`/predictions/slates/${slateId}/ticket`, {optional: true}),
@@ -1945,6 +1953,8 @@ async function loadSlateDetails(slateId) {
     safeFetch(`/predictions/slates/${slateId}/team-rating-canary-status`, {optional: true}),
     // R5.7: read-only ticket canary dry-run (current vs canary ticket). Optional.
     safeFetch(`/predictions/slates/${slateId}/ticket-canary-dry-run`, {optional: true}),
+    // R6.0: read-only Money Mode RC (play/don't-play + 3 tickets). Optional.
+    safeFetch(`/predictions/slates/${slateId}/money-mode`, {optional: true}),
   ]);
   // A newer slate switch superseded this request — discard the stale payload.
   if (seq !== slateRequestSeq) return;
@@ -1953,6 +1963,7 @@ async function loadSlateDetails(slateId) {
   state.teamRatingReadiness = (teamRatingReadiness && !Array.isArray(teamRatingReadiness)) ? teamRatingReadiness : null;
   state.teamRatingCanary = (teamRatingCanary && !Array.isArray(teamRatingCanary)) ? teamRatingCanary : null;
   state.ticketCanaryDryRun = (ticketCanaryDryRun && !Array.isArray(ticketCanaryDryRun)) ? ticketCanaryDryRun : null;
+  state.moneyMode = (moneyMode && !Array.isArray(moneyMode)) ? moneyMode : null;
   if (!Array.isArray(predictions) || !Array.isArray(features)) {
     state.matches = [];
     state.ticketPlan = null;
