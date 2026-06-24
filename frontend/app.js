@@ -39,6 +39,7 @@ import { renderTeamRatingCanaryPanel } from "./team-rating-canary.js";
 import { presentationGuardOf, SIGNAL_LABEL } from "./presentation-guard.js";
 import { renderTicketCanaryDryRunPanel } from "./ticket-canary-dry-run.js";
 import { renderMoneyModePanel } from "./money-mode.js";
+import { renderOperationalMoneyModeStatusPanel } from "./operational-money-mode-status.js";
 import { resolveActiveSelection, selectedSlateCountdownMs } from "./slate-selection.js";
 // NOTE: live-tracking is loaded via a guarded dynamic import in the
 // bootstrap (not a static import), so a failure to load/link that module
@@ -1444,6 +1445,12 @@ function renderMoneyMode() {
   node.innerHTML = renderMoneyModePanel(state.moneyMode);
 }
 
+function renderOperationalMoneyModeStatus() {
+  const node = getById("operational-money-mode-status-body");
+  if (!node) return;
+  node.innerHTML = renderOperationalMoneyModeStatusPanel(state.moneyModeOpsStatus);
+}
+
 function renderTeamRatingDryRun() {
   const node = getById("team-rating-dry-run-body");
   if (!node) return;
@@ -1474,6 +1481,7 @@ function renderBoard() {
   renderTeamRatingCanary();
   renderTicketCanaryDryRun();
   renderMoneyMode();
+  renderOperationalMoneyModeStatus();
   if (qualityFilterNode) qualityFilterNode.innerHTML = renderQualityFilterOptions();
 
   if (!state.authenticated) {
@@ -2037,7 +2045,7 @@ async function boot() {
     return;
   }
 
-  const [slates, providers, worker] = await Promise.all([
+  const [slates, providers, worker, opsStatus] = await Promise.all([
     // Main sidebar shows only active/upcoming concursos. Archived jornadas are
     // intentionally excluded here (they are reachable via the explicit
     // include_closed=true history/diagnostic query, not mixed into the main
@@ -2045,11 +2053,15 @@ async function boot() {
     safeFetch("/slates"),
     safeFetch("/sources/providers"),
     safeFetch("/worker/scheduler/status", {optional: true}),
+    // R6.1: read-only operational Money Mode status across all active/upcoming
+    // slates (play/don't-play summary). Optional so a failure never blocks boot.
+    safeFetch("/operations/money-mode/status", {optional: true}),
   ]);
 
   state.slates = Array.isArray(slates) ? slates : [];
   state.providers = Array.isArray(providers) ? providers : [];
   state.worker = worker && !Array.isArray(worker) ? worker : null;
+  state.moneyModeOpsStatus = (opsStatus && !Array.isArray(opsStatus)) ? opsStatus : null;
   const workerButton = getById("run-worker");
   if (workerButton) {
     workerButton.disabled = !state.worker;

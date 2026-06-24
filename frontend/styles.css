@@ -2810,3 +2810,12 @@ span.badge-canary {
 .money-ticket-meta { font-size: 0.82rem; margin: 2px 0; }
 .money-ticket.money-ticket-balanced { border-color: rgba(155, 227, 106, 0.35); }
 .money-mode-table { width: 100%; margin-top: 12px; }
+
+/* R6.1 — Operational Money Mode Status panel. Reuses shadow/badge tokens. */
+.ops-money-panel .ops-summary { margin: 6px 0 10px; }
+.ops-money-table { width: 100%; margin-top: 10px; }
+.ops-money-table td { vertical-align: top; }
+.ops-decision { font-weight: 800; letter-spacing: 0.04em; }
+.ops-row-danger td:first-child { border-left: 3px solid var(--bad); }
+.ops-row-ok td:first-child { border-left: 3px solid var(--win); }
+.ops-row-warn td:first-child { border-left: 3px solid var(--warn); }
