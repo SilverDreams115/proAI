@@ -155,3 +155,36 @@ no full activation · no training · no optimizer productivo · no ticket integr
 real · no escribe tickets/predicciones/feature snapshots · no results apply · no
 API-Football online · no cambia probabilidades ni recomendaciones persistidas. Cualquier
 intento de escribir DB productiva o activar el ticket real es un **stop inmediato**.
+
+---
+
+## R6.3 — Performance, resultados externos y readiness
+
+### Carga rápida de la UI
+- El tablero de predicción carga **sin esperar** los paneles pesados. Money
+  Mode, los dry-runs canary, el estado operativo y los resultados externos se
+  cargan **lazy** al abrir la pestaña **Diagnóstico**, con **cache por slate**
+  (re-abrir una slate es instantáneo) y **cancelación** de respuestas viejas.
+- Endpoint ligero para primer pintado: `GET /api/operations/dashboard-fast`
+  (solo slates activas + sugerencia + validación; no computa Money Mode).
+
+### Resultados externos (fuente gratuita)
+- Ver `docs/free_results_provider.md`. Panel **Resultados externos** en
+  Diagnóstico (solo lectura). Probe:
+  `python -m scripts.probe_free_results_source --provider football_data_org --active-upcoming`.
+- **Nunca** se aplican resultados automáticamente. Apply manual bloqueado
+  (`scripts/apply_provider_results.py`, requiere `--apply --confirm
+  APPLY-PROVIDER-RESULTS-ONLY` + flags de habilitación; en R6.3 responde
+  NOT IMPLEMENTED).
+
+### Readiness sin falsear confianza
+- Ver `docs/readiness_expansion.md`. Auditoría:
+  `python -m scripts.audit_ready_expansion --active-upcoming`.
+- Regla: **nunca** promover a READY sin evidencia real. Estado actual: sin
+  promociones seguras (amistosos de baja evidencia).
+
+### Operativo integrado
+- `operate_money_mode.py --active-upcoming` ahora incluye
+  `readiness_expansion_summary` y `performance_note` por defecto (rápido), y el
+  estado del proveedor solo con `--with-results-provider` (sin red salvo que el
+  proveedor esté habilitado).

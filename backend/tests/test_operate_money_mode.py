@@ -112,3 +112,34 @@ def test_unknown_draw_code_returns_error(db, monkeypatch, capsys):  # noqa: F811
     rc = main(["--draw-code", "PG-DOES-NOT-EXIST"])
     assert rc == 1
     assert "ERROR" in capsys.readouterr().out
+
+
+def test_default_run_does_not_check_results_provider(db, monkeypatch, capsys):  # noqa: F811
+    """10 — default run includes readiness but does NOT call the provider."""
+    from scripts.operate_money_mode import main
+
+    enable_canary(monkeypatch)
+    seed_canary_slate(db)
+
+    rc = main(["--draw-code", DRAW, "--json"])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["results_provider_status"]["checked"] is False
+    assert "readiness_expansion_summary" in payload
+    assert "performance_note" in payload
+
+
+def test_with_results_provider_flag_attaches_status(db, monkeypatch, capsys):  # noqa: F811
+    """11 — --with-results-provider attaches the (disabled, write-free) status."""
+    from app.core import settings as settings_module
+    from scripts.operate_money_mode import main
+
+    enable_canary(monkeypatch)
+    monkeypatch.setattr(settings_module.settings, "results_provider_enabled", False)
+    seed_canary_slate(db)
+
+    rc = main(["--draw-code", DRAW, "--with-results-provider", "--json"])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["results_provider_status"]["checked"] is True
+    assert payload["slates"][0]["results_provider"]["status"] == "disabled"

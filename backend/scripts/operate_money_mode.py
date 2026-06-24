@@ -67,6 +67,20 @@ def _render_human(report: dict[str, Any]) -> str:
         lines.append(f"DO_NOT_SIMPLE: {st['do_not_simple_positions'] or 'ninguno'}")
         lines.append(f"WARNINGS   : {st['warnings'] or 'ninguno'}")
         lines.append(f"WRITE_SAFETY: write_safety_ok={entry['write_safety_ok']}")
+    rx = report.get("readiness_expansion_summary", {})
+    rp = report.get("results_provider_status", {})
+    lines.append("")
+    lines.append(f"READINESS  : ready_now={rx.get('ready_now')} not_ready={rx.get('not_ready')} "
+                 f"safe_promotions={rx.get('safe_promotions')}")
+    if rp.get("checked"):
+        for entry in rp.get("slates", []):
+            cov = entry.get("coverage", {})
+            lines.append(f"PROVIDER   : {entry['draw_code']} {entry['provider']} status={entry['status']} "
+                         f"coverage={cov.get('matched')}/{cov.get('total')}")
+    else:
+        lines.append(f"PROVIDER   : {rp.get('note')}")
+    if report.get("performance_note"):
+        lines.append(f"PERF       : {report['performance_note']}")
     ws = report["write_safety"]
     delta = report["counts_delta"]
     nonzero = {k: v for k, v in delta.items() if v != 0}
@@ -140,6 +154,11 @@ def main(argv: list[str] | None = None) -> int:
     mode.add_argument("--slate-id")
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--markdown", metavar="PATH", help="write a markdown report to PATH")
+    parser.add_argument(
+        "--with-results-provider",
+        action="store_true",
+        help="attach the free results-provider status (may do network I/O only if enabled)",
+    )
     args = parser.parse_args(argv)
 
     with db_session.SessionLocal() as session:
@@ -149,6 +168,7 @@ def main(argv: list[str] | None = None) -> int:
                 draw_code=args.draw_code,
                 slate_id=args.slate_id,
                 active_upcoming=args.active_upcoming,
+                with_results_provider=args.with_results_provider,
             )
 
     if args.markdown:

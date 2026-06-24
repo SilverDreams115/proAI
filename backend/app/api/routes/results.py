@@ -77,3 +77,48 @@ async def list_slate_context(
             for item in service.list_context_results_for_match(link.match_id)
         ]
     return result
+
+
+@router.get("/slates/{slate_id}/provider-dry-run")
+async def slate_provider_dry_run(
+    slate_id: str,
+    session: Session = Depends(get_db_session),
+) -> dict:
+    """R6.3 read-only free-results-provider dry-run for one slate.
+
+    Reports what football-data.org would return for the slate's fixtures
+    (coverage, per-match status/score) WITHOUT writing match_results. Disabled +
+    missing-key are non-fatal statuses. Applying results is a separate, confirmed
+    CLI step.
+    """
+    from app.services.results_provider_service import build_slate_results_dry_run
+
+    slate = SlateRepository(session).get_slate(slate_id)
+    if slate is None:
+        raise HTTPException(status_code=404, detail="Slate not found.")
+    return build_slate_results_dry_run(slate)
+
+
+@router.get("/active-slates/provider-dry-run")
+async def active_slates_provider_dry_run(
+    session: Session = Depends(get_db_session),
+) -> dict:
+    """R6.3 read-only provider dry-run for every active/upcoming slate."""
+    from app.services.active_slate_scope import build_active_slate_scope
+    from app.services.results_provider_service import build_slate_results_dry_run
+    from app.services.slate_service import SlateService
+
+    slate_service = SlateService(SlateRepository(session))
+    out: list[dict] = []
+    for info in build_active_slate_scope(session):
+        slate = slate_service.get_slate(info.slate_id)
+        if slate is None:
+            continue
+        out.append(build_slate_results_dry_run(slate))
+    return {
+        "mode": "results_provider_dry_run_active_upcoming",
+        "scope": "active_upcoming",
+        "slate_count": len(out),
+        "slates": out,
+        "write_safety": {"writes_performed": False, "snapshots_created": False},
+    }

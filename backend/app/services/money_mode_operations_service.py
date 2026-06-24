@@ -143,17 +143,74 @@ def build_operational_status(session: Session) -> dict[str, Any]:
     }
 
 
+def _readiness_summary(money_mode: dict[str, Any]) -> dict[str, Any]:
+    """Cheap readiness rollup from an already-built Money Mode report.
+
+    READY = the presentation guard allows a confident simple. Never invents a
+    promotion; safe_promotions is exactly the count of already-defensible picks.
+    """
+    matches = money_mode.get("matches", [])
+    ready_now = sum(1 for m in matches if m.get("simple_allowed"))
+    not_ready = len(matches) - ready_now
+    return {
+        "ready_now": ready_now,
+        "not_ready": not_ready,
+        "safe_promotions": ready_now,  # only already-sufficient picks count
+    }
+
+
+def build_dashboard_fast(session: Session) -> dict[str, Any]:
+    """R6.3 — lightweight active-slate summary for fast first paint (read-only).
+
+    Deliberately does NOT compute Money Mode (no ticket optimisation, no
+    predictions scoring): it returns just the active/upcoming slates, a default
+    selection suggestion and each slate's cheap validation status, so the UI can
+    render the sidebar + a status line immediately and defer the heavy panels.
+    """
+    scope = build_active_slate_scope(session)
+    slate_service = SlateService(SlateRepository(session))
+    slates: list[dict[str, Any]] = []
+    for info in scope:
+        slate = slate_service.get_slate(info.slate_id)
+        if slate is None:
+            continue
+        validation = validate_slate_for_money_mode(session, slate)
+        slates.append(
+            {
+                "slate_id": slate.id,
+                "draw_code": slate.draw_code,
+                "week_type": slate.week_type,
+                "match_count": len(slate.matches),
+                "prediction_status": validation["prediction_status"],
+                "money_mode_ready": not validation["data_blockers"]
+                and validation["prediction_status"] in ("persisted", "live_available"),
+                "data_blockers": validation["data_blockers"],
+            }
+        )
+    return {
+        "mode": "dashboard_fast",
+        "scope": "active_upcoming",
+        "active_slate_count": len(slates),
+        "default_slate_id": slates[0]["slate_id"] if slates else None,
+        "slates": slates,
+        "write_safety": {"read_only": True, "writes_performed": False},
+    }
+
+
 def run_operational_money_mode(
     session: Session,
     *,
     draw_code: str | None = None,
     slate_id: str | None = None,
     active_upcoming: bool = False,
+    with_results_provider: bool = False,
 ) -> dict[str, Any]:
     """Full operational orchestration for the CLI (read-only).
 
     Order: active_slate_scope -> money_mode_validation -> ticket_canary_dry_run
-    -> money_mode -> write-safety audit -> counts before/after.
+    -> money_mode -> write-safety audit -> counts before/after. Includes a cheap
+    readiness rollup always; the (free) results-provider status is attached only
+    when ``with_results_provider`` is set so the default run stays fast.
     """
     slate_service = SlateService(SlateRepository(session))
     repo = SlateRepository(session)
@@ -197,21 +254,47 @@ def run_operational_money_mode(
         write_safety_ok = write_safety_ok and slate_ws_ok
         if money_mode["decision"]["status"] in _PLAYABLE_STATUSES:
             playable += 1
-        slates_out.append(
-            {
-                "validation": validation,
-                "ticket_canary_dry_run": dry_run,
-                "money_mode": money_mode,
-                "status": _slate_status(money_mode),
-                "write_safety_ok": slate_ws_ok,
+        slate_entry: dict[str, Any] = {
+            "validation": validation,
+            "ticket_canary_dry_run": dry_run,
+            "money_mode": money_mode,
+            "status": _slate_status(money_mode),
+            "readiness_summary": _readiness_summary(money_mode),
+            "write_safety_ok": slate_ws_ok,
+        }
+        # The free results provider only does network I/O when explicitly asked
+        # AND enabled; disabled is a cheap, write-free status either way.
+        if with_results_provider:
+            from app.services.results_provider_service import build_slate_results_dry_run
+
+            provider = build_slate_results_dry_run(slate)
+            slate_entry["results_provider"] = {
+                "provider": provider["provider"],
+                "status": provider["status"],
+                "enabled": provider["enabled"],
+                "coverage": provider["coverage"],
             }
-        )
+        slates_out.append(slate_entry)
 
     counts_after = count_tracked_tables(session)
     counts_delta = {
         name: counts_after[name] - counts_before[name] for name in counts_before
     }
     delta_zero = all(value == 0 for value in counts_delta.values())
+
+    readiness_total = {
+        "ready_now": sum(s["readiness_summary"]["ready_now"] for s in slates_out),
+        "not_ready": sum(s["readiness_summary"]["not_ready"] for s in slates_out),
+        "safe_promotions": sum(s["readiness_summary"]["safe_promotions"] for s in slates_out),
+    }
+    results_provider_status = (
+        {"checked": True, "slates": [
+            {"draw_code": s["status"]["draw_code"], **s["results_provider"]}
+            for s in slates_out if "results_provider" in s
+        ]}
+        if with_results_provider
+        else {"checked": False, "note": "use --with-results-provider para consultar el proveedor"}
+    )
 
     return {
         "mode": "money_mode_operational_run",
@@ -223,6 +306,12 @@ def run_operational_money_mode(
         "slate_count": len(slates_out),
         "playable_slate_count": playable,
         "blocked_slate_count": len(slates_out) - playable,
+        "readiness_expansion_summary": readiness_total,
+        "results_provider_status": results_provider_status,
+        "performance_note": (
+            "Read-only y acotado. La UI difiere y cachea los paneles pesados "
+            "(Money Mode, dry-runs, resultados) por slate; el tablero carga sin esperarlos."
+        ),
         "slates": slates_out,
         "counts_before": counts_before,
         "counts_after": counts_after,

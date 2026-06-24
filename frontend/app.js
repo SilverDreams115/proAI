@@ -40,6 +40,12 @@ import { presentationGuardOf, SIGNAL_LABEL } from "./presentation-guard.js";
 import { renderTicketCanaryDryRunPanel } from "./ticket-canary-dry-run.js";
 import { renderMoneyModePanel } from "./money-mode.js";
 import { renderOperationalMoneyModeStatusPanel } from "./operational-money-mode-status.js";
+import { renderExternalResultsPanel } from "./external-results.js";
+import {
+  getCachedDiagnostics,
+  setCachedDiagnostics,
+  clearDiagnosticsCache,
+} from "./slate-panel-cache.js";
 import { resolveActiveSelection, selectedSlateCountdownMs } from "./slate-selection.js";
 // NOTE: live-tracking is loaded via a guarded dynamic import in the
 // bootstrap (not a static import), so a failure to load/link that module
@@ -1421,46 +1427,61 @@ function renderCanaryBadge(pred) {
   return `<span class="badge-canary" title="Team Rating Canary activo · Δ prob máx ${escapeHtml(delta)} · El ticket aún NO usa canary (motor: ${escapeHtml(c.engine || "")})">CANARY</span>`;
 }
 
-function renderTeamRatingShadow() {
-  const node = getById("team-rating-shadow-body");
+// R6.3: a deferred diagnostic panel shows a lightweight skeleton while its
+// (lazy) payload is still loading, instead of an empty/"sin datos" state.
+function _diagBody(id, renderFn, data) {
+  const node = getById(id);
   if (!node) return;
-  node.innerHTML = renderTeamRatingShadowPanel(state.teamRatingShadow);
+  if (state.diagnosticsLoading && !data) {
+    node.innerHTML = `<div class="panel-skeleton"><div class="skeleton-block"></div><div class="skeleton-block short"></div></div>`;
+    return;
+  }
+  node.innerHTML = renderFn(data);
+}
+
+function renderTeamRatingShadow() {
+  _diagBody("team-rating-shadow-body", renderTeamRatingShadowPanel, state.teamRatingShadow);
 }
 
 function renderTeamRatingCanary() {
-  const node = getById("team-rating-canary-body");
-  if (!node) return;
-  node.innerHTML = renderTeamRatingCanaryPanel(state.teamRatingCanary);
+  _diagBody("team-rating-canary-body", renderTeamRatingCanaryPanel, state.teamRatingCanary);
 }
 
 function renderTicketCanaryDryRun() {
-  const node = getById("ticket-canary-dry-run-body");
-  if (!node) return;
-  node.innerHTML = renderTicketCanaryDryRunPanel(state.ticketCanaryDryRun);
+  _diagBody("ticket-canary-dry-run-body", renderTicketCanaryDryRunPanel, state.ticketCanaryDryRun);
 }
 
 function renderMoneyMode() {
-  const node = getById("money-mode-body");
-  if (!node) return;
-  node.innerHTML = renderMoneyModePanel(state.moneyMode);
+  _diagBody("money-mode-body", renderMoneyModePanel, state.moneyMode);
 }
 
 function renderOperationalMoneyModeStatus() {
-  const node = getById("operational-money-mode-status-body");
-  if (!node) return;
-  node.innerHTML = renderOperationalMoneyModeStatusPanel(state.moneyModeOpsStatus);
+  _diagBody("operational-money-mode-status-body", renderOperationalMoneyModeStatusPanel, state.moneyModeOpsStatus);
+}
+
+function renderExternalResults() {
+  _diagBody("external-results-body", renderExternalResultsPanel, state.externalResults);
 }
 
 function renderTeamRatingDryRun() {
-  const node = getById("team-rating-dry-run-body");
-  if (!node) return;
-  node.innerHTML = renderTeamRatingActivationDryRunPanel(state.teamRatingDryRun);
+  _diagBody("team-rating-dry-run-body", renderTeamRatingActivationDryRunPanel, state.teamRatingDryRun);
 }
 
 function renderTeamRatingReadiness() {
-  const node = getById("team-rating-readiness-body");
-  if (!node) return;
-  node.innerHTML = renderTeamRatingActivationReadinessPanel(state.teamRatingReadiness);
+  _diagBody("team-rating-readiness-body", renderTeamRatingActivationReadinessPanel, state.teamRatingReadiness);
+}
+
+// Render only the deferred Diagnóstico panels (used when their lazy payload
+// arrives), without re-rendering the whole prediction board.
+function renderDiagnosticsPanels() {
+  renderOperationalMoneyModeStatus();
+  renderMoneyMode();
+  renderTicketCanaryDryRun();
+  renderExternalResults();
+  renderTeamRatingShadow();
+  renderTeamRatingDryRun();
+  renderTeamRatingReadiness();
+  renderTeamRatingCanary();
 }
 
 function renderBoard() {
@@ -1475,13 +1496,7 @@ function renderBoard() {
   const qualityFilterNode = getById("quality-filter");
   const activeSlate = currentSlate();
   renderProductionStatus();
-  renderTeamRatingShadow();
-  renderTeamRatingDryRun();
-  renderTeamRatingReadiness();
-  renderTeamRatingCanary();
-  renderTicketCanaryDryRun();
-  renderMoneyMode();
-  renderOperationalMoneyModeStatus();
+  renderDiagnosticsPanels();
   if (qualityFilterNode) qualityFilterNode.innerHTML = renderQualityFilterOptions();
 
   if (!state.authenticated) {
@@ -1663,6 +1678,9 @@ async function _handleDelegatedClick(event) {
         state.isLoading = false;
         renderSidebar();
         renderBoard();
+        // If the operator is on Diagnóstico, refresh its panels for the new
+        // slate (deferred + cached); otherwise they load when the tab opens.
+        if (_isDiagnosticoActive()) loadSlateDiagnostics(slateId);
       }
     }
     return;
@@ -1760,6 +1778,16 @@ function activateView(view) {
     node.hidden = node.dataset.view !== view;
   });
   if (view === "aprendizaje") loadLearningSummary();
+  // R6.3: the heavy Diagnóstico panels load only when this tab is opened, and
+  // only if not already loaded for the active slate (cache makes re-open free).
+  if (view === "diagnostico" && state.activeSlateId && state.diagnosticsSlateId !== state.activeSlateId) {
+    loadSlateDiagnostics(state.activeSlateId);
+  }
+}
+
+function _isDiagnosticoActive() {
+  const node = document.querySelector('.view[data-view="diagnostico"]');
+  return Boolean(node) && !node.hidden;
 }
 
 function setupMainTabs() {
@@ -1933,15 +1961,20 @@ function renderLoadingRows() {
 }
 
 async function loadSlateDetails(slateId) {
+  // R6.3 performance: the prediction board only awaits the CORE fetches it needs
+  // to render (predictions, features, ticket, quality + the three batch context
+  // maps). The heavy diagnostics (Money Mode, ticket canary dry-run, the four
+  // team-rating panels, external results) are deferred to loadSlateDiagnostics
+  // so they never block first paint of the board.
+  //
   // Stale-response guard: every switch bumps the sequence; if a newer switch
   // started while these fetches were in flight, we drop this (older) result so
   // a late response can never clobber the slate the user is now viewing.
   const seq = ++slateRequestSeq;
-  // Seven parallel fetches replace ~50 sequential round-trips. The three
-  // batch endpoints (`/evidence/slates`, `/availability/slates`,
-  // `/results/slates/{id}/context`) each return a {match_id: [...]}
-  // mapping so the per-match loop below is a dict lookup, not a fetch.
-  const [predictions, features, ticketPlan, quality, evidenceBySlate, availabilityBySlate, resultsBySlate, teamRatingShadow, teamRatingDryRun, teamRatingReadiness, teamRatingCanary, ticketCanaryDryRun, moneyMode] = await Promise.all([
+  // Switching slate resets the deferred-diagnostic state so panels show a
+  // skeleton, not the previous slate's data. The cache makes a re-open instant.
+  state.diagnosticsSlateId = null;
+  const [predictions, features, ticketPlan, quality, evidenceBySlate, availabilityBySlate, resultsBySlate] = await Promise.all([
     safeFetch(`/predictions/slates/${slateId}`),
     safeFetch(`/predictions/slates/${slateId}/features`),
     safeFetch(`/predictions/slates/${slateId}/ticket`, {optional: true}),
@@ -1949,29 +1982,9 @@ async function loadSlateDetails(slateId) {
     safeFetch(`/evidence/slates/${slateId}`, {optional: true}),
     safeFetch(`/availability/slates/${slateId}`, {optional: true}),
     safeFetch(`/results/slates/${slateId}/context`, {optional: true}),
-    // R5.4: read-only shadow diagnostic. Optional so a failure never blocks
-    // the prediction board.
-    safeFetch(`/predictions/slates/${slateId}/team-rating-shadow`, {optional: true}),
-    // R5.5: read-only activation dry-run diagnostic. Optional for the same
-    // reason — never blocks the prediction board.
-    safeFetch(`/predictions/slates/${slateId}/team-rating-activation-dry-run`, {optional: true}),
-    // R5.6-A: read-only activation readiness diagnostic. Optional too.
-    safeFetch(`/predictions/slates/${slateId}/team-rating-activation-readiness`, {optional: true}),
-    // R5.6-B: read-only controlled-canary status. Optional too.
-    safeFetch(`/predictions/slates/${slateId}/team-rating-canary-status`, {optional: true}),
-    // R5.7: read-only ticket canary dry-run (current vs canary ticket). Optional.
-    safeFetch(`/predictions/slates/${slateId}/ticket-canary-dry-run`, {optional: true}),
-    // R6.0: read-only Money Mode RC (play/don't-play + 3 tickets). Optional.
-    safeFetch(`/predictions/slates/${slateId}/money-mode`, {optional: true}),
   ]);
   // A newer slate switch superseded this request — discard the stale payload.
   if (seq !== slateRequestSeq) return;
-  state.teamRatingShadow = (teamRatingShadow && !Array.isArray(teamRatingShadow)) ? teamRatingShadow : null;
-  state.teamRatingDryRun = (teamRatingDryRun && !Array.isArray(teamRatingDryRun)) ? teamRatingDryRun : null;
-  state.teamRatingReadiness = (teamRatingReadiness && !Array.isArray(teamRatingReadiness)) ? teamRatingReadiness : null;
-  state.teamRatingCanary = (teamRatingCanary && !Array.isArray(teamRatingCanary)) ? teamRatingCanary : null;
-  state.ticketCanaryDryRun = (ticketCanaryDryRun && !Array.isArray(ticketCanaryDryRun)) ? ticketCanaryDryRun : null;
-  state.moneyMode = (moneyMode && !Array.isArray(moneyMode)) ? moneyMode : null;
   if (!Array.isArray(predictions) || !Array.isArray(features)) {
     state.matches = [];
     state.ticketPlan = null;
@@ -2017,6 +2030,56 @@ async function loadSlateDetails(slateId) {
   state.manualSelections = {};
 }
 
+let diagnosticsRequestSeq = 0;
+
+function _applyDiagnostics(payload) {
+  const [shadow, dryRun, readiness, canary, ticketCanaryDryRun, moneyMode, opsStatus, externalResults] = payload;
+  state.teamRatingShadow = (shadow && !Array.isArray(shadow)) ? shadow : null;
+  state.teamRatingDryRun = (dryRun && !Array.isArray(dryRun)) ? dryRun : null;
+  state.teamRatingReadiness = (readiness && !Array.isArray(readiness)) ? readiness : null;
+  state.teamRatingCanary = (canary && !Array.isArray(canary)) ? canary : null;
+  state.ticketCanaryDryRun = (ticketCanaryDryRun && !Array.isArray(ticketCanaryDryRun)) ? ticketCanaryDryRun : null;
+  state.moneyMode = (moneyMode && !Array.isArray(moneyMode)) ? moneyMode : null;
+  state.moneyModeOpsStatus = (opsStatus && !Array.isArray(opsStatus)) ? opsStatus : null;
+  state.externalResults = (externalResults && !Array.isArray(externalResults)) ? externalResults : null;
+}
+
+// R6.3: deferred, cached, cancellable load of the heavy Diagnóstico panels.
+// Never blocks the prediction board — invoked when the Diagnóstico tab is opened
+// (or right after a slate's core load if that tab is already active).
+async function loadSlateDiagnostics(slateId) {
+  if (!slateId || !state.authenticated) return;
+  const cached = getCachedDiagnostics(slateId);
+  if (cached) {
+    state.diagnosticsSlateId = slateId;
+    state.diagnosticsLoading = false;
+    _applyDiagnostics(cached);
+    renderDiagnosticsPanels();
+    return;
+  }
+  const seq = ++diagnosticsRequestSeq;
+  state.diagnosticsLoading = true;
+  state.diagnosticsSlateId = null;
+  renderDiagnosticsPanels(); // immediate skeleton
+  const payload = await Promise.all([
+    safeFetch(`/predictions/slates/${slateId}/team-rating-shadow`, {optional: true}),
+    safeFetch(`/predictions/slates/${slateId}/team-rating-activation-dry-run`, {optional: true}),
+    safeFetch(`/predictions/slates/${slateId}/team-rating-activation-readiness`, {optional: true}),
+    safeFetch(`/predictions/slates/${slateId}/team-rating-canary-status`, {optional: true}),
+    safeFetch(`/predictions/slates/${slateId}/ticket-canary-dry-run`, {optional: true}),
+    safeFetch(`/predictions/slates/${slateId}/money-mode`, {optional: true}),
+    safeFetch(`/operations/money-mode/status`, {optional: true}),
+    safeFetch(`/results/slates/${slateId}/provider-dry-run`, {optional: true}),
+  ]);
+  // A newer slate switch / diagnostics load superseded this one — drop it.
+  if (seq !== diagnosticsRequestSeq) return;
+  setCachedDiagnostics(slateId, payload);
+  state.diagnosticsSlateId = slateId;
+  state.diagnosticsLoading = false;
+  _applyDiagnostics(payload);
+  renderDiagnosticsPanels();
+}
+
 async function boot() {
   state.isLoading = true;
   updateAuthControls();
@@ -2045,7 +2108,7 @@ async function boot() {
     return;
   }
 
-  const [slates, providers, worker, opsStatus] = await Promise.all([
+  const [slates, providers, worker] = await Promise.all([
     // Main sidebar shows only active/upcoming concursos. Archived jornadas are
     // intentionally excluded here (they are reachable via the explicit
     // include_closed=true history/diagnostic query, not mixed into the main
@@ -2053,15 +2116,11 @@ async function boot() {
     safeFetch("/slates"),
     safeFetch("/sources/providers"),
     safeFetch("/worker/scheduler/status", {optional: true}),
-    // R6.1: read-only operational Money Mode status across all active/upcoming
-    // slates (play/don't-play summary). Optional so a failure never blocks boot.
-    safeFetch("/operations/money-mode/status", {optional: true}),
   ]);
 
   state.slates = Array.isArray(slates) ? slates : [];
   state.providers = Array.isArray(providers) ? providers : [];
   state.worker = worker && !Array.isArray(worker) ? worker : null;
-  state.moneyModeOpsStatus = (opsStatus && !Array.isArray(opsStatus)) ? opsStatus : null;
   const workerButton = getById("run-worker");
   if (workerButton) {
     workerButton.disabled = !state.worker;

@@ -26,3 +26,19 @@ async def get_money_mode_operational_status(
 
     with read_only_transaction(session):
         return build_operational_status(session)
+
+
+@router.get("/dashboard-fast")
+async def get_dashboard_fast(
+    session: Session = Depends(get_db_session),
+) -> dict:
+    """R6.3 lightweight active-slate summary for fast first paint.
+
+    Returns the active/upcoming slates + a default selection + cheap validation
+    statuses WITHOUT computing Money Mode. Strictly read-only.
+    """
+    from app.db.session import read_only_transaction
+    from app.services.money_mode_operations_service import build_dashboard_fast
+
+    with read_only_transaction(session):
+        return build_dashboard_fast(session)

@@ -2888,3 +2888,12 @@ span.badge-canary {
 .mm-technical { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 8px; }
 .mm-technical > summary { cursor: pointer; font-weight: 700; padding: 4px 0; }
 .mm-tech-table { width: 100%; margin: 8px 0; font-size: 0.85rem; }
+
+/* R6.3 — deferred panel skeleton + external results panel */
+.panel-skeleton { padding: 8px 0; }
+.panel-skeleton .skeleton-block { height: 14px; border-radius: 6px; background: linear-gradient(90deg, rgba(255,255,255,0.04), rgba(255,255,255,0.10), rgba(255,255,255,0.04)); background-size: 200% 100%; animation: skeleton-shimmer 1.2s ease-in-out infinite; margin: 6px 0; }
+.panel-skeleton .skeleton-block.short { width: 55%; }
+@keyframes skeleton-shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+.ext-results-head { display: flex; align-items: center; gap: 10px; margin: 4px 0 8px; }
+.ext-results-provider { font-weight: 800; font-size: 1.05rem; }
+.ext-results-table { width: 100%; margin-top: 8px; }
