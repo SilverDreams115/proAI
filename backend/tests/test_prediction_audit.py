@@ -44,6 +44,7 @@ def _seed_slate(session) -> str:
     slate = ProgolSlateModel(
         label="Test", draw_code="PG-TEST", week_type="weekend",
         registration_closes_at=kickoff - timedelta(hours=6), is_archived=False,
+        composition_hash="hash-pgtest", slate_version=1,
     )
     session.add(slate)
     session.flush()

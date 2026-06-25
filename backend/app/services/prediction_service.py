@@ -543,6 +543,24 @@ class PredictionService:
         # instead of crashing — the audit is non-essential here.
         if not hasattr(session, "add") or not hasattr(session, "flush"):
             return
+
+        # R7.6 — lineage contract. A persisted slate prediction must be fully
+        # traceable; refuse to write a "blind" row (missing slate_id /
+        # composition_hash / slate_version / sanity_audit vectors). This guard
+        # runs OUTSIDE the best-effort try/except below so a lineage violation
+        # surfaces loudly instead of being swallowed as a transient audit error.
+        # Historical blind rows are never touched.
+        from app.domain.prediction_lineage import assert_prediction_lineage_complete
+
+        assert_prediction_lineage_complete(
+            match_id=match_id,
+            slate_id=slate_id,
+            composition_hash=composition_hash,
+            slate_version=slate_version,
+            recommended_outcome=recommended_outcome,
+            sanity_audit=sanity_audit,
+        )
+
         try:
             from app.models.tables import PredictionModel
 

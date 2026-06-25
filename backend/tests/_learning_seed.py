@@ -115,6 +115,9 @@ def seed_official_slate(
                         "final_status": "LISTO",
                         "evidence_level": "high",
                         "sanity_flags": ["INTERNATIONAL_FRIENDLY"] if friendly else [],
+                        "sanity_policy_version": "test_v1",
+                        "model_artifact_id": "test-artifact",
+                        "fallback_used": False,
                     }
                 )
             session.add(
@@ -122,6 +125,7 @@ def seed_official_slate(
                     match_id=match.id,
                     slate_id=slate.id,
                     composition_hash=slate.composition_hash,
+                    slate_version=slate.slate_version,
                     generated_at=_BASE,
                     home_probability=probs[0],
                     draw_probability=probs[1],
