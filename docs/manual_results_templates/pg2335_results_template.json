@@ -1,0 +1,91 @@
+{
+  "draw_code": "PG-2335",
+  "source": "manual_official",
+  "source_note": "Pronósticos/TuLotero - pendiente de llenar (sign + score por posición)",
+  "results": [
+    {
+      "position": 1,
+      "sign": null,
+      "score": null,
+      "source_note": "México vs Australia"
+    },
+    {
+      "position": 2,
+      "sign": null,
+      "score": null,
+      "source_note": "Paris SG vs Arsenal"
+    },
+    {
+      "position": 3,
+      "sign": null,
+      "score": null,
+      "source_note": "Toluca vs Tigres"
+    },
+    {
+      "position": 4,
+      "sign": null,
+      "score": null,
+      "source_note": "Tampico Madero vs Tepatitlán"
+    },
+    {
+      "position": 5,
+      "sign": null,
+      "score": null,
+      "source_note": "USA vs Senegal"
+    },
+    {
+      "position": 6,
+      "sign": null,
+      "score": null,
+      "source_note": "Norway vs Sweden"
+    },
+    {
+      "position": 7,
+      "sign": null,
+      "score": null,
+      "source_note": "Granada vs Sporting De Gijón"
+    },
+    {
+      "position": 8,
+      "sign": null,
+      "score": null,
+      "source_note": "Ceuta vs Albacete"
+    },
+    {
+      "position": 9,
+      "sign": null,
+      "score": null,
+      "source_note": "Gremio vs Corinthians"
+    },
+    {
+      "position": 10,
+      "sign": null,
+      "score": null,
+      "source_note": "Bragantino vs Internacional"
+    },
+    {
+      "position": 11,
+      "sign": null,
+      "score": null,
+      "source_note": "Cruzeiro vs Fluminense"
+    },
+    {
+      "position": 12,
+      "sign": null,
+      "score": null,
+      "source_note": "Avaí vs Criciuma"
+    },
+    {
+      "position": 13,
+      "sign": null,
+      "score": null,
+      "source_note": "Huachipato vs Universidad Catolica"
+    },
+    {
+      "position": 14,
+      "sign": null,
+      "score": null,
+      "source_note": "Degerfors vs Brommapojkarna"
+    }
+  ]
+}
