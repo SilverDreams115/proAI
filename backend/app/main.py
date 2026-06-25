@@ -23,6 +23,7 @@ from app.api.routes import training_neural
 from app.api.routes import auth
 from app.api.routes import operations
 from app.api.routes import tracking
+from app.api.routes import learning
 from app.api.routes.health import router as health_router
 from app.core.auth import verify_session_token
 from app.core.errors import AppError
@@ -334,6 +335,7 @@ app.include_router(live_results.router, prefix="/api")
 app.include_router(adaptive_dataset.router, prefix="/api")
 app.include_router(training_adaptive.router, prefix="/api")
 app.include_router(training_neural.router, prefix="/api")
+app.include_router(learning.router, prefix="/api")
 if settings.enable_worker_routes:
     app.include_router(worker.router, prefix="/api")
 

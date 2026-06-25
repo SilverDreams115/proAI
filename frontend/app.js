@@ -43,6 +43,7 @@ import { renderOperationalMoneyModeStatusPanel } from "./operational-money-mode-
 import { renderExternalResultsPanel } from "./external-results.js";
 import { renderSlateOptionsPanel } from "./slate-options.js";
 import { renderTrackingResultsValidationPanel } from "./tracking-results-validation.js";
+import { renderLearningDashboard } from "./learning-dashboard.js";
 import {
   getCachedDiagnostics,
   setCachedDiagnostics,
@@ -1789,7 +1790,10 @@ function activateView(view) {
   document.querySelectorAll(".view").forEach((node) => {
     node.hidden = node.dataset.view !== view;
   });
-  if (view === "aprendizaje") loadLearningSummary();
+  if (view === "aprendizaje") {
+    loadLearningDashboard();
+    loadLearningSummary();
+  }
   // R6.3: the heavy Diagnóstico panels load only when this tab is opened, and
   // only if not already loaded for the active slate (cache makes re-open free).
   if (view === "diagnostico" && state.activeSlateId && state.diagnosticsSlateId !== state.activeSlateId) {
@@ -1806,6 +1810,24 @@ function setupMainTabs() {
   document.querySelectorAll(".main-tab").forEach((tab) => {
     tab.addEventListener("click", () => activateView(tab.dataset.view));
   });
+}
+
+let learningDashboardLoaded = false;
+async function loadLearningDashboard() {
+  if (learningDashboardLoaded) return;
+  learningDashboardLoaded = true;
+  const body = getById("learning-dashboard-body");
+  if (!body) return;
+  try {
+    const [inventory, readiness] = await Promise.all([
+      safeFetch("/learning/completed-slates/inventory", { optional: true }),
+      safeFetch("/learning/dataset-readiness", { optional: true }),
+    ]);
+    if (!inventory) return; // keep the honest "cargando…" placeholder on any non-OK response
+    body.innerHTML = renderLearningDashboard(inventory, readiness || null);
+  } catch (_err) {
+    // Leave the placeholder; the learning dashboard is best-effort and read-only.
+  }
 }
 
 let learningSummaryLoaded = false;

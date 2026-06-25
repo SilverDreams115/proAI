@@ -90,3 +90,84 @@ def test_validation_compares_hits_when_results_present(db):  # noqa: F811
     # local-only coverage still needs provider confirmation to be apply-ready.
     assert report["ready_to_apply"] is False
     assert all(m["status"] in ("resolved", "conflict") for m in report["matches"])
+
+
+# --- R7.0: manual official results (load / validate / guarded apply) ---------
+import json  # noqa: E402
+
+from app.services.completed_slate_manual_results import (  # noqa: E402
+    apply_manual_results,
+    evaluate_manual_apply,
+    load_manual_results,
+)
+from backend.tests._learning_seed import (  # noqa: E402, F401
+    learn_db,
+    manual_payload,
+    seed_official_slate,
+)
+
+
+def _drawslate(session, draw):
+    return session.query(ProgolSlateModel).filter_by(draw_code=draw).one()
+
+
+def test_manual_dryrun_writes_nothing(learn_db):  # noqa: F811
+    """3 — evaluating a manual file is read-only (no match_results written)."""
+    from app.db import session as db_mod
+
+    seed_official_slate(learn_db, draw="PG-MAN", n=4, with_results=False)
+    manual = load_manual_results(manual_payload("PG-MAN", 4, complete=True))
+    before = _result_count(db_mod.SessionLocal)
+    report = evaluate_manual_apply(learn_db, _drawslate(learn_db, "PG-MAN"), manual)
+    after = _result_count(db_mod.SessionLocal)
+    assert after == before
+    assert report["write_safety"]["writes_performed"] is False
+
+
+def test_manual_incomplete_blocks_apply(learn_db):  # noqa: F811
+    """4 — an incomplete manual file is not ready_to_apply."""
+    seed_official_slate(learn_db, draw="PG-MAN2", n=4, with_results=False)
+    manual = load_manual_results(manual_payload("PG-MAN2", 4, complete=False))
+    report = evaluate_manual_apply(learn_db, _drawslate(learn_db, "PG-MAN2"), manual)
+    assert report["ready_to_apply"] is False
+    assert "incomplete_positions" in report["blockers"]
+
+
+def test_manual_complete_is_ready_to_apply(learn_db):  # noqa: F811
+    """5 — a complete, conflict-free, high-confidence file is ready_to_apply."""
+    seed_official_slate(learn_db, draw="PG-MAN3", n=4, with_results=False)
+    manual = load_manual_results(manual_payload("PG-MAN3", 4, complete=True))
+    report = evaluate_manual_apply(learn_db, _drawslate(learn_db, "PG-MAN3"), manual)
+    assert report["ready_to_apply"] is True
+    assert report["blockers"] == []
+
+
+def test_manual_apply_requires_confirmation_token(learn_db, tmp_path):  # noqa: F811
+    """6 — the apply CLI refuses without the exact confirmation token."""
+    from app.db import session as db_mod
+    from scripts.validate_completed_slate_results import main
+
+    seed_official_slate(learn_db, draw="PG-MAN4", n=4, with_results=False)
+    path = tmp_path / "m.json"
+    path.write_text(json.dumps(manual_payload("PG-MAN4", 4, complete=True)), encoding="utf-8")
+
+    before = _result_count(db_mod.SessionLocal)
+    rc = main(["--manual-file", str(path), "--apply", "--confirm", "WRONG-TOKEN"])
+    after = _result_count(db_mod.SessionLocal)
+    assert rc == 0  # falls back to a read-only dry-run
+    assert after == before  # nothing written without the exact token
+
+
+def test_manual_apply_writes_when_ready(learn_db):  # noqa: F811
+    """Guarded apply path: a ready file inserts exactly n results."""
+    from app.db import session as db_mod
+
+    seed_official_slate(learn_db, draw="PG-MAN5", n=4, with_results=False)
+    manual = load_manual_results(manual_payload("PG-MAN5", 4, complete=True))
+    before = _result_count(db_mod.SessionLocal)
+    outcome = apply_manual_results(learn_db, _drawslate(learn_db, "PG-MAN5"), manual)
+    learn_db.commit()
+    after = _result_count(db_mod.SessionLocal)
+    assert outcome["applied"] is True
+    assert outcome["inserted"] == 4
+    assert after - before == 4
