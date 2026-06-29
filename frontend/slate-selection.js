@@ -105,6 +105,39 @@ export function suspectSlateDiagnostics(visible) {
     week_type: s.week_type,
     date_status: s.date_status,
     reason: (s.reasons && s.reasons[0]) || "",
-    action: "Revisar fuente LN o aplicar override de fecha (operador)",
+    // PDF provenance + why the cierre was rejected (source of truth audit).
+    fixture_draw_code: s.extracted_fixture_draw_code || null,
+    match_count: s.match_count ?? null,
+    rejected_close_block_draw_code: s.rejected_close_block_draw_code || null,
+    rejected_close_year: s.rejected_close_year || null,
+    source_url: s.source_url || null,
+    pdf_sha256: s.pdf_sha256 || null,
+    playable: false,
+    action:
+      s.recommended_action ||
+      "Esperar PDF corregido de LN o confirmar fecha oficial con evidencia.",
   }));
+}
+
+// Human lines for the "detected but not playable" PDF-source case, e.g. PGM-802.
+export function pdfSourceDiagnosticLines(entry) {
+  if (!entry) return [];
+  const lines = [];
+  if (entry.fixture_draw_code) {
+    lines.push(`Detectada desde PDF oficial (concurso ${entry.fixture_draw_code})`);
+  }
+  if (entry.match_count) {
+    lines.push(`Fixtures válidos (${entry.match_count} partidos)`);
+  }
+  if (entry.date_status === "source_invalid" && entry.rejected_close_block_draw_code) {
+    lines.push("Cierre de venta no válido en PDF");
+    lines.push(
+      `Bloque de cierre detectado pertenece al Concurso ${entry.rejected_close_block_draw_code}` +
+        (entry.rejected_close_year ? ` (${entry.rejected_close_year})` : ""),
+    );
+  } else if (entry.date_status === "needs_official_pdf_date") {
+    lines.push("PDF sin bloque de cierre del concurso correcto");
+  }
+  lines.push("No jugable hasta que LN publique la fecha correcta");
+  return lines;
 }

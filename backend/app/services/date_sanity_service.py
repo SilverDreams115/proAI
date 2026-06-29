@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import datetime
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -45,37 +44,45 @@ def _prev_same_type_closes_at(session: Session, slate: ProgolSlateModel):
     return best_closes
 
 
-def _proposal_meta(
-    session: Session, slate: ProgolSlateModel
-) -> tuple[str | None, "datetime | None"]:
-    """(extraction_confidence, observed_at) from the latest proposal for this
-    draw_code's trailing digits, if any."""
+def _proposal_meta(session: Session, slate: ProgolSlateModel) -> dict[str, object]:
+    """Extraction metadata from the latest PDF proposal for this draw_code:
+    extraction_confidence, observed_at, and whether the PDF carried valid
+    fixtures / a rejected (wrong-concurso) cierre block."""
     digits = str(_trailing_int(slate.draw_code) or "")
     proposal = session.scalar(
         select(ProgolSlateProposalModel)
-        .where(ProgolSlateProposalModel.draw_code == digits)
+        .where(
+            ProgolSlateProposalModel.draw_code == digits,
+            ProgolSlateProposalModel.source_name != "operator_date_override",
+        )
         .order_by(ProgolSlateProposalModel.last_seen_at.desc())
         .limit(1)
     )
     if proposal is None:
-        return None, None
-    confidence = None
+        return {}
+    meta: dict[str, object] = {"observed_at": proposal.last_seen_at}
     try:
         payload = json.loads(proposal.payload_json or "{}")
-        confidence = payload.get("extraction_confidence")
     except (ValueError, TypeError):
-        confidence = None
-    return confidence, proposal.last_seen_at
+        return meta
+    meta["extraction_confidence"] = payload.get("extraction_confidence")
+    block = payload.get("block_diagnostics") or {}
+    meta["rejected_close_block"] = bool(block.get("rejected_close_block_draw_code"))
+    fixtures = payload.get("fixtures") or []
+    meta["fixtures_present"] = bool(fixtures) or bool(payload.get("match_count"))
+    return meta
 
 
 def slate_date_status(session: Session, slate: ProgolSlateModel) -> tuple[DateStatus, list[str]]:
     kickoffs = [sm.match.kickoff_at for sm in slate.matches if sm.match is not None]
-    extraction_confidence, observed_at = _proposal_meta(session, slate)
+    meta = _proposal_meta(session, slate)
     return evaluate_slate_dates(
         registration_closes_at=slate.registration_closes_at,
         kickoffs=kickoffs,
         created_at=slate.created_at,
-        observed_at=observed_at,
+        observed_at=meta.get("observed_at"),  # type: ignore[arg-type]
         prev_same_type_closes_at=_prev_same_type_closes_at(session, slate),
-        extraction_confidence=extraction_confidence,
+        extraction_confidence=meta.get("extraction_confidence"),  # type: ignore[arg-type]
+        fixtures_present=bool(meta.get("fixtures_present")),
+        rejected_close_block=bool(meta.get("rejected_close_block")),
     )

@@ -14,6 +14,7 @@ import {
   visibleSelectionMessage,
   slateBadges,
   suspectSlateDiagnostics,
+  pdfSourceDiagnosticLines,
 } from "../slate-selection.js";
 
 const openSlate = {
@@ -151,12 +152,65 @@ describe("suspectSlateDiagnostics", () => {
     expect(diag[0].draw_code).toBe("PGM-802");
     expect(diag[0].date_status).toBe("stale_source");
     expect(diag[0].reason).toContain("anterior a la creación");
-    expect(diag[0].action).toContain("override");
+    // Recommended action favours waiting for the corrected LN PDF, never
+    // inventing a date / forcing a manual override as the normal path.
+    expect(diag[0].action).toContain("PDF");
+    expect(diag[0].playable).toBe(false);
   });
 
   it("returns [] when there are no suspect slates", () => {
     expect(suspectSlateDiagnostics({ discovery: {} })).toEqual([]);
     expect(suspectSlateDiagnostics({})).toEqual([]);
+  });
+
+  it("surfaces PDF provenance + rejected cierre block for PGM-802 (source_invalid)", () => {
+    const visible = {
+      discovery: {
+        suspect_slates: [
+          {
+            draw_code: "PGM-802",
+            week_type: "midweek",
+            date_status: "source_invalid",
+            activation_status: "blocked",
+            visible_as_open: false,
+            registration_closes_at: null,
+            reasons: ["el PDF oficial trae el bloque de cierre de OTRO concurso; no se aplica"],
+            recommended_action: "Esperar PDF corregido de LN o confirmar fecha oficial con evidencia.",
+            source_url: "https://www.loterianacional.gob.mx/.../guiamedia.pdf?v=29062026115429",
+            pdf_sha256: "fc934103",
+            extracted_fixture_draw_code: "802",
+            match_count: 9,
+            rejected_close_block_draw_code: "800",
+            rejected_close_year: "2025",
+          },
+        ],
+      },
+    };
+    const diag = suspectSlateDiagnostics(visible);
+    const e = diag[0];
+    expect(e.playable).toBe(false);
+    expect(e.fixture_draw_code).toBe("802");
+    expect(e.match_count).toBe(9);
+    expect(e.rejected_close_block_draw_code).toBe("800");
+    expect(e.action).toContain("PDF corregido");
+
+    const lines = pdfSourceDiagnosticLines(e);
+    expect(lines.join(" | ")).toContain("Detectada desde PDF oficial");
+    expect(lines.join(" | ")).toContain("Fixtures válidos (9 partidos)");
+    expect(lines.join(" | ")).toContain("pertenece al Concurso 800");
+    expect(lines.join(" | ")).toContain("No jugable");
+  });
+
+  it("needs_official_pdf_date case shows missing-block line, not a wrong concurso", () => {
+    const lines = pdfSourceDiagnosticLines({
+      draw_code: "PGM-803",
+      date_status: "needs_official_pdf_date",
+      fixture_draw_code: "803",
+      match_count: 9,
+    });
+    expect(lines.join(" | ")).toContain("sin bloque de cierre");
+    expect(lines.join(" | ")).not.toContain("Concurso 800");
+    expect(lines.join(" | ")).toContain("No jugable");
   });
 
   it("a date-suspect slate is not in open_slates (gate held it back server-side)", () => {

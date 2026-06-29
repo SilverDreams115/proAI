@@ -185,6 +185,41 @@ def _has_predictions_and_snapshot(session: Session, slate: ProgolSlateModel) -> 
     return has_pred is not None and has_snap is not None
 
 
+def _pdf_provenance(session: Session, slate: ProgolSlateModel) -> dict:
+    """PDF source provenance + rejected-cierre-block info from the latest guide
+    proposal for this slate's concurso (empty when none)."""
+    import re
+
+    m = re.search(r"(\d+)$", slate.draw_code or "")
+    digits = m.group(1) if m else slate.draw_code
+    proposal = session.scalar(
+        select(ProgolSlateProposalModel)
+        .where(
+            ProgolSlateProposalModel.draw_code == digits,
+            ProgolSlateProposalModel.source_name != "operator_date_override",
+        )
+        .order_by(ProgolSlateProposalModel.last_seen_at.desc())
+        .limit(1)
+    )
+    if proposal is None:
+        return {}
+    try:
+        payload = json.loads(proposal.payload_json or "{}")
+    except (ValueError, TypeError):
+        return {}
+    block = payload.get("block_diagnostics") or {}
+    return {
+        "source_url": payload.get("source_url") or proposal.source_url,
+        "pdf_sha256": payload.get("pdf_sha256"),
+        "content_length": payload.get("content_length"),
+        "fetched_at": payload.get("fetched_at"),
+        "extracted_fixture_draw_code": block.get("fixture_draw_code") or payload.get("draw_code"),
+        "match_count": payload.get("match_count"),
+        "rejected_close_block_draw_code": block.get("rejected_close_block_draw_code"),
+        "rejected_close_year": block.get("rejected_close_year"),
+    }
+
+
 def _discovery_info(
     session: Session, suspect_slates: list[dict] | None = None
 ) -> DiscoveryInfo:
@@ -266,24 +301,30 @@ async def visible_slates(
     recent_closed.sort(key=_closed_at, reverse=True)
     recent_closed = recent_closed[:limit_recent]
 
-    # Diagnostics: official slates held back by the date gate.
+    # Diagnostics: official slates held back by the date gate, enriched with
+    # PDF provenance so an operator sees the source bytes + the rejected block.
     suspect_slates: list[dict] = []
     for slate in official:
         status, status_reasons = slate_date_status(session, slate)
         if status != DateStatus.DATE_VALID:
-            suspect_slates.append(
-                {
-                    "draw_code": slate.draw_code,
-                    "week_type": slate.week_type,
-                    "date_status": status.value,
-                    "registration_closes_at": (
-                        slate.registration_closes_at.isoformat()
-                        if slate.registration_closes_at
-                        else None
-                    ),
-                    "reasons": status_reasons,
-                }
-            )
+            entry = {
+                "draw_code": slate.draw_code,
+                "week_type": slate.week_type,
+                "date_status": status.value,
+                "activation_status": "blocked",
+                "visible_as_open": False,
+                "registration_closes_at": (
+                    slate.registration_closes_at.isoformat()
+                    if slate.registration_closes_at
+                    else None
+                ),
+                "reasons": status_reasons,
+                "recommended_action": (
+                    "Esperar PDF corregido de LN o confirmar fecha oficial con evidencia."
+                ),
+            }
+            entry.update(_pdf_provenance(session, slate))
+            suspect_slates.append(entry)
 
     if open_slates:
         selected = open_slates[0].id

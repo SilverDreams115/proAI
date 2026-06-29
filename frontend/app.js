@@ -49,7 +49,7 @@ import {
   setCachedDiagnostics,
   clearDiagnosticsCache,
 } from "./slate-panel-cache.js";
-import { resolveActiveSelection, resolveVisibleSelection, selectedSlateCountdownMs, slateBadges } from "./slate-selection.js";
+import { resolveActiveSelection, resolveVisibleSelection, selectedSlateCountdownMs, slateBadges, suspectSlateDiagnostics, pdfSourceDiagnosticLines } from "./slate-selection.js";
 // NOTE: live-tracking is loaded via a guarded dynamic import in the
 // bootstrap (not a static import), so a failure to load/link that module
 // can never abort app.js and blank out the main selector.
@@ -73,16 +73,19 @@ function renderNoSlateState() {
   const ms = d.last_midweek_draw_code
     ? `${escapeHtml(d.last_midweek_draw_code)} (${escapeHtml(d.last_midweek_status || "—")})`
     : "—";
-  const suspect = Array.isArray(d.suspect_slates) ? d.suspect_slates : [];
-  const suspectBlock = suspect.length
-    ? `<div class="no-slate-suspect"><strong>Fecha sospechosa (retenidas por el guardado de fechas):</strong><ul>` +
-      suspect
+  const suspectDiag = suspectSlateDiagnostics({ discovery: d });
+  const suspectBlock = suspectDiag.length
+    ? `<div class="no-slate-suspect"><strong>Detectadas desde PDF oficial, no jugables (fecha inválida):</strong>` +
+      suspectDiag
         .map(
           (s) =>
-            `<li><span class="mono">${escapeHtml(s.draw_code)}</span> — ${escapeHtml(s.date_status)}: ${escapeHtml((s.reasons && s.reasons[0]) || "")}</li>`,
+            `<div class="suspect-entry" data-suspect="${escapeHtml(s.draw_code)}">` +
+            `<div class="suspect-head"><span class="mono">${escapeHtml(s.draw_code)}</span> <span class="suspect-status">${escapeHtml(s.date_status)}</span></div>` +
+            `<ul>${pdfSourceDiagnosticLines(s).map((l) => `<li>${escapeHtml(l)}</li>`).join("")}</ul>` +
+            `<p class="suspect-action">${escapeHtml(s.action)}</p></div>`,
         )
         .join("") +
-      `</ul><p>Acción: revisar la fuente LN o aplicar override de fecha (operador).</p></div>`
+      `</div>`
     : "";
   return `
     <div class="empty-state no-slate-state">

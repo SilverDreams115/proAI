@@ -12,7 +12,11 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from app.connectors.progol_guia_pdf import ms_date_candidates, parse_ms_guia_text
+from app.connectors.progol_guia_pdf import (
+    ms_block_diagnostics,
+    ms_date_candidates,
+    parse_ms_guia_text,
+)
 from app.services.date_sanity import DateStatus, evaluate_slate_dates
 
 # Guide whose FIXTURES are concurso 802 but whose CIERRE block is the stale 800
@@ -57,6 +61,43 @@ def test_date_candidates_flag_concurso_mismatch():
     assert cands[0]["matches_draw_code"] is False
     assert cands[0]["confidence"] == "low"
     assert cands[0]["year"] == "2025"
+
+
+def test_block_diagnostics_report_rejected_concurso_and_year():
+    cands = ms_date_candidates(_STALE_802, "802")
+    diag = ms_block_diagnostics(_STALE_802, "802", cands)
+    assert diag["fixture_draw_code"] == "802"
+    assert diag["accepted_close_block"] is False
+    assert diag["rejected_close_block_draw_code"] == "800"
+    assert diag["rejected_close_year"] == "2025"
+    assert "concurso 800" in diag["reason"]
+
+
+def test_year_is_not_forced_to_current():
+    # The stale block prints 2025; the parser must not silently use 2026. Since
+    # the block is concurso 800 it is rejected entirely, but the candidate dump
+    # preserves the printed 2025 so the staleness is visible.
+    cands = ms_date_candidates(_STALE_802, "802")
+    assert cands[0]["year"] == "2025"
+
+
+def test_gate_source_invalid_when_wrong_concurso_block():
+    # Fixtures present, no date, and a rejected (other-concurso) cierre block.
+    status, reasons = evaluate_slate_dates(
+        registration_closes_at=None,
+        fixtures_present=True,
+        rejected_close_block=True,
+    )
+    assert status == DateStatus.SOURCE_INVALID
+
+
+def test_gate_needs_official_pdf_date_when_fixtures_but_no_block():
+    status, _ = evaluate_slate_dates(
+        registration_closes_at=None,
+        fixtures_present=True,
+        rejected_close_block=False,
+    )
+    assert status == DateStatus.NEEDS_OFFICIAL_PDF_DATE
 
 
 # --- Date Sanity Gate ------------------------------------------------------

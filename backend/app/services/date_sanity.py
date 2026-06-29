@@ -18,6 +18,10 @@ class DateStatus(str, Enum):
     DATE_VALID = "date_valid"
     DATE_SUSPECT = "date_suspect"
     STALE_SOURCE = "stale_source"
+    # PDF has valid fixtures for this concurso but NO valid cierre for it.
+    NEEDS_OFFICIAL_PDF_DATE = "needs_official_pdf_date"
+    # PDF's only cierre block belongs to a DIFFERENT concurso (wrong source).
+    SOURCE_INVALID = "source_invalid"
     PARSE_ERROR = "parse_error"
     NEEDS_OPERATOR_CONFIRMATION = "needs_operator_confirmation"
 
@@ -46,12 +50,17 @@ def evaluate_slate_dates(
     observed_at: datetime | None = None,
     prev_same_type_closes_at: datetime | None = None,
     extraction_confidence: str | None = None,
+    fixtures_present: bool = False,
+    rejected_close_block: bool = False,
 ) -> tuple[DateStatus, list[str]]:
     """Return (status, reasons). Never raises; missing inputs degrade safely.
 
-    Order matters: a missing date is needs_operator_confirmation; an explicitly
-    low-confidence extraction or an impossible-vs-creation date is stale_source;
-    a non-monotonic or kickoff-before-cierre date is date_suspect.
+    Order matters: a missing date with a wrong-concurso cierre block in the PDF
+    is source_invalid; a missing date with valid fixtures is
+    needs_official_pdf_date; a missing date with nothing is
+    needs_operator_confirmation; an explicitly low-confidence extraction or an
+    impossible-vs-creation date is stale_source; a non-monotonic date is
+    date_suspect.
     """
     reasons: list[str] = []
     closes = _aware(registration_closes_at)
@@ -61,6 +70,16 @@ def evaluate_slate_dates(
     kicks = [k for k in (_aware(x) for x in (kickoffs or [])) if k is not None]
 
     if closes is None:
+        if rejected_close_block:
+            reasons.append(
+                "el PDF oficial trae el bloque de cierre de OTRO concurso; no se aplica"
+            )
+            return DateStatus.SOURCE_INVALID, reasons
+        if fixtures_present:
+            reasons.append(
+                "fixtures válidos del PDF pero sin bloque de cierre del concurso correcto"
+            )
+            return DateStatus.NEEDS_OFFICIAL_PDF_DATE, reasons
         reasons.append("no se extrajo una fecha de cierre confiable del guía")
         return DateStatus.NEEDS_OPERATOR_CONFIRMATION, reasons
 
