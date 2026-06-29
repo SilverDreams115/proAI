@@ -33,6 +33,9 @@ class LiveMatchResult(BaseModel):
     home_probability: float | None = None
     draw_probability: float | None = None
     away_probability: float | None = None
+    # Raw model output (pre-guardrail). Surfaced for transparency only —
+    # the *_probability fields above are the calibrated/visible vector.
+    raw_probabilities: dict[str, float] | None = None
     home_goals: int | None = None
     away_goals: int | None = None
     result_code: str | None = None

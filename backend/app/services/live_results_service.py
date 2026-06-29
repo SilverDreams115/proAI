@@ -28,6 +28,10 @@ from app.domain.entities import MatchResultStatus
 from app.models.tables import ProgolSlateModel
 from app.services.jornada_scoring_service import JornadaScoringService
 from app.services.live_result_service import LiveResultService, NormalizedMatchResult
+from app.services.prediction_probabilities import (
+    raw_probabilities,
+    visible_probabilities,
+)
 from app.services.ticket_recommendation_service import TicketRecommendationService
 
 _LIVE_THRESHOLD = TicketRecommendationService.LIVE_DRAW_THRESHOLD
@@ -40,6 +44,9 @@ class _MatchEval:
     result: NormalizedMatchResult | None
     pred: Any
     p_draw: float | None
+    # Visible/decision (home, draw, away) vector used for Brier — kept on
+    # the eval so build_live_score scores the same numbers the UI shows.
+    visible: tuple[float, float, float] | None = None
 
 
 class LiveResultsService:
@@ -102,12 +109,12 @@ class LiveResultsService:
                     picks = (modes.get(mode) or {}).get("picks") or []
                     if code is not None and code in picks:
                         hits[mode] += 1
-                if e.pred is not None and code is not None:
+                if e.visible is not None and code is not None:
                     brier_scores.append(
                         self._scorer._brier_score(
-                            e.pred.home_probability,
-                            e.pred.draw_probability,
-                            e.pred.away_probability,
+                            e.visible[0],
+                            e.visible[1],
+                            e.visible[2],
                             code,
                         )
                     )
@@ -280,7 +287,12 @@ class LiveResultsService:
                 if last_updated is None or result.source_updated_at > last_updated:
                     last_updated = result.source_updated_at
 
-            p_draw = pred.draw_probability if pred is not None else None
+            # Score + display the calibrated/visible (decision) vector; for
+            # legacy closed rows this reads the capped vector from the audit
+            # rather than the raw model output stored in the columns.
+            visible = visible_probabilities(pred) if pred is not None else None
+            raw_vec = raw_probabilities(pred) if pred is not None else None
+            p_draw = visible[1] if visible is not None else None
             code = result.result_code if result is not None else None
             modes_detail, covered = self._ticket_modes(t_picks, code)
 
@@ -289,7 +301,9 @@ class LiveResultsService:
                 prediction_hit = pred.recommended_outcome == code
 
             draw_was_real = (code == "X") if code is not None else None
-            draw_risk = self._draw_risk(pred, covered) if pred is not None else None
+            draw_risk = (
+                self._draw_risk(visible, covered) if visible is not None else None
+            )
 
             status = result.status if result is not None else MatchResultStatus.SCHEDULED
             evals.append(
@@ -303,9 +317,16 @@ class LiveResultsService:
                         "kickoff_at": match.kickoff_at,
                         "predicted_outcome": pred.recommended_outcome if pred else None,
                         "confidence_band": pred.confidence_band if pred else None,
-                        "home_probability": pred.home_probability if pred else None,
-                        "draw_probability": pred.draw_probability if pred else None,
-                        "away_probability": pred.away_probability if pred else None,
+                        # Visible/decision vector (scored + displayed).
+                        "home_probability": visible[0] if visible else None,
+                        "draw_probability": visible[1] if visible else None,
+                        "away_probability": visible[2] if visible else None,
+                        # Raw model output, surfaced for transparency only.
+                        "raw_probabilities": (
+                            {"L": raw_vec[0], "E": raw_vec[1], "V": raw_vec[2]}
+                            if raw_vec is not None
+                            else None
+                        ),
                         "home_goals": result.home_goals if result else None,
                         "away_goals": result.away_goals if result else None,
                         "result_code": code,
@@ -328,6 +349,7 @@ class LiveResultsService:
                     result=result,
                     pred=pred,
                     p_draw=p_draw,
+                    visible=visible,
                 )
             )
         return evals, last_updated
@@ -351,11 +373,11 @@ class LiveResultsService:
         return modes, covered
 
     @staticmethod
-    def _draw_risk(pred: Any, covered: dict[str, bool]) -> dict[str, Any]:
-        p_draw = float(pred.draw_probability)
-        draw_rank = 1 + sum(
-            1 for p in (pred.home_probability, pred.away_probability) if p > p_draw
-        )
+    def _draw_risk(
+        visible: tuple[float, float, float], covered: dict[str, bool]
+    ) -> dict[str, Any]:
+        p_home, p_draw, p_away = visible
+        draw_rank = 1 + sum(1 for p in (p_home, p_away) if p > p_draw)
         return {
             "p_draw": round(p_draw, 4),
             "draw_rank": draw_rank,

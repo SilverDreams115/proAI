@@ -29,6 +29,16 @@ from app.services.live_result_service import LiveResultService
 # final, so the canonical result resolves to the official marcador.
 RESULTS_SOURCE_NAME = "LN Progol Resultados"
 RESULTS_SOURCE_PRIORITY = 40
+RESULTS_SOURCE_KIND = "progol_resultados"
+RESULTS_SOURCE_BASE_URL = "https://www.loterianacional.gob.mx/Progol/Resultados"
+
+# Operator-provided results (e.g. a marcador the operator typed in from a
+# screenshot) are real and traceable, but deliberately rank BELOW the LN
+# official acta: a later LN ingest at priority 40 outranks them, and a
+# disagreement surfaces as a conflict (CanonicalResultRepository) rather
+# than silently overwriting. Still well above "nothing" so they score now.
+OPERATOR_SOURCE_PRIORITY = 60
+OPERATOR_SOURCE_KIND = "operator_manual"
 
 
 class ResultsIngestionService:
@@ -36,24 +46,31 @@ class ResultsIngestionService:
         self.session = session
         self.live = LiveResultService(session)
 
-    def ensure_source(self, base_url: str | None = None) -> SourceModel:
+    def ensure_source(
+        self,
+        base_url: str | None = None,
+        *,
+        name: str = RESULTS_SOURCE_NAME,
+        kind: str = RESULTS_SOURCE_KIND,
+        priority: int = RESULTS_SOURCE_PRIORITY,
+    ) -> SourceModel:
         repo = SourceRepository(self.session)
-        existing = repo.get_by_name(RESULTS_SOURCE_NAME)
+        existing = repo.get_by_name(name)
         if existing is not None:
             if base_url:
                 existing.base_url = base_url
-            existing.result_source_priority = RESULTS_SOURCE_PRIORITY
+            existing.result_source_priority = priority
             existing.is_active = True
             self.session.add(existing)
             self.session.flush()
             return existing
         source = SourceModel(
-            name=RESULTS_SOURCE_NAME,
-            base_url=base_url or "https://www.loterianacional.gob.mx/Progol/Resultados",
-            kind="progol_resultados",
+            name=name,
+            base_url=base_url or RESULTS_SOURCE_BASE_URL,
+            kind=kind,
             parser_profile="generic",
             is_active=True,
-            result_source_priority=RESULTS_SOURCE_PRIORITY,
+            result_source_priority=priority,
         )
         self.session.add(source)
         self.session.flush()
@@ -66,6 +83,9 @@ class ResultsIngestionService:
         *,
         source_url: str | None = None,
         observed_at: datetime | None = None,
+        source_name: str = RESULTS_SOURCE_NAME,
+        source_kind: str = RESULTS_SOURCE_KIND,
+        source_priority: int = RESULTS_SOURCE_PRIORITY,
     ) -> dict[str, Any]:
         observed_at = observed_at or datetime.now(timezone.utc)
         draw_code, rows = parse_progol_resultados_text(text)
@@ -81,7 +101,9 @@ class ResultsIngestionService:
                 "recorded": 0,
             }
 
-        source = self.ensure_source(source_url)
+        source = self.ensure_source(
+            source_url, name=source_name, kind=source_kind, priority=source_priority
+        )
         pos_map = {sm.position: sm for sm in slate.matches}
 
         recorded = 0
