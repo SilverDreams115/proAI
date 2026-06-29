@@ -12,6 +12,8 @@ from app.models.tables import ProgolSlateModel
 from app.repositories.feature_repository import FeatureRepository
 from app.repositories.evidence_dedupe import dedupe_evidence_items
 from app.repositories.result_repository import ResultRepository
+from app.services.draw_calibration import DrawPrior, calibrate_draw, compute_draw_priors
+from app.services.draw_calibration_service import build_draw_priors, prior_for_week_type
 from app.services.feature_service import FeatureService
 from app.services.model_training_service import ModelTrainingService
 from app.services.sanity_service import (
@@ -108,6 +110,25 @@ class PredictionService:
             confidence_band="low",
         )
 
+    def _draw_priors(self) -> dict[str, DrawPrior]:
+        """Conservative draw priors from official comparable results.
+
+        Falls back to the documented prior-only dict when no usable session is
+        available (e.g. a stubbed training service in unit tests), so scoring
+        never breaks on prior computation.
+        """
+        session = getattr(
+            getattr(getattr(self, "training_service", None), "training_repository", None),
+            "session",
+            None,
+        )
+        if session is None or not hasattr(session, "scalar"):
+            return compute_draw_priors([])
+        try:
+            return build_draw_priors(session)
+        except Exception:  # pragma: no cover - never block scoring on priors
+            return compute_draw_priors([])
+
     def build_slate_predictions(
         self, slate: ProgolSlateModel, *, persist_audit: bool = True
     ) -> list[MatchPredictionResponse]:
@@ -143,6 +164,11 @@ class PredictionService:
                 # Coerce to a plain str so the audit JSON stays serializable
                 # even when a test stubs the training service with a Mock.
                 model_artifact_id = candidate if isinstance(candidate, str) else None
+
+        # Conservative draw priors (from official comparable results only),
+        # computed once per slate build. Falls back to the documented prior
+        # when no usable session is available (e.g. a stubbed test service).
+        draw_priors = self._draw_priors()
 
         for slate_match in sorted(slate.matches, key=lambda item: item.position):
             match: MatchModel = slate_match.match
@@ -270,6 +296,31 @@ class PredictionService:
             decision_home = sanity.final_probabilities["home"]
             decision_draw = sanity.final_probabilities["draw"]
             decision_away = sanity.final_probabilities["away"]
+
+            # --- Conservative draw (X) calibration -------------------------
+            # Nudges the DECISION-vector draw probability toward a conservative
+            # prior ONLY on uncertain, low-evidence matches where p_draw was
+            # squashed below the prior. Raw is untouched; the pre-calibration
+            # decision vector is preserved. Never makes X the pick. The result
+            # feeds both the UI and the ticket optimizer (decision_vector).
+            draw_cal = calibrate_draw(
+                {"L": decision_home, "E": decision_draw, "V": decision_away},
+                prior=prior_for_week_type(draw_priors, getattr(slate, "week_type", "") or ""),
+                confidence_band=confidence_band,
+                evidence_level=evidence_level.value,
+                final_status=sanity.final_status.value,
+                quality_ok=sanity.final_status.value not in ("REVISAR", "BLOQUEADO"),
+                is_knockout=is_knockout,
+            )
+            pre_draw_calibration_vector = dict(draw_cal.pre_probabilities)
+            draw_calibration_applied = draw_cal.applied
+            draw_calibration_reason = draw_cal.reason if draw_cal.applied else None
+            if draw_cal.applied:
+                decision_home = draw_cal.probabilities["L"]
+                decision_draw = draw_cal.probabilities["E"]
+                decision_away = draw_cal.probabilities["V"]
+                rationale.append("Calibración de empate: " + draw_cal.reason)
+
             decision_vector = {"L": decision_home, "E": decision_draw, "V": decision_away}
             raw_vector = {
                 "L": sanity.raw_probabilities["home"],
@@ -316,6 +367,9 @@ class PredictionService:
                     fallback_used=fallback_used,
                     is_international_friendly=is_friendly,
                     sanity_recommendation=sanity.recommendation,
+                    draw_calibration_applied=draw_calibration_applied,
+                    draw_calibration_reason=draw_calibration_reason,
+                    pre_draw_calibration_probabilities=pre_draw_calibration_vector,
                     presentation_guard=PresentationGuardInfo(
                         **asdict(
                             derive_presentation_guard(
@@ -351,6 +405,9 @@ class PredictionService:
                 "model_artifact_id": model_artifact_id,
                 "fallback_used": fallback_used,
                 "is_international_friendly": is_friendly,
+                "draw_calibration_applied": draw_calibration_applied,
+                "draw_calibration_reason": draw_calibration_reason,
+                "pre_draw_calibration_probabilities": dict(pre_draw_calibration_vector),
             }
             if persist_audit:
                 self._persist_prediction_audit(

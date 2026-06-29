@@ -29,6 +29,7 @@ from app.models.tables import ProgolSlateModel
 from app.services.jornada_scoring_service import JornadaScoringService
 from app.services.live_result_service import LiveResultService, NormalizedMatchResult
 from app.services.prediction_probabilities import (
+    draw_calibration_info,
     raw_probabilities,
     visible_probabilities,
 )
@@ -292,6 +293,7 @@ class LiveResultsService:
             # rather than the raw model output stored in the columns.
             visible = visible_probabilities(pred) if pred is not None else None
             raw_vec = raw_probabilities(pred) if pred is not None else None
+            draw_cal = draw_calibration_info(pred) if pred is not None else None
             p_draw = visible[1] if visible is not None else None
             code = result.result_code if result is not None else None
             modes_detail, covered = self._ticket_modes(t_picks, code)
@@ -327,6 +329,10 @@ class LiveResultsService:
                             if raw_vec is not None
                             else None
                         ),
+                        # Conservative draw-calibration trace (note + before/after).
+                        "draw_calibration_applied": bool(draw_cal and draw_cal["applied"]),
+                        "draw_calibration_reason": (draw_cal or {}).get("reason"),
+                        "pre_draw_calibration_probabilities": (draw_cal or {}).get("pre_probabilities"),
                         "home_goals": result.home_goals if result else None,
                         "away_goals": result.away_goals if result else None,
                         "result_code": code,

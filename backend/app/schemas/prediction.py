@@ -122,6 +122,17 @@ class MatchPredictionResponse(BaseModel):
     is_international_friendly: bool = False
     sanity_recommendation: str = ""
 
+    # --- Conservative draw (X) calibration (additive) --------------------
+    # When True, the decision vector above had its p_draw nudged up toward a
+    # conservative prior on a low-evidence / high-uncertainty match. The raw
+    # vector is unchanged; pre_draw_calibration_probabilities is the decision
+    # vector BEFORE the nudge, surfaced in the technical detail.
+    draw_calibration_applied: bool = False
+    draw_calibration_reason: str | None = None
+    pre_draw_calibration_probabilities: dict[str, float] = Field(
+        default_factory=lambda: {"L": 0.0, "E": 0.0, "V": 0.0}
+    )
+
     # --- R5.6-B controlled canary (additive, never overwrites the originals) -
     # `effective_*` are what the UI should render when `canary.active` is true.
     # When the canary is OFF or a position is out of scope they equal the

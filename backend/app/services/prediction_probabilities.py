@@ -70,3 +70,25 @@ def raw_probabilities(pred: Any) -> tuple[float, float, float] | None:
     Returned for transparency in the postmortem; never used to score/display.
     """
     return _vector_from_audit(pred, "raw_probabilities")
+
+
+def draw_calibration_info(pred: Any) -> dict[str, Any] | None:
+    """Draw-calibration trace from the audit (applied / reason / pre-vector).
+
+    Returns None when the prediction predates the calibration layer (legacy
+    closed rows) so the postmortem can simply omit the note there.
+    """
+    audit = getattr(pred, "sanity_audit_json", None)
+    if not audit:
+        return None
+    try:
+        data = json.loads(audit)
+    except (ValueError, TypeError):
+        return None
+    if "draw_calibration_applied" not in data:
+        return None
+    return {
+        "applied": bool(data.get("draw_calibration_applied")),
+        "reason": data.get("draw_calibration_reason"),
+        "pre_probabilities": data.get("pre_draw_calibration_probabilities"),
+    }

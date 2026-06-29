@@ -5,6 +5,7 @@
 // they can be locked with Vitest. The DOM/fetch wiring (initLiveTracking)
 // sits at the bottom and is the only part that needs the browser.
 import { formatPercent, escapeHtml } from "./helpers.js";
+import { drawCalibrationDetail } from "./draw-calibration-ui.js";
 
 const STATUS_LABELS = {
   scheduled: "Pendiente",
@@ -226,7 +227,7 @@ export function renderComparisonRow(match) {
       <td class="mono">${match.position}</td>
       <td class="cmp-teams">${escapeHtml(match.home_team_name)} <span class="vs">vs</span> ${escapeHtml(match.away_team_name)}${drawChips(match)}</td>
       <td class="cmp-pred">${predictionChips(match)}</td>
-      <td class="cmp-probs">${visibleProbCell(match)}${rawProbDetail(match)}</td>
+      <td class="cmp-probs">${visibleProbCell(match)}${drawCalibrationDetail(match, escapeHtml)}${rawProbDetail(match)}</td>
       <td class="cmp-score mono">${formatScore(match)} ${realChip}</td>
       <td class="cmp-mode">${modeGlyph(match.simple_hit)}</td>
       <td class="cmp-mode">${modeGlyph(match.doubles_hit)}</td>
