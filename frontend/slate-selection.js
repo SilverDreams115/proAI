@@ -34,3 +34,58 @@ export function selectedSlateCountdownMs(slates, selectedId) {
   }
   return null;
 }
+
+// Selector source of truth from GET /api/slates/visible. Open official slates
+// drive the list; when none are open we fall back to the recent (read-only)
+// ones so the UI is never empty. A saved manual selection wins only if it is
+// still in the visible set. Pure + testable: no DOM, no fetch.
+export function resolveVisibleSelection({ visible, savedId } = {}) {
+  const v = visible || {};
+  const open = Array.isArray(v.open_slates) ? v.open_slates : [];
+  const recent = Array.isArray(v.recent_slates) ? v.recent_slates : [];
+  const slates = [...open, ...recent];
+  const reason = v.reason
+    || (open.length ? "open_slate" : recent.length ? "fallback_recent" : "no_official_slates");
+  const savedStillVisible = Boolean(savedId) && slates.some((s) => s && s.id === savedId);
+  const selectedId = savedStillVisible
+    ? savedId
+    : (v.selected_default_slate_id || slates[0]?.id || null);
+  const selected = slates.find((s) => s && s.id === selectedId) || null;
+  return {
+    slates,
+    selectedId,
+    reason,
+    readOnly: Boolean(selected && selected.read_only),
+    message: visibleSelectionMessage(reason),
+    isEmpty: slates.length === 0,
+  };
+}
+
+export function visibleSelectionMessage(reason) {
+  if (reason === "fallback_recent") {
+    return "No hay boleta abierta. Mostrando la más reciente en solo lectura.";
+  }
+  if (reason === "no_official_slates") {
+    return "No hay boletas oficiales cargadas.";
+  }
+  return "";
+}
+
+// Maps a slate's backend flags to the operator-facing badges, in priority
+// order. "Solo lectura" is appended for any closed/archived slate.
+export function slateBadges(slate) {
+  if (!slate) return [];
+  const badges = [];
+  if (!slate.is_closed && !slate.is_archived) {
+    badges.push("Abierta");
+  } else if (slate.classification === "official_real" || slate.has_results) {
+    badges.push("Completa");
+  } else {
+    badges.push("Cerrada");
+  }
+  if ((slate.is_closed || slate.is_archived) && !slate.has_results) {
+    badges.push("Sin resultados");
+  }
+  if (slate.read_only) badges.push("Solo lectura");
+  return badges;
+}

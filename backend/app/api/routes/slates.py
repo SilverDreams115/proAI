@@ -17,9 +17,11 @@ from app.repositories.ingestion_repository import IngestionRepository
 from app.repositories.slate_repository import SlateRepository
 from app.repositories.source_repository import SourceRepository
 from app.schemas.slate import ActiveSlateResponse
+from app.schemas.slate import DiscoveryInfo
 from app.schemas.slate import ProgolSlateCreate
 from app.schemas.slate import ProgolSlateResponse
 from app.schemas.slate import PromoteProposalResponse
+from app.schemas.slate import VisibleSlatesResponse
 from app.schemas.slate import SlateMatchResponse
 from app.schemas.slate import SlateProposalFixture
 from app.schemas.slate import SlateProposalResponse
@@ -66,6 +68,19 @@ def _serialize_slate(
             .limit(1)
         ) is not None
     is_closed = service.is_closed(slate)
+    # Official-lineage reality (demo/unverified excluded by callers). Computed
+    # only when a session is available; classify_slate needs DB access.
+    classification: str | None = None
+    comparable = False
+    has_results = False
+    if session is not None:
+        from app.services.slate_classification_service import classify_slate
+
+        reality = classify_slate(session, slate)
+        classification = reality.classification.value
+        comparable = reality.comparable_with_results
+        has_results = classification == "official_real"
+    read_only = bool(slate.is_archived or is_closed)
     match_count = len(slate.matches)
     # Live predictions are computable read-only for any active slate that has
     # matches, even with zero persisted rows — the GET predictions endpoint
@@ -121,6 +136,10 @@ def _serialize_slate(
         persisted_prediction_count=persisted_prediction_count,
         match_count=match_count,
         live_prediction_available=live_prediction_available,
+        classification=classification,
+        comparable=comparable,
+        has_results=has_results,
+        read_only=read_only,
     )
 
 
@@ -131,6 +150,113 @@ async def list_slates(
 ) -> list[ProgolSlateResponse]:
     service = SlateService(SlateRepository(session))
     return [_serialize_slate(slate, service, session) for slate in service.list_slates(include_closed=include_closed)]
+
+
+def _has_predictions_and_snapshot(session: Session, slate: ProgolSlateModel) -> bool:
+    has_pred = session.scalar(
+        select(PredictionModel.id)
+        .where(
+            PredictionModel.slate_id == slate.id,
+            PredictionModel.composition_hash == slate.composition_hash,
+        )
+        .limit(1)
+    )
+    has_snap = session.scalar(
+        select(TicketRecommendationSnapshotModel.id)
+        .where(
+            TicketRecommendationSnapshotModel.slate_id == slate.id,
+            TicketRecommendationSnapshotModel.is_valid.is_(True),
+            TicketRecommendationSnapshotModel.composition_hash == slate.composition_hash,
+        )
+        .limit(1)
+    )
+    return has_pred is not None and has_snap is not None
+
+
+def _discovery_info(session: Session) -> DiscoveryInfo:
+    """Latest observed/promoted proposal per week_type — surfaced so the
+    empty state explains discovery status instead of showing a blank UI."""
+
+    def latest(week_type: str) -> ProgolSlateProposalModel | None:
+        return session.scalar(
+            select(ProgolSlateProposalModel)
+            .where(ProgolSlateProposalModel.week_type == week_type)
+            .order_by(ProgolSlateProposalModel.last_seen_at.desc())
+            .limit(1)
+        )
+
+    weekend = latest("weekend")
+    midweek = latest("midweek")
+    last_observed = session.scalar(
+        select(func.max(ProgolSlateProposalModel.last_seen_at))
+    )
+    return DiscoveryInfo(
+        last_weekend_draw_code=weekend.draw_code if weekend else None,
+        last_weekend_status=weekend.status if weekend else None,
+        last_weekend_seen_at=weekend.last_seen_at if weekend else None,
+        last_midweek_draw_code=midweek.draw_code if midweek else None,
+        last_midweek_status=midweek.status if midweek else None,
+        last_midweek_seen_at=midweek.last_seen_at if midweek else None,
+        last_observed_at=last_observed,
+    )
+
+
+@router.get("/visible", response_model=VisibleSlatesResponse)
+async def visible_slates(
+    limit_recent: int = Query(default=4, ge=1, le=12),
+    session: Session = Depends(get_db_session),
+) -> VisibleSlatesResponse:
+    """Selector source of truth, never empty when official slates exist.
+
+    Returns open official slates first; when none are open, falls back to the
+    most recent official slates (read-only) that still have a prediction +
+    valid snapshot so the postmortem is viewable. Demo/unverified slates are
+    excluded via classify_slate. Weekend and Media Semana stay independent —
+    callers group by ``week_type``; nothing is merged across types here.
+    """
+    from app.services.slate_classification_service import classify_slate
+
+    service = SlateService(SlateRepository(session))
+    now = datetime.now(timezone.utc)
+    # Official lineage only (comparable=True covers official_real and
+    # official_but_no_results_yet); demo/unverified are dropped.
+    official = [
+        slate
+        for slate in service.list_slates(include_closed=True)
+        if classify_slate(session, slate).comparable_with_results
+    ]
+    open_slates = [s for s in official if not service.is_closed(s, now)]
+    recent_closed = [
+        s
+        for s in official
+        if service.is_closed(s, now) and _has_predictions_and_snapshot(session, s)
+    ]
+    def _closed_at(slate: ProgolSlateModel) -> datetime:
+        when = slate.registration_closes_at or slate.created_at
+        return when.replace(tzinfo=timezone.utc) if when.tzinfo is None else when
+
+    # Open: soonest cierre first. Recent: most-recently closed first.
+    open_slates.sort(key=lambda s: _closed_at(s) if s.registration_closes_at else datetime.max.replace(tzinfo=timezone.utc))
+    recent_closed.sort(key=_closed_at, reverse=True)
+    recent_closed = recent_closed[:limit_recent]
+
+    if open_slates:
+        selected = open_slates[0].id
+        reason = "open_slate"
+    elif recent_closed:
+        selected = recent_closed[0].id
+        reason = "fallback_recent"
+    else:
+        selected = None
+        reason = "no_official_slates"
+
+    return VisibleSlatesResponse(
+        open_slates=[_serialize_slate(s, service, session) for s in open_slates],
+        recent_slates=[_serialize_slate(s, service, session) for s in recent_closed],
+        selected_default_slate_id=selected,
+        reason=reason,
+        discovery=_discovery_info(session),
+    )
 
 
 @router.get("/active", response_model=ActiveSlateResponse)

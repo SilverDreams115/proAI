@@ -45,6 +45,38 @@ class ProgolSlateResponse(BaseModel):
     persisted_prediction_count: int = 0
     match_count: int = 0
     live_prediction_available: bool = False
+    # Official-lineage classification (additive; defaults keep older callers
+    # working). `read_only` is true for closed/archived slates so the UI
+    # disables generate/reset and shows the postmortem instead.
+    classification: str | None = None
+    comparable: bool = False
+    has_results: bool = False
+    read_only: bool = False
+
+
+class DiscoveryInfo(BaseModel):
+    """Discovery / worker heartbeat shown in the empty state so the operator
+    sees WHY there is no open slate, not a blank screen."""
+
+    last_weekend_draw_code: str | None = None
+    last_weekend_status: str | None = None
+    last_weekend_seen_at: datetime | None = None
+    last_midweek_draw_code: str | None = None
+    last_midweek_status: str | None = None
+    last_midweek_seen_at: datetime | None = None
+    last_observed_at: datetime | None = None
+
+
+class VisibleSlatesResponse(BaseModel):
+    """Selector source of truth: open official slates first, else the most
+    recent official slates in read-only mode, so the UI is never empty."""
+
+    open_slates: list[ProgolSlateResponse] = []
+    recent_slates: list[ProgolSlateResponse] = []
+    selected_default_slate_id: str | None = None
+    # open_slate | fallback_recent | no_official_slates
+    reason: str = "no_official_slates"
+    discovery: DiscoveryInfo = DiscoveryInfo()
 
 
 class ActiveSlateResponse(BaseModel):

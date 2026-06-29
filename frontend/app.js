@@ -49,13 +49,41 @@ import {
   setCachedDiagnostics,
   clearDiagnosticsCache,
 } from "./slate-panel-cache.js";
-import { resolveActiveSelection, selectedSlateCountdownMs } from "./slate-selection.js";
+import { resolveActiveSelection, resolveVisibleSelection, selectedSlateCountdownMs, slateBadges } from "./slate-selection.js";
 // NOTE: live-tracking is loaded via a guarded dynamic import in the
 // bootstrap (not a static import), so a failure to load/link that module
 // can never abort app.js and blank out the main selector.
 
 function currentSlate() {
   return state.slates.find((item) => item.id === state.activeSlateId) || null;
+}
+
+// Useful empty state (never a blank screen): when no official slate is
+// visible, explain discovery status + worker state + next action instead of
+// a bare "Sin quiniela activa".
+function renderNoSlateState() {
+  const d = state.discovery || {};
+  const workerState = state.worker
+    ? (state.worker.running === false ? "detenido" : "activo")
+    : "no disponible";
+  const lastDiscovery = d.last_observed_at ? formatDate(d.last_observed_at) : "sin registro";
+  const wk = d.last_weekend_draw_code
+    ? `${escapeHtml(d.last_weekend_draw_code)} (${escapeHtml(d.last_weekend_status || "—")})`
+    : "—";
+  const ms = d.last_midweek_draw_code
+    ? `${escapeHtml(d.last_midweek_draw_code)} (${escapeHtml(d.last_midweek_status || "—")})`
+    : "—";
+  return `
+    <div class="empty-state no-slate-state">
+      <strong>No hay boletas oficiales cargadas</strong>
+      <ul class="no-slate-meta">
+        <li>Último intento de discovery: <span>${escapeHtml(lastDiscovery)}</span></li>
+        <li>Última Weekend observada: <span>${wk}</span></li>
+        <li>Última Media Semana observada: <span>${ms}</span></li>
+        <li>Worker: <span>${escapeHtml(workerState)}</span></li>
+        <li>Acción: ejecutar Scheduler o revisar la fuente LN.</li>
+      </ul>
+    </div>`;
 }
 
 function multipleRuleForSlate(slate, matchCount = 0) {
@@ -766,10 +794,14 @@ function renderAsideSlates() {
     const statusLabel = slate.status_label || (slate.is_archived ? "Archivada" : "Activa");
     const statusCls = STATUS_CLASS[statusLabel] || "";
     const matchCount = (slate.matches || []).length;
+    const badges = slateBadges(slate)
+      .map((b) => `<span class="aside-badge badge-${b === "Solo lectura" ? "readonly" : b.toLowerCase().replace(/\s+/g, "-")}">${escapeHtml(b)}</span>`)
+      .join("");
     return `
-      <button class="aside-slate ${isActive ? "active" : ""}" data-slate-id="${escapeHtml(slate.id)}">
+      <button class="aside-slate ${isActive ? "active" : ""} ${slate.read_only ? "is-readonly" : ""}" data-slate-id="${escapeHtml(slate.id)}">
         <strong>${escapeHtml(slate.draw_code)}</strong>
         <span class="aside-slate-status ${statusCls}">${escapeHtml(statusLabel)}</span>
+        <span class="aside-badges">${badges}</span>
         <small>${matchCount} partidos</small>
       </button>
     `;
@@ -1543,16 +1575,22 @@ function renderBoard() {
     if (slateSwitcherNode) slateSwitcherNode.innerHTML = hasSlatePicked ? renderSlateSwitcher() : "";
     if (tabsNode) tabsNode.innerHTML = renderTicketTabs();
     if (validationSummaryNode) validationSummaryNode.innerHTML = "";
+    const readOnlyPicked = hasSlatePicked && Boolean(activeSlate?.read_only);
     const noPredCopy = hasSlatePicked
       ? `Esta boleta (${escapeHtml(slateCode)}) no tiene predicciones generadas aún.`
       : "El sistema cargará la quiniela activa en la próxima ejecución.";
-    const generateBtn = hasSlatePicked
+    // No generate/reset action on a closed/archived (read-only) slate.
+    const generateBtn = hasSlatePicked && !readOnlyPicked
       ? `<button class="primary-button generate-cta" id="generate-predictions-btn" data-slate-id="${escapeHtml(slateId)}">Generar predicción</button>`
       : "";
     if (summaryNode) summaryNode.innerHTML = `<div class="empty-state">${noPredCopy}${generateBtn}</div>`;
-    if (gridNode) gridNode.innerHTML = hasSlatePicked
-      ? renderEmpty("Sin predicciones. Usa el botón para generarlas.")
-      : renderEmpty("Sin quiniela activa. Selecciona una boleta en el panel izquierdo o espera a que el sistema la cargue.");
+    if (gridNode) {
+      if (hasSlatePicked) {
+        gridNode.innerHTML = renderEmpty("Sin predicciones. Usa el botón para generarlas.");
+      } else {
+        gridNode.innerHTML = renderNoSlateState();
+      }
+    }
     if (analysisNode) analysisNode.innerHTML = renderEmpty("Selecciona un partido para ver la explicación del modelo.");
     return;
   }
@@ -1967,7 +2005,10 @@ function updateAuthControls() {
   if (secretField) secretField.hidden = Boolean(state.authenticated);
   if (logoutButton) logoutButton.disabled = !state.authenticated;
   if (passwordInput) passwordInput.disabled = state.authenticated;
-  if (refreshButton) refreshButton.disabled = !state.authenticated || state.isLoading;
+  // Read-only slate (closed/archived): no regenerate/refresh of a closed
+  // prediction. The postmortem stays fully viewable.
+  const readOnly = Boolean(currentSlate()?.read_only);
+  if (refreshButton) refreshButton.disabled = !state.authenticated || state.isLoading || readOnly;
   if (demoButton) {
     const isProduction = state.health?.environment === "production";
     demoButton.hidden = isProduction;
@@ -1976,7 +2017,7 @@ function updateAuthControls() {
   if (workerButton) workerButton.disabled = !state.authenticated || !state.worker || state.isLoading;
   if (copyButton) copyButton.disabled = !state.authenticated || !state.matches.length || state.isLoading;
   if (downloadButton) downloadButton.disabled = !state.authenticated || !state.matches.length || state.isLoading;
-  if (resetButton) resetButton.disabled = !state.authenticated || !Object.keys(state.manualSelections).length;
+  if (resetButton) resetButton.disabled = !state.authenticated || readOnly || !Object.keys(state.manualSelections).length;
   if (filterNode) filterNode.disabled = !state.authenticated || !state.matches.length || state.isLoading;
   if (feedbackNode) {
     feedbackNode.textContent = state.authStatusMessage || "";
@@ -2147,17 +2188,15 @@ async function boot() {
     return;
   }
 
-  const [slates, providers, worker] = await Promise.all([
-    // Main sidebar shows only active/upcoming concursos. Archived jornadas are
-    // intentionally excluded here (they are reachable via the explicit
-    // include_closed=true history/diagnostic query, not mixed into the main
-    // list). The default endpoint already filters out closed/archived slates.
-    safeFetch("/slates"),
+  const [visible, providers, worker] = await Promise.all([
+    // Selector source of truth: open official slates first, else the most
+    // recent official slates in read-only mode, so the UI is never empty
+    // when there is no open boleta. Demo/unverified are excluded server-side.
+    safeFetch("/slates/visible", {optional: true}),
     safeFetch("/sources/providers"),
     safeFetch("/worker/scheduler/status", {optional: true}),
   ]);
 
-  state.slates = Array.isArray(slates) ? slates : [];
   state.providers = Array.isArray(providers) ? providers : [];
   state.worker = worker && !Array.isArray(worker) ? worker : null;
   const workerButton = getById("run-worker");
@@ -2168,16 +2207,32 @@ async function boot() {
       : "Las rutas HTTP del worker están cerradas en modo producción";
   }
 
+  // Resolve the visible set (open + recent fallback). If /slates/visible is
+  // unavailable (older backend), degrade gracefully to /slates (open-only).
+  const savedSlateId = readSavedSlateId();
+  if (visible && !Array.isArray(visible)) {
+    const decision = resolveVisibleSelection({ visible, savedId: savedSlateId });
+    state.slates = decision.slates;
+    state.activeSlateId = decision.selectedId;
+    state.visibleReason = decision.reason;
+    state.readOnlySelection = decision.readOnly;
+    state.discovery = visible.discovery || null;
+    state.visibleMessage = decision.message;
+  } else {
+    const fallback = await safeFetch("/slates", {optional: true});
+    state.slates = Array.isArray(fallback) ? fallback : [];
+    state.activeSlateId = (savedSlateId && state.slates.some((s) => s.id === savedSlateId))
+      ? savedSlateId
+      : (state.slates[0]?.id || null);
+    state.visibleReason = state.slates.length ? "open_slate" : "no_official_slates";
+    state.readOnlySelection = false;
+    state.discovery = null;
+    state.visibleMessage = "";
+  }
+
   if (!state.slates.length && !demoLoadAttempted) {
     demoLoadAttempted = true;
   }
-
-  // Restore the last manually-selected slate if it is still active; otherwise
-  // fall back to the most-urgent (first) active slate.
-  const savedSlateId = readSavedSlateId();
-  state.activeSlateId = (savedSlateId && state.slates.some((s) => s.id === savedSlateId))
-    ? savedSlateId
-    : (state.slates[0]?.id || null);
 
   if (state.activeSlateId) {
     await loadSlateDetails(state.activeSlateId);
@@ -2190,11 +2245,17 @@ async function boot() {
     state.selectedMatchId = null;
   }
 
+  // Persistent notice when the selector fell back to a recent read-only slate.
+  state.transitionBanner = state.visibleReason === "fallback_recent"
+    ? state.visibleMessage
+    : state.transitionBanner;
+
   state.authStatusMessage = "Conectado";
   state.isLoading = false;
   updateAuthControls();
   renderSidebar();
   renderBoard();
+  renderTransitionBanner();
   renderProductionStatus();
   attachEvents();
 }
