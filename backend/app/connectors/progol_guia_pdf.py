@@ -245,11 +245,18 @@ _MS_FALLBACK_URL = (
 )
 
 # MS cierre: "CIERRE DE VENTA\nConcurso NNN\nJueves 11 de junio hasta las \n13:00 horas"
+# We capture the block's OWN concurso number so we can reject a cierre that
+# belongs to a different (older) concurso than the guide's fixtures — the
+# exact PGM-802 staleness bug, where the fixtures are 802 but the cierre block
+# still reads "Concurso 800 ... 16 de junio ... de 2025". The trailing year on
+# the nearby "Juegos del ... de YYYY" line is captured when present (the cierre
+# line itself carries no year) so we never blindly assume the current year.
 _MS_VENTA_RE = re.compile(
     r"(?:CIERRE\s+DE\s+VENTA|VENTA)\s*\n"
-    r"Concurso\s+\d+\s*\n"
+    r"Concurso\s+(?P<concurso>\d+)\s*\n"
     r"\w+\s+(?P<day>\d{1,2})\s+de\s+(?P<month>\w+)\s+hasta\s+las\s+\n?"
-    r"(?P<hour>\d{1,2}):(?P<minute>\d{2})",
+    r"(?P<hour>\d{1,2}):(?P<minute>\d{2})"
+    r"(?:[^\n]*\n[^\n]*?\bde\s+(?P<year>\d{4}))?",
     re.IGNORECASE,
 )
 
@@ -361,13 +368,65 @@ def parse_ms_guia_text(text: str) -> tuple[str | None, list[_Fixture], datetime 
         if home and away:
             fixtures.append(_Fixture(position=pos, home=home, away=away))
 
-    closes_at = _parse_ms_cierre(text)
+    closes_at = _parse_ms_cierre(text, draw_code)
     return draw_code, fixtures, closes_at
 
 
-def _parse_ms_cierre(text: str) -> datetime | None:
+def ms_date_candidates(text: str, draw_code: str | None = None) -> list[dict[str, object]]:
+    """Dump every cierre/venta date block found in the MS guide text.
+
+    Each candidate carries its raw text, nearby context, inferred type, the
+    block's own concurso, whether it matches ``draw_code``, and a confidence
+    score. Used by the connector payload + discovery diagnostics so an operator
+    can see exactly why a date was accepted or rejected (no silent guessing).
+    """
+    candidates: list[dict[str, object]] = []
+    for match in _MS_VENTA_RE.finditer(text):
+        block_concurso = match.group("concurso")
+        matches_draw = draw_code is None or block_concurso == str(draw_code)
+        month = _SPANISH_MONTHS.get((match.group("month") or "").lower())
+        year = match.group("year")
+        start = max(0, match.start() - 20)
+        end = min(len(text), match.end() + 40)
+        # Confidence: a cierre block whose concurso matches the fixtures and
+        # that prints its own year is high; a mismatch is the stale-source tell.
+        if not matches_draw:
+            confidence = "low"
+        elif year is None:
+            confidence = "medium"  # year inferred, not printed
+        else:
+            confidence = "high"
+        candidates.append(
+            {
+                "raw": match.group(0).replace("\n", " ").strip(),
+                "context": text[start:end].replace("\n", " ").strip(),
+                "type": "cierre_de_venta",
+                "block_concurso": block_concurso,
+                "matches_draw_code": matches_draw,
+                "day": match.group("day"),
+                "month": month,
+                "year": year,
+                "confidence": confidence,
+            }
+        )
+    return candidates
+
+
+def _parse_ms_cierre(text: str, draw_code: str | None = None) -> datetime | None:
+    """Parse the MS cierre de venta.
+
+    Returns the registration-close datetime ONLY when the cierre block's own
+    "Concurso N" matches the guide's ``draw_code``. A mismatch (stale cierre
+    block — the PGM-802 case) returns None so the slate is left without a date
+    rather than activated on a wrong/old one.
+    """
     match = _MS_VENTA_RE.search(text)
     if match is None:
+        return None
+    block_concurso = match.group("concurso")
+    if draw_code is not None and block_concurso is not None and block_concurso != str(draw_code):
+        # Cierre block belongs to a different concurso than the fixtures —
+        # the guide PDF is internally stale. Refuse to use this date.
         return None
     try:
         day = int(match.group("day"))
@@ -378,7 +437,9 @@ def _parse_ms_cierre(text: str) -> datetime | None:
         return None
     if month is None:
         return None
-    year = datetime.now(timezone.utc).year
+    # Prefer the year printed on the guide; fall back to the current year only
+    # when the document carries none. Never silently rewrite a printed year.
+    year = int(match.group("year")) if match.group("year") else datetime.now(timezone.utc).year
     mx_tz = timezone(timedelta(hours=-6))
     local_dt = datetime(year, month, day, hour, minute, tzinfo=mx_tz)
     return local_dt.astimezone(timezone.utc)
@@ -406,6 +467,15 @@ class ProgolMsGuiaPdfConnector(SourceConnector):
         pdf_bytes = self._download_bytes(pdf_url)
         text = self._extract_text(pdf_bytes)
         draw_code, fixtures, closes_at = parse_ms_guia_text(text)
+        date_candidates = ms_date_candidates(text, draw_code)
+        # Extraction confidence: high only when we accepted a date AND a
+        # candidate's cierre block matched this concurso; otherwise low (stale
+        # block / no date) so downstream gating can refuse activation.
+        extraction_confidence = (
+            "high"
+            if closes_at is not None and any(c["matches_draw_code"] for c in date_candidates)
+            else "low"
+        )
         return [
             SourceDocument(
                 source_name=self.name,
@@ -417,6 +487,8 @@ class ProgolMsGuiaPdfConnector(SourceConnector):
                     "draw_code": draw_code,
                     "week_type": "midweek",
                     "registration_closes_at": closes_at.isoformat() if closes_at else None,
+                    "date_candidates": date_candidates,
+                    "extraction_confidence": extraction_confidence,
                     "fixtures": [
                         {"position": f.position, "home": f.home, "away": f.away}
                         for f in fixtures

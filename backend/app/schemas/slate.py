@@ -52,6 +52,11 @@ class ProgolSlateResponse(BaseModel):
     comparable: bool = False
     has_results: bool = False
     read_only: bool = False
+    # Date Sanity Gate: date_valid | date_suspect | stale_source | parse_error
+    # | needs_operator_confirmation. A non-valid slate is never shown as open.
+    date_status: str = "date_valid"
+    date_suspect: bool = False
+    date_status_reasons: list[str] = []
 
 
 class DiscoveryInfo(BaseModel):
@@ -65,6 +70,9 @@ class DiscoveryInfo(BaseModel):
     last_midweek_status: str | None = None
     last_midweek_seen_at: datetime | None = None
     last_observed_at: datetime | None = None
+    # Official slates held back by the Date Sanity Gate (stale/suspect dates),
+    # surfaced so the empty/diagnostics view explains why they aren't open.
+    suspect_slates: list[dict] = []
 
 
 class VisibleSlatesResponse(BaseModel):

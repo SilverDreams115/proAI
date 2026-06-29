@@ -116,6 +116,52 @@ def test_weekend_and_midweek_stay_separate(db):
     assert types == {"PG-2338": "weekend", "PGM-802": "midweek"}
 
 
+def test_date_suspect_slate_is_held_back_and_diagnosed(db):
+    # Official slate whose cierre is in the past relative to creation =>
+    # stale_source. Must NOT be open; must appear in discovery.suspect_slates.
+    slate = _seed_slate(db, draw_code="PGM-802", week_type="midweek", n=9, closes_at=_past())
+    _make_official(db, slate)
+    res = _visible(db)
+    assert all(s.draw_code != "PGM-802" for s in res.open_slates)
+    suspect_codes = [s["draw_code"] for s in res.discovery.suspect_slates]
+    assert "PGM-802" in suspect_codes
+    entry = next(s for s in res.discovery.suspect_slates if s["draw_code"] == "PGM-802")
+    assert entry["date_status"] in {"stale_source", "date_suspect", "needs_operator_confirmation"}
+
+
+def test_date_override_is_traced_and_updates_status(db):
+    import asyncio
+
+    from app.api.routes.slates import DateOverrideRequest, date_override
+
+    slate = _seed_slate(db, draw_code="PGM-802", week_type="midweek", n=9, closes_at=_past())
+    _make_official(db, slate)
+    new_close = _future()
+    body = DateOverrideRequest(
+        registration_closes_at=new_close,
+        reason="acta oficial LN confirmada por operador",
+        operator_note="cierre real 30-jun",
+    )
+    out = asyncio.run(date_override(slate_id=slate.id, body=body, session=db))
+    assert out["source_name"] == "operator_date_override"
+    assert out["source_type"] == "operator_manual"
+    assert out["reason"].startswith("acta oficial")
+    assert out["old_registration_closes_at"] is not None
+    assert out["new_registration_closes_at"] == new_close.isoformat()
+    # Slate updated + un-archived; audit trail persisted as a proposal row.
+    from sqlalchemy import select
+
+    from app.models.tables import ProgolSlateProposalModel
+
+    audit = db.scalar(
+        select(ProgolSlateProposalModel).where(
+            ProgolSlateProposalModel.source_name == "operator_date_override"
+        )
+    )
+    assert audit is not None
+    assert audit.status == "operator_override"
+
+
 def test_discovery_reports_latest_observation(db):
     slate = _seed_slate(db, draw_code="PG-2338", n=14, closes_at=_past())
     _make_official(db, slate)

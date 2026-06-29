@@ -13,6 +13,7 @@ import {
   resolveVisibleSelection,
   visibleSelectionMessage,
   slateBadges,
+  suspectSlateDiagnostics,
 } from "../slate-selection.js";
 
 const openSlate = {
@@ -119,5 +120,52 @@ describe("slateBadges", () => {
   });
   it("closed without results => Cerrada + Sin resultados + Solo lectura", () => {
     expect(slateBadges(recentNoResults)).toEqual(["Cerrada", "Sin resultados", "Solo lectura"]);
+  });
+
+  it("flags a date-suspect slate with 'Fecha sospechosa'", () => {
+    const suspect = { ...openSlate, date_status: "stale_source", date_suspect: true };
+    expect(slateBadges(suspect)).toContain("Fecha sospechosa");
+  });
+});
+
+describe("suspectSlateDiagnostics", () => {
+  it("lists date-held-back slates with reason + action", () => {
+    const visible = {
+      open_slates: [],
+      recent_slates: [recentReal],
+      reason: "fallback_recent",
+      discovery: {
+        suspect_slates: [
+          {
+            draw_code: "PGM-802",
+            week_type: "midweek",
+            date_status: "stale_source",
+            registration_closes_at: "2026-06-16T19:00:00Z",
+            reasons: ["cierre 2026-06-16 es anterior a la creación de la slate 2026-06-27"],
+          },
+        ],
+      },
+    };
+    const diag = suspectSlateDiagnostics(visible);
+    expect(diag).toHaveLength(1);
+    expect(diag[0].draw_code).toBe("PGM-802");
+    expect(diag[0].date_status).toBe("stale_source");
+    expect(diag[0].reason).toContain("anterior a la creación");
+    expect(diag[0].action).toContain("override");
+  });
+
+  it("returns [] when there are no suspect slates", () => {
+    expect(suspectSlateDiagnostics({ discovery: {} })).toEqual([]);
+    expect(suspectSlateDiagnostics({})).toEqual([]);
+  });
+
+  it("a date-suspect slate is not in open_slates (gate held it back server-side)", () => {
+    // The backend never puts a suspect slate in open_slates; the selector
+    // simply reflects that — open stays empty, fallback recent is selected.
+    const r = resolveVisibleSelection({
+      visible: { open_slates: [], recent_slates: [recentReal], reason: "fallback_recent", selected_default_slate_id: "recent-1" },
+    });
+    expect(r.open_slates ?? r.slates.filter((s) => !s.read_only)).toEqual([]);
+    expect(r.reason).toBe("fallback_recent");
   });
 });

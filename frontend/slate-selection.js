@@ -87,5 +87,24 @@ export function slateBadges(slate) {
     badges.push("Sin resultados");
   }
   if (slate.read_only) badges.push("Solo lectura");
+  // Date Sanity Gate: a suspect/stale date is flagged distinctly so an
+  // operator never mistakes it for a playable boleta.
+  if (slate.date_suspect || (slate.date_status && slate.date_status !== "date_valid")) {
+    badges.push("Fecha sospechosa");
+  }
   return badges;
+}
+
+// Discovery diagnostics: slates held back by the date gate, for the empty/
+// diagnostics view. Returns a list of { draw_code, date_status, reason }.
+export function suspectSlateDiagnostics(visible) {
+  const disc = (visible && visible.discovery) || {};
+  const suspect = Array.isArray(disc.suspect_slates) ? disc.suspect_slates : [];
+  return suspect.map((s) => ({
+    draw_code: s.draw_code,
+    week_type: s.week_type,
+    date_status: s.date_status,
+    reason: (s.reasons && s.reasons[0]) || "",
+    action: "Revisar fuente LN o aplicar override de fecha (operador)",
+  }));
 }

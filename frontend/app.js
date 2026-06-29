@@ -73,6 +73,17 @@ function renderNoSlateState() {
   const ms = d.last_midweek_draw_code
     ? `${escapeHtml(d.last_midweek_draw_code)} (${escapeHtml(d.last_midweek_status || "—")})`
     : "—";
+  const suspect = Array.isArray(d.suspect_slates) ? d.suspect_slates : [];
+  const suspectBlock = suspect.length
+    ? `<div class="no-slate-suspect"><strong>Fecha sospechosa (retenidas por el guardado de fechas):</strong><ul>` +
+      suspect
+        .map(
+          (s) =>
+            `<li><span class="mono">${escapeHtml(s.draw_code)}</span> — ${escapeHtml(s.date_status)}: ${escapeHtml((s.reasons && s.reasons[0]) || "")}</li>`,
+        )
+        .join("") +
+      `</ul><p>Acción: revisar la fuente LN o aplicar override de fecha (operador).</p></div>`
+    : "";
   return `
     <div class="empty-state no-slate-state">
       <strong>No hay boletas oficiales cargadas</strong>
@@ -83,6 +94,7 @@ function renderNoSlateState() {
         <li>Worker: <span>${escapeHtml(workerState)}</span></li>
         <li>Acción: ejecutar Scheduler o revisar la fuente LN.</li>
       </ul>
+      ${suspectBlock}
     </div>`;
 }
 
