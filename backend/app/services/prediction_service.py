@@ -380,6 +380,8 @@ class PredictionService:
                                 flags=sanity.flag_values(),
                                 fallback_used=fallback_used,
                                 visible_confidence=sanity.visible_confidence,
+                                confidence_band=confidence_band,
+                                draw_calibration_applied=draw_calibration_applied,
                             )
                         )
                     ),

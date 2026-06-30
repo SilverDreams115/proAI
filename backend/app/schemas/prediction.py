@@ -37,6 +37,12 @@ class PresentationGuardInfo(BaseModel):
     risk_level: str = "high"
     confidence: str = "baja"
     reason: list[str] = Field(default_factory=list)
+    # UI-facing confidence band, degraded from the model band when the pick was
+    # capped / flagged / not playable. The model's own confidence_band (used in
+    # internal logic) is preserved unchanged elsewhere. Allowed: high, medium,
+    # low, review, blocked, unreliable.
+    presentation_confidence_band: str = "review"
+    presentation_confidence_reason: str = ""
 
 
 class MatchPredictionResponse(BaseModel):

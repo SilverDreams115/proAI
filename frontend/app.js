@@ -24,6 +24,7 @@ import {
   riskLevelLabel,
   riskTone,
   visibleConfidenceLabel,
+  headlineConfidence,
   confidenceTone,
   decisionStatusLabel,
   limitChips,
@@ -1367,7 +1368,7 @@ function buildAnalysis(match) {
           <div class="dh-line"><span class="dh-key">Señal base</span><span class="badge-signal">${escapeHtml(basePick.label)}</span></div>
           <div class="dh-line"><span class="dh-key">Estrategia</span><span class="badge-strategy tone-${strategy.tone}">${escapeHtml(strategy.label)}</span></div>
           <div class="dh-line"><span class="dh-key">Riesgo</span><span class="badge-risk tone-${riskTone(riskLevel)}">${escapeHtml(riskLevelLabel(riskLevel))}</span></div>
-          <div class="dh-line"><span class="dh-key">Confianza visible</span><span class="conf-tag tone-${confidenceTone(visibleConf)}">${escapeHtml(visibleConfidenceLabel(visibleConf))}</span></div>
+          <div class="dh-line"><span class="dh-key">Confianza</span><span class="conf-tag tone-${headlineConfidence(pred).tone}">${escapeHtml(headlineConfidence(pred).label)}</span></div>
         </div>
       </div>
       <div class="analysis-grid">
