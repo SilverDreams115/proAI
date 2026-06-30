@@ -37,6 +37,12 @@ class PresentationGuardInfo(BaseModel):
     risk_level: str = "high"
     confidence: str = "baja"
     reason: list[str] = Field(default_factory=list)
+    # UI-facing confidence band, degraded from the model band when the pick was
+    # capped / flagged / not playable. The model's own confidence_band (used in
+    # internal logic) is preserved unchanged elsewhere. Allowed: high, medium,
+    # low, review, blocked, unreliable.
+    presentation_confidence_band: str = "review"
+    presentation_confidence_reason: str = ""
 
 
 class MatchPredictionResponse(BaseModel):
@@ -121,6 +127,17 @@ class MatchPredictionResponse(BaseModel):
     fallback_used: bool = False
     is_international_friendly: bool = False
     sanity_recommendation: str = ""
+
+    # --- Conservative draw (X) calibration (additive) --------------------
+    # When True, the decision vector above had its p_draw nudged up toward a
+    # conservative prior on a low-evidence / high-uncertainty match. The raw
+    # vector is unchanged; pre_draw_calibration_probabilities is the decision
+    # vector BEFORE the nudge, surfaced in the technical detail.
+    draw_calibration_applied: bool = False
+    draw_calibration_reason: str | None = None
+    pre_draw_calibration_probabilities: dict[str, float] = Field(
+        default_factory=lambda: {"L": 0.0, "E": 0.0, "V": 0.0}
+    )
 
     # --- R5.6-B controlled canary (additive, never overwrites the originals) -
     # `effective_*` are what the UI should render when `canary.active` is true.

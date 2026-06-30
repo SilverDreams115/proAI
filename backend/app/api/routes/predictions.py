@@ -250,6 +250,80 @@ async def get_slate_ticket_canary_dry_run(
     return build_ticket_canary_dry_run(session, slate)
 
 
+@router.get("/active-slates/options")
+async def get_active_slates_options(
+    session: Session = Depends(get_db_session),
+) -> dict:
+    """R6.4 read-only ticket OPTIONS for every active/upcoming slate.
+
+    Always proposes aggressive/balanced/conservative/manual options; respects the
+    Money Mode decision (no option is recommended when NO JUGAR). Read-only.
+    """
+    from app.db.session import read_only_transaction
+    from app.services.slate_options_service import build_active_slates_options
+
+    with read_only_transaction(session):
+        return build_active_slates_options(session)
+
+
+@router.get("/slates/{slate_id}/options")
+async def get_slate_options(
+    slate_id: str,
+    session: Session = Depends(get_db_session),
+) -> dict:
+    """R6.4 read-only ticket OPTIONS for one slate (always present)."""
+    from app.db.session import read_only_transaction
+    from app.services.slate_options_service import build_slate_options
+
+    slate_service = SlateService(SlateRepository(session))
+    slate = slate_service.get_slate(slate_id)
+    if slate is None:
+        raise HTTPException(status_code=404, detail="Slate not found.")
+    with read_only_transaction(session):
+        return build_slate_options(session, slate)
+
+
+@router.get("/active-slates/money-mode")
+async def get_active_slates_money_mode(
+    session: Session = Depends(get_db_session),
+) -> dict:
+    """R6.0 read-only Money Mode RC for every active/upcoming slate.
+
+    Produces the play/don't-play decision plus the aggressive/balanced/
+    conservative tickets for each active/upcoming slate. Strictly read-only:
+    the transaction is marked READ ONLY and rolled back, so it never writes a
+    prediction, a ticket snapshot or a feature snapshot, and never touches the
+    real ticket.
+    """
+    from app.db.session import read_only_transaction
+    from app.services.money_mode_service import build_active_slates_money_mode
+
+    with read_only_transaction(session):
+        return build_active_slates_money_mode(session)
+
+
+@router.get("/slates/{slate_id}/money-mode")
+async def get_slate_money_mode(
+    slate_id: str,
+    session: Session = Depends(get_db_session),
+) -> dict:
+    """R6.0 read-only Money Mode RC for one slate (play/don't-play + tickets).
+
+    Reuses the canary effective probabilities and the presentation guard so a
+    NO-SIMPLE / risk_high / review / blocked match never reads as a simple. No
+    snapshot writes, no ticket activation, no prediction regeneration.
+    """
+    from app.db.session import read_only_transaction
+    from app.services.money_mode_service import build_money_mode
+
+    slate_service = SlateService(SlateRepository(session))
+    slate = slate_service.get_slate(slate_id)
+    if slate is None:
+        raise HTTPException(status_code=404, detail="Slate not found.")
+    with read_only_transaction(session):
+        return build_money_mode(session, slate)
+
+
 @router.get("/slates/{slate_id}/quality", response_model=list[MatchDataQualityResponse])
 async def get_slate_data_quality(
     slate_id: str,

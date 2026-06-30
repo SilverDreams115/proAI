@@ -9,6 +9,7 @@ from fastapi import APIRouter
 from fastapi import Depends
 from fastapi import HTTPException
 from fastapi import Query
+from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -17,9 +18,11 @@ from app.repositories.ingestion_repository import IngestionRepository
 from app.repositories.slate_repository import SlateRepository
 from app.repositories.source_repository import SourceRepository
 from app.schemas.slate import ActiveSlateResponse
+from app.schemas.slate import DiscoveryInfo
 from app.schemas.slate import ProgolSlateCreate
 from app.schemas.slate import ProgolSlateResponse
 from app.schemas.slate import PromoteProposalResponse
+from app.schemas.slate import VisibleSlatesResponse
 from app.schemas.slate import SlateMatchResponse
 from app.schemas.slate import SlateProposalFixture
 from app.schemas.slate import SlateProposalResponse
@@ -66,6 +69,27 @@ def _serialize_slate(
             .limit(1)
         ) is not None
     is_closed = service.is_closed(slate)
+    # Official-lineage reality (demo/unverified excluded by callers). Computed
+    # only when a session is available; classify_slate needs DB access.
+    classification: str | None = None
+    comparable = False
+    has_results = False
+    if session is not None:
+        from app.services.slate_classification_service import classify_slate
+
+        reality = classify_slate(session, slate)
+        classification = reality.classification.value
+        comparable = reality.comparable_with_results
+        has_results = classification == "official_real"
+    date_status = "date_valid"
+    date_status_reasons: list[str] = []
+    if session is not None:
+        from app.services.date_sanity_service import slate_date_status
+
+        status, date_status_reasons = slate_date_status(session, slate)
+        date_status = status.value
+    date_suspect = date_status != "date_valid"
+    read_only = bool(slate.is_archived or is_closed)
     match_count = len(slate.matches)
     # Live predictions are computable read-only for any active slate that has
     # matches, even with zero persisted rows — the GET predictions endpoint
@@ -121,6 +145,13 @@ def _serialize_slate(
         persisted_prediction_count=persisted_prediction_count,
         match_count=match_count,
         live_prediction_available=live_prediction_available,
+        classification=classification,
+        comparable=comparable,
+        has_results=has_results,
+        read_only=read_only,
+        date_status=date_status,
+        date_suspect=date_suspect,
+        date_status_reasons=date_status_reasons,
     )
 
 
@@ -131,6 +162,255 @@ async def list_slates(
 ) -> list[ProgolSlateResponse]:
     service = SlateService(SlateRepository(session))
     return [_serialize_slate(slate, service, session) for slate in service.list_slates(include_closed=include_closed)]
+
+
+def _has_predictions_and_snapshot(session: Session, slate: ProgolSlateModel) -> bool:
+    has_pred = session.scalar(
+        select(PredictionModel.id)
+        .where(
+            PredictionModel.slate_id == slate.id,
+            PredictionModel.composition_hash == slate.composition_hash,
+        )
+        .limit(1)
+    )
+    has_snap = session.scalar(
+        select(TicketRecommendationSnapshotModel.id)
+        .where(
+            TicketRecommendationSnapshotModel.slate_id == slate.id,
+            TicketRecommendationSnapshotModel.is_valid.is_(True),
+            TicketRecommendationSnapshotModel.composition_hash == slate.composition_hash,
+        )
+        .limit(1)
+    )
+    return has_pred is not None and has_snap is not None
+
+
+def _pdf_provenance(session: Session, slate: ProgolSlateModel) -> dict:
+    """PDF source provenance + rejected-cierre-block info from the latest guide
+    proposal for this slate's concurso (empty when none)."""
+    import re
+
+    m = re.search(r"(\d+)$", slate.draw_code or "")
+    digits = m.group(1) if m else slate.draw_code
+    proposal = session.scalar(
+        select(ProgolSlateProposalModel)
+        .where(
+            ProgolSlateProposalModel.draw_code == digits,
+            ProgolSlateProposalModel.source_name != "operator_date_override",
+        )
+        .order_by(ProgolSlateProposalModel.last_seen_at.desc())
+        .limit(1)
+    )
+    if proposal is None:
+        return {}
+    try:
+        payload = json.loads(proposal.payload_json or "{}")
+    except (ValueError, TypeError):
+        return {}
+    block = payload.get("block_diagnostics") or {}
+    return {
+        "source_url": payload.get("source_url") or proposal.source_url,
+        "pdf_sha256": payload.get("pdf_sha256"),
+        "content_length": payload.get("content_length"),
+        "fetched_at": payload.get("fetched_at"),
+        "extracted_fixture_draw_code": block.get("fixture_draw_code") or payload.get("draw_code"),
+        "match_count": payload.get("match_count"),
+        "rejected_close_block_draw_code": block.get("rejected_close_block_draw_code"),
+        "rejected_close_year": block.get("rejected_close_year"),
+    }
+
+
+def _discovery_info(
+    session: Session, suspect_slates: list[dict] | None = None
+) -> DiscoveryInfo:
+    """Latest observed/promoted proposal per week_type — surfaced so the
+    empty state explains discovery status instead of showing a blank UI."""
+
+    def latest(week_type: str) -> ProgolSlateProposalModel | None:
+        return session.scalar(
+            select(ProgolSlateProposalModel)
+            .where(ProgolSlateProposalModel.week_type == week_type)
+            .order_by(ProgolSlateProposalModel.last_seen_at.desc())
+            .limit(1)
+        )
+
+    weekend = latest("weekend")
+    midweek = latest("midweek")
+    last_observed = session.scalar(
+        select(func.max(ProgolSlateProposalModel.last_seen_at))
+    )
+    return DiscoveryInfo(
+        last_weekend_draw_code=weekend.draw_code if weekend else None,
+        last_weekend_status=weekend.status if weekend else None,
+        last_weekend_seen_at=weekend.last_seen_at if weekend else None,
+        last_midweek_draw_code=midweek.draw_code if midweek else None,
+        last_midweek_status=midweek.status if midweek else None,
+        last_midweek_seen_at=midweek.last_seen_at if midweek else None,
+        last_observed_at=last_observed,
+        suspect_slates=suspect_slates or [],
+    )
+
+
+@router.get("/visible", response_model=VisibleSlatesResponse)
+async def visible_slates(
+    limit_recent: int = Query(default=4, ge=1, le=12),
+    session: Session = Depends(get_db_session),
+) -> VisibleSlatesResponse:
+    """Selector source of truth, never empty when official slates exist.
+
+    Returns open official slates first; when none are open, falls back to the
+    most recent official slates (read-only) that still have a prediction +
+    valid snapshot so the postmortem is viewable. Demo/unverified slates are
+    excluded via classify_slate. Weekend and Media Semana stay independent —
+    callers group by ``week_type``; nothing is merged across types here.
+    """
+    from app.services.slate_classification_service import classify_slate
+    from app.services.date_sanity import DateStatus
+    from app.services.date_sanity_service import slate_date_status
+
+    service = SlateService(SlateRepository(session))
+    now = datetime.now(timezone.utc)
+    # Official lineage only (comparable=True covers official_real and
+    # official_but_no_results_yet); demo/unverified are dropped.
+    official = [
+        slate
+        for slate in service.list_slates(include_closed=True)
+        if classify_slate(session, slate).comparable_with_results
+    ]
+    # A slate may only be presented as OPEN when its dates pass the sanity gate.
+    # Date-suspect / stale-source / needs-confirmation slates are held back
+    # (shown in discovery diagnostics, never as a playable open boleta).
+    def _date_ok(slate: ProgolSlateModel) -> bool:
+        status, _ = slate_date_status(session, slate)
+        return status == DateStatus.DATE_VALID
+
+    open_slates = [
+        s for s in official if not service.is_closed(s, now) and _date_ok(s)
+    ]
+    recent_closed = [
+        s
+        for s in official
+        if service.is_closed(s, now) and _has_predictions_and_snapshot(session, s)
+    ]
+    def _closed_at(slate: ProgolSlateModel) -> datetime:
+        when = slate.registration_closes_at or slate.created_at
+        return when.replace(tzinfo=timezone.utc) if when.tzinfo is None else when
+
+    # Open: soonest cierre first. Recent: most-recently closed first.
+    open_slates.sort(key=lambda s: _closed_at(s) if s.registration_closes_at else datetime.max.replace(tzinfo=timezone.utc))
+    recent_closed.sort(key=_closed_at, reverse=True)
+    recent_closed = recent_closed[:limit_recent]
+
+    # Diagnostics: official slates held back by the date gate, enriched with
+    # PDF provenance so an operator sees the source bytes + the rejected block.
+    suspect_slates: list[dict] = []
+    for slate in official:
+        status, status_reasons = slate_date_status(session, slate)
+        if status != DateStatus.DATE_VALID:
+            entry = {
+                "draw_code": slate.draw_code,
+                "week_type": slate.week_type,
+                "date_status": status.value,
+                "activation_status": "blocked",
+                "visible_as_open": False,
+                "registration_closes_at": (
+                    slate.registration_closes_at.isoformat()
+                    if slate.registration_closes_at
+                    else None
+                ),
+                "reasons": status_reasons,
+                "recommended_action": (
+                    "Esperar PDF corregido de LN o confirmar fecha oficial con evidencia."
+                ),
+            }
+            entry.update(_pdf_provenance(session, slate))
+            suspect_slates.append(entry)
+
+    if open_slates:
+        selected = open_slates[0].id
+        reason = "open_slate"
+    elif recent_closed:
+        selected = recent_closed[0].id
+        reason = "fallback_recent"
+    else:
+        selected = None
+        reason = "no_official_slates"
+
+    return VisibleSlatesResponse(
+        open_slates=[_serialize_slate(s, service, session) for s in open_slates],
+        recent_slates=[_serialize_slate(s, service, session) for s in recent_closed],
+        selected_default_slate_id=selected,
+        reason=reason,
+        discovery=_discovery_info(session, suspect_slates),
+    )
+
+
+class DateOverrideRequest(BaseModel):
+    # Operator-confirmed official cierre. Required — we never invent a date.
+    registration_closes_at: datetime
+    reason: str
+    operator_note: str | None = None
+
+
+@router.post("/{slate_id}/date-override", summary="Operator date override (traced)")
+async def date_override(
+    slate_id: str,
+    body: DateOverrideRequest,
+    session: Session = Depends(get_db_session),
+) -> dict:
+    """Apply an operator-confirmed official cierre to a slate, fully traced.
+
+    Used only when LN's guide is stale/ambiguous and the operator supplies the
+    real date. Records old/new + source ``operator_date_override`` and emits a
+    structured audit log. Never overwrites silently; a later LN ingest can
+    still replace/confirm. Un-archives the slate so the gate can re-evaluate.
+    """
+    import logging
+
+    slate = SlateService(SlateRepository(session)).get_slate(slate_id)
+    if slate is None:
+        raise HTTPException(status_code=404, detail="Slate not found.")
+    old_closes = slate.registration_closes_at
+    new_closes = body.registration_closes_at
+    if new_closes.tzinfo is None:
+        new_closes = new_closes.replace(tzinfo=timezone.utc)
+    slate.registration_closes_at = new_closes
+    # Let the date gate re-decide visibility; clear the immediate archive flag
+    # so a valid future cierre can re-open the slate.
+    if slate.is_archived and new_closes > datetime.now(timezone.utc):
+        slate.is_archived = False
+    session.add(slate)
+
+    audit = {
+        "event": "operator_date_override",
+        "slate_id": slate.id,
+        "draw_code": slate.draw_code,
+        "source_name": "operator_date_override",
+        "source_type": "operator_manual",
+        "reason": body.reason,
+        "operator_note": body.operator_note,
+        "old_registration_closes_at": old_closes.isoformat() if old_closes else None,
+        "new_registration_closes_at": new_closes.isoformat(),
+        "observed_at": datetime.now(timezone.utc).isoformat(),
+    }
+    # Persist a traceable proposal-style record (queryable + visible in debug).
+    session.add(
+        ProgolSlateProposalModel(
+            draw_code=slate.draw_code,
+            week_type=slate.week_type,
+            source_name="operator_date_override",
+            source_url="operator://date-override",
+            status="operator_override",
+            registration_closes_at=new_closes,
+            payload_json=json.dumps(audit),
+        )
+    )
+    logging.getLogger(__name__).info("operator_date_override", extra=audit)
+    session.commit()
+    from app.services.date_sanity_service import slate_date_status
+
+    status, reasons = slate_date_status(session, slate)
+    return {**audit, "date_status": status.value, "date_status_reasons": reasons}
 
 
 @router.get("/active", response_model=ActiveSlateResponse)

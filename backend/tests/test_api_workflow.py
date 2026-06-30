@@ -198,7 +198,9 @@ async def test_frontend_shell_supports_eight_match_slate(client) -> None:
     assert "badge-signal" in js_response.text
     assert "prob-bar" in js_response.text
     assert "Acción recomendada" in js_response.text
-    assert "Confianza visible" in js_response.text
+    # Confidence headline now uses the degraded presentation band (never shows
+    # "Alta" on a capped/flagged pick); wired via headlineConfidence().
+    assert "headlineConfidence" in js_response.text
     assert "dh-badge-type" not in js_response.text
     # Fase 3.1: strategy comes from the backend field (resolveTicketStrategy);
     # counters use product fields, NOT raw confidence_band; the per-card tech

@@ -2,6 +2,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 
 from sqlalchemy import create_engine
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 from sqlalchemy.orm import close_all_sessions
 from sqlalchemy.orm import sessionmaker
@@ -31,6 +32,25 @@ def configure_session(database_url: str) -> None:
     engine.dispose()
     engine = _build_engine(database_url)
     SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
+
+
+@contextmanager
+def read_only_transaction(session: Session) -> Iterator[Session]:
+    """Run a strictly read-only unit of work and always roll it back.
+
+    Resets the session to a clean transaction boundary, marks the transaction
+    ``READ ONLY`` (Postgres rejects any write inside it) and rolls back in
+    ``finally`` so nothing the block did can ever persist. Used by the Money
+    Mode read-only service surfaces (endpoint, CLI). On SQLite the SET statement
+    is a no-op, but the guaranteed rollback still holds the read-only contract.
+    """
+    session.rollback()
+    try:
+        if session.bind is not None and session.bind.dialect.name == "postgresql":
+            session.execute(text("SET TRANSACTION READ ONLY"))
+        yield session
+    finally:
+        session.rollback()
 
 
 @contextmanager

@@ -32,7 +32,11 @@ from app.schemas.live_results import (
 )
 from app.schemas.tracking import TrackingResponse
 from app.services.live_results_service import LiveResultsService
-from app.services.results_ingestion_service import ResultsIngestionService
+from app.services.results_ingestion_service import (
+    OPERATOR_SOURCE_KIND,
+    OPERATOR_SOURCE_PRIORITY,
+    ResultsIngestionService,
+)
 from app.services.slate_classification_service import classify_slate
 from app.services.slate_service import SlateService
 from app.services.tracking_service import TrackingService
@@ -45,6 +49,12 @@ class IngestResultsRequest(BaseModel):
     # fabricated; pending matches simply stay pending.
     raw_text: str | None = None
     source_url: str | None = None
+    # Optional operator-source override. When `source_name` is set, the
+    # results are recorded under a distinct, traceable operator source
+    # (e.g. a typed-in screenshot) that ranks BELOW the LN official acta
+    # so a later LN ingest wins by priority. Leave unset for LN ingestion.
+    source_name: str | None = None
+    source_type: str | None = None
 
 router = APIRouter(prefix="/slates", tags=["live-results"])
 
@@ -177,8 +187,14 @@ async def ingest_results(
             raise HTTPException(status_code=502, detail=f"No se pudo obtener resultados LN: {exc}")
         text = str(documents[0].payload.get("raw_text", "")) if documents else ""
         source_url = source_url or connector.base_url
+    ingest_kwargs: dict = {"source_url": source_url}
+    if body.source_name:
+        # Operator-provided source: traceable, but ranked below the LN acta.
+        ingest_kwargs["source_name"] = body.source_name
+        ingest_kwargs["source_kind"] = body.source_type or OPERATOR_SOURCE_KIND
+        ingest_kwargs["source_priority"] = OPERATOR_SOURCE_PRIORITY
     report = ResultsIngestionService(session).ingest_for_slate(
-        slate, text, source_url=source_url
+        slate, text, **ingest_kwargs
     )
     session.commit()
     return report

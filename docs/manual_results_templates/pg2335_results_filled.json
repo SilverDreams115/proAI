@@ -1,0 +1,21 @@
+{
+  "draw_code": "PG-2335",
+  "source": "manual_official",
+  "source_note": "TuLotero/Progol - captura oficial proporcionada por el usuario",
+  "results": [
+    {"position": 1, "sign": "L", "score": "1-0", "source_note": "México vs Australia"},
+    {"position": 2, "sign": "E", "score": "1-1", "source_note": "Paris SG vs Arsenal"},
+    {"position": 3, "sign": "E", "score": "0-0", "source_note": "Toluca vs Tigres"},
+    {"position": 4, "sign": "L", "score": "2-0", "source_note": "Tampico vs Tepatitlán"},
+    {"position": 5, "sign": "L", "score": "3-2", "source_note": "E.U.A. vs Senegal"},
+    {"position": 6, "sign": "L", "score": "3-1", "source_note": "Noruega vs Suecia"},
+    {"position": 7, "sign": "V", "score": "1-2", "source_note": "Granada vs Sp. Gijón"},
+    {"position": 8, "sign": "L", "score": "1-0", "source_note": "Ceuta vs Albacete"},
+    {"position": 9, "sign": "V", "score": "1-3", "source_note": "Gremio vs Corinthians"},
+    {"position": 10, "sign": "L", "score": "3-1", "source_note": "Bragantino vs Inter P.A."},
+    {"position": 11, "sign": "E", "score": "1-1", "source_note": "Cruzeiro vs Fluminense"},
+    {"position": 12, "sign": "V", "score": "1-2", "source_note": "Avaí vs Criciúma"},
+    {"position": 13, "sign": "V", "score": "0-3", "source_note": "Huachipato vs U. Católica"},
+    {"position": 14, "sign": "E", "score": "2-2", "source_note": "Degerfors vs Brommapojkarna"}
+  ]
+}

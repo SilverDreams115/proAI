@@ -1,0 +1,61 @@
+{
+  "draw_code": "PGM-800",
+  "source": "manual_official",
+  "source_note": "Pronósticos/TuLotero - pendiente de llenar (sign + score por posición)",
+  "results": [
+    {
+      "position": 1,
+      "sign": null,
+      "score": null,
+      "source_note": "México vs South Korea"
+    },
+    {
+      "position": 2,
+      "sign": null,
+      "score": null,
+      "source_note": "France vs Senegal"
+    },
+    {
+      "position": 3,
+      "sign": null,
+      "score": null,
+      "source_note": "England vs Croatia"
+    },
+    {
+      "position": 4,
+      "sign": null,
+      "score": null,
+      "source_note": "Ghana vs Panama"
+    },
+    {
+      "position": 5,
+      "sign": null,
+      "score": null,
+      "source_note": "Czech Republic vs South Africa"
+    },
+    {
+      "position": 6,
+      "sign": null,
+      "score": null,
+      "source_note": "Suiza vs Bosnia-Herzegovina"
+    },
+    {
+      "position": 7,
+      "sign": null,
+      "score": null,
+      "source_note": "USA vs Australia"
+    },
+    {
+      "position": 8,
+      "sign": null,
+      "score": null,
+      "source_note": "Scotland vs Morocco"
+    },
+    {
+      "position": 9,
+      "sign": null,
+      "score": null,
+      "source_note": "Turkey vs Paraguay"
+    }
+  ]
+}

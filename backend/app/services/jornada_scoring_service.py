@@ -13,6 +13,10 @@ from app.models.tables import (
     ProgolSlateModel,
     TicketRecommendationSnapshotModel,
 )
+from app.services.prediction_probabilities import (
+    raw_probabilities,
+    visible_probabilities,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -66,16 +70,24 @@ class JornadaScoringService:
             if has_result:
                 matches_with_results += 1
 
+            # Score on the calibrated/visible (decision) vector, never the
+            # raw model output. For current-engine rows column == decision;
+            # for legacy closed rows the raw lives in the column and the
+            # capped decision vector in the audit — using the audit here
+            # corrects the read path without regenerating the prediction.
+            visible = visible_probabilities(pred) if pred is not None else None
+            raw_vec = raw_probabilities(pred) if pred is not None else None
+
             hit: bool | None = None
             brier_score: float | None = None
-            if result is not None and pred is not None:
+            if result is not None and pred is not None and visible is not None:
                 hit = pred.recommended_outcome == result.result_code
                 if hit:
                     simple_hits += 1
                 brier_score = self._brier_score(
-                    pred.home_probability,
-                    pred.draw_probability,
-                    pred.away_probability,
+                    visible[0],
+                    visible[1],
+                    visible[2],
                     result.result_code,
                 )
                 brier_scores.append(brier_score)
@@ -116,9 +128,16 @@ class JornadaScoringService:
                     "away_goals": result.away_goals if result else None,
                     "recommended_outcome": pred.recommended_outcome if pred else None,
                     "confidence_band": pred.confidence_band if pred else None,
-                    "home_probability": pred.home_probability if pred else None,
-                    "draw_probability": pred.draw_probability if pred else None,
-                    "away_probability": pred.away_probability if pred else None,
+                    # Visible/decision vector (what is scored + displayed).
+                    "home_probability": visible[0] if visible else None,
+                    "draw_probability": visible[1] if visible else None,
+                    "away_probability": visible[2] if visible else None,
+                    # Raw model output kept for transparency; never hidden.
+                    "raw_probabilities": (
+                        {"L": raw_vec[0], "E": raw_vec[1], "V": raw_vec[2]}
+                        if raw_vec is not None
+                        else None
+                    ),
                     "generated_at": pred.generated_at.isoformat() if pred else None,
                     "hit": hit,
                     "brier_score": brier_score,

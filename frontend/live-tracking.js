@@ -5,6 +5,7 @@
 // they can be locked with Vitest. The DOM/fetch wiring (initLiveTracking)
 // sits at the bottom and is the only part that needs the browser.
 import { formatPercent, escapeHtml } from "./helpers.js";
+import { drawCalibrationDetail } from "./draw-calibration-ui.js";
 
 const STATUS_LABELS = {
   scheduled: "Pendiente",
@@ -117,6 +118,50 @@ function drawChips(match) {
   return "";
 }
 
+// True when the raw (pre-guardrail) top probability is materially higher
+// than the visible/decision top — i.e. the sanity layer capped it. Used to
+// surface a "baja evidencia" note and never to display raw as the headline.
+export function rawWasCapped(match) {
+  const raw = match.raw_probabilities;
+  if (!raw) return false;
+  const rawTop = Math.max(raw.L ?? 0, raw.E ?? 0, raw.V ?? 0);
+  const visTop = Math.max(
+    match.home_probability ?? 0,
+    match.draw_probability ?? 0,
+    match.away_probability ?? 0,
+  );
+  return rawTop - visTop > 0.01;
+}
+
+// Principal probability cell = the calibrated/visible (decision) vector.
+// This is the ONLY probability the user reads as the headline number.
+export function visibleProbCell(match) {
+  return (
+    `<span class="vp vp-l">L ${formatPercent(match.home_probability)}</span>` +
+    `<span class="vp vp-e">X ${formatPercent(match.draw_probability)}</span>` +
+    `<span class="vp vp-v">V ${formatPercent(match.away_probability)}</span>`
+  );
+}
+
+// Raw model output lives ONLY inside a collapsed technical <details>. When it
+// was capped we add an explicit "ajustada por baja evidencia" note so a 96%
+// raw favourite is never sold as certainty.
+export function rawProbDetail(match) {
+  const raw = match.raw_probabilities;
+  if (!raw) return "";
+  const capped = rawWasCapped(match);
+  const note = capped
+    ? '<span class="raw-cap-note">Probabilidad ajustada por baja evidencia</span>'
+    : "";
+  return (
+    `<details class="raw-probs"${capped ? ' data-capped="true"' : ""}>` +
+    "<summary>Detalle técnico · prob. cruda (raw)</summary>" +
+    `<span class="raw-l">L ${formatPercent(raw.L)}</span>` +
+    `<span class="raw-e">X ${formatPercent(raw.E)}</span>` +
+    `<span class="raw-v">V ${formatPercent(raw.V)}</span>${note}</details>`
+  );
+}
+
 // Legacy compact row (kept for the live-results detail view + tests).
 export function renderLiveMatchRow(match) {
   const tone = liveMatchTone(match);
@@ -182,6 +227,7 @@ export function renderComparisonRow(match) {
       <td class="mono">${match.position}</td>
       <td class="cmp-teams">${escapeHtml(match.home_team_name)} <span class="vs">vs</span> ${escapeHtml(match.away_team_name)}${drawChips(match)}</td>
       <td class="cmp-pred">${predictionChips(match)}</td>
+      <td class="cmp-probs">${visibleProbCell(match)}${drawCalibrationDetail(match, escapeHtml)}${rawProbDetail(match)}</td>
       <td class="cmp-score mono">${formatScore(match)} ${realChip}</td>
       <td class="cmp-mode">${modeGlyph(match.simple_hit)}</td>
       <td class="cmp-mode">${modeGlyph(match.doubles_hit)}</td>
@@ -250,7 +296,7 @@ export function renderComparisonDetail(data) {
       </div>
       <table class="cmp-table">
         <thead><tr>
-          <th>#</th><th>Partido</th><th>Predicción</th><th>Resultado</th>
+          <th>#</th><th>Partido</th><th>Predicción</th><th title="Probabilidad visible (calibrada)">Prob. visible</th><th>Resultado</th>
           <th title="Simple">S</th><th title="Dobles">D</th><th title="Full">F</th><th>Diagnóstico</th><th>Learning</th>
         </tr></thead>
         <tbody>${rows}</tbody>
