@@ -57,6 +57,12 @@ class Settings(BaseModel):
     current_progol_refresh_job_name: str = Field(default="current-progol-refresh")
     progol_proposal_observe_enabled: bool = Field(default=True)
     progol_proposal_observe_interval_minutes: int = Field(default=60)
+    # MS PDF watcher: re-checks the LN guiamedia.pdf and activates the MS slate
+    # only when the PDF carries a valid cierre for the correct concurso. Default
+    # follows the discovery flag; interval is gentle to avoid hammering LN.
+    ms_pdf_watch_enabled: bool = Field(default=True)
+    ms_pdf_watch_interval_minutes: int = Field(default=90)
+    ms_pdf_watch_min_backoff_minutes: int = Field(default=30)
     # Fase 3: auto-promote validated proposals when the active slate's
     # cierre is imminent (or no active slate exists). Threshold is in
     # hours; default 2 means "promote the next concurso once we're
@@ -246,6 +252,15 @@ def load_settings() -> Settings:
         progol_proposal_observe_enabled=_get_bool("PROAI_PROGOL_PROPOSAL_OBSERVE_ENABLED", True),
         progol_proposal_observe_interval_minutes=int(
             os.getenv("PROAI_PROGOL_PROPOSAL_OBSERVE_INTERVAL_MINUTES", "60")
+        ),
+        ms_pdf_watch_enabled=_get_bool(
+            "PROAI_MS_PDF_WATCH_ENABLED", _get_bool("PROAI_PROGOL_PROPOSAL_OBSERVE_ENABLED", True)
+        ),
+        ms_pdf_watch_interval_minutes=int(
+            os.getenv("PROAI_MS_PDF_WATCH_INTERVAL_MINUTES", "90")
+        ),
+        ms_pdf_watch_min_backoff_minutes=int(
+            os.getenv("PROAI_MS_PDF_WATCH_MIN_BACKOFF_MINUTES", "30")
         ),
         progol_auto_promote_enabled=_get_bool("PROAI_PROGOL_AUTO_PROMOTE_ENABLED", True),
         progol_auto_promote_threshold_hours=float(

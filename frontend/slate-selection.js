@@ -119,6 +119,38 @@ export function suspectSlateDiagnostics(visible) {
   }));
 }
 
+// MS PDF watcher status line for diagnostics. Returns null when no watcher
+// data is present yet.
+export function msPdfWatchStatus(visible) {
+  const d = (visible && visible.discovery) || {};
+  if (!d.last_ms_pdf_checked_at && !d.last_ms_pdf_status) return null;
+  const STATUS_LABEL = {
+    unchanged: "PDF sin cambios",
+    changed_invalid: "PDF actualizado · cierre aún inválido",
+    changed_valid: "PDF actualizado · MS activada",
+    parse_error: "PDF ilegible",
+  };
+  const cand = d.current_ms_candidate || {};
+  const shaShort = d.last_ms_pdf_sha256 ? String(d.last_ms_pdf_sha256).slice(0, 8) : null;
+  let detail = "";
+  if (d.last_ms_pdf_status === "changed_invalid" || cand.date_status === "source_invalid") {
+    detail = "LN aún publica el cierre del concurso 800.";
+  } else if (d.last_ms_pdf_status === "changed_valid" || cand.date_status === "date_valid") {
+    detail = "MS activada desde PDF oficial.";
+  }
+  return {
+    checked_at: d.last_ms_pdf_checked_at || null,
+    status: d.last_ms_pdf_status || null,
+    status_label: STATUS_LABEL[d.last_ms_pdf_status] || "Sin revisión registrada",
+    sha_short: shaShort,
+    candidate: cand.draw_code || null,
+    candidate_status: cand.date_status || null,
+    activation_status: cand.activation_status || null,
+    detail,
+    action: d.ms_pdf_recommended_action || null,
+  };
+}
+
 // Human lines for the "detected but not playable" PDF-source case, e.g. PGM-802.
 export function pdfSourceDiagnosticLines(entry) {
   if (!entry) return [];

@@ -73,6 +73,14 @@ class DiscoveryInfo(BaseModel):
     # Official slates held back by the Date Sanity Gate (stale/suspect dates),
     # surfaced so the empty/diagnostics view explains why they aren't open.
     suspect_slates: list[dict] = []
+    # MS PDF watcher diagnostics (observe_progol_ms_pdf).
+    last_ms_pdf_checked_at: str | None = None
+    last_ms_pdf_sha256: str | None = None
+    last_ms_pdf_changed_at: str | None = None
+    # unchanged | changed_valid | changed_invalid | parse_error
+    last_ms_pdf_status: str | None = None
+    current_ms_candidate: dict | None = None
+    ms_pdf_recommended_action: str | None = None
 
 
 class VisibleSlatesResponse(BaseModel):

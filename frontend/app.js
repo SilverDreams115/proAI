@@ -50,7 +50,7 @@ import {
   setCachedDiagnostics,
   clearDiagnosticsCache,
 } from "./slate-panel-cache.js";
-import { resolveActiveSelection, resolveVisibleSelection, selectedSlateCountdownMs, slateBadges, suspectSlateDiagnostics, pdfSourceDiagnosticLines } from "./slate-selection.js";
+import { resolveActiveSelection, resolveVisibleSelection, selectedSlateCountdownMs, slateBadges, suspectSlateDiagnostics, pdfSourceDiagnosticLines, msPdfWatchStatus } from "./slate-selection.js";
 // NOTE: live-tracking is loaded via a guarded dynamic import in the
 // bootstrap (not a static import), so a failure to load/link that module
 // can never abort app.js and blank out the main selector.
@@ -74,6 +74,14 @@ function renderNoSlateState() {
   const ms = d.last_midweek_draw_code
     ? `${escapeHtml(d.last_midweek_draw_code)} (${escapeHtml(d.last_midweek_status || "—")})`
     : "—";
+  const watch = msPdfWatchStatus({ discovery: d });
+  const watchBlock = watch
+    ? `<div class="ms-pdf-watch"><strong>Revisión PDF MS:</strong> ${escapeHtml(watch.status_label)}` +
+      (watch.sha_short ? ` · <span class="mono">${escapeHtml(watch.sha_short)}</span>` : "") +
+      (watch.checked_at ? ` · ${escapeHtml(formatDate(watch.checked_at))}` : "") +
+      (watch.detail ? `<br><span>${escapeHtml(watch.detail)}</span>` : "") +
+      `</div>`
+    : "";
   const suspectDiag = suspectSlateDiagnostics({ discovery: d });
   const suspectBlock = suspectDiag.length
     ? `<div class="no-slate-suspect"><strong>Detectadas desde PDF oficial, no jugables (fecha inválida):</strong>` +
@@ -98,6 +106,7 @@ function renderNoSlateState() {
         <li>Worker: <span>${escapeHtml(workerState)}</span></li>
         <li>Acción: ejecutar Scheduler o revisar la fuente LN.</li>
       </ul>
+      ${watchBlock}
       ${suspectBlock}
     </div>`;
 }

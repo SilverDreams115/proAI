@@ -56,6 +56,8 @@ class WorkerState:
     last_maintenance_deleted: int = 0
     last_live_results_observed_at: datetime | None = None
     last_live_results_finalized: int = 0
+    last_ms_pdf_watched_at: datetime | None = None
+    last_ms_pdf_status: str | None = None
 
 
 class SchedulerWorker:
@@ -94,6 +96,7 @@ class SchedulerWorker:
                     },
                 )
             self._maybe_observe_proposal(session, polled_at)
+            self._maybe_watch_ms_pdf(session, polled_at)
             self._maybe_observe_ms_proposal(session, polled_at)
             self._maybe_auto_promote_proposals(session, polled_at)
             self._maybe_observe_live_results(session, polled_at)
@@ -251,6 +254,11 @@ class SchedulerWorker:
         so both PDFs are checked at the same cadence without extra config."""
         if not settings.progol_proposal_observe_enabled:
             return
+        # The MS PDF watcher supersedes the plain observe when enabled (it
+        # already calls observe_ms once + adds provenance/activation), so we
+        # skip here to avoid a duplicate LN fetch.
+        if settings.ms_pdf_watch_enabled:
+            return
         interval = timedelta(minutes=max(1, settings.progol_proposal_observe_interval_minutes))
         last = self._state.last_ms_proposal_observed_at
         if last is not None and (polled_at - last) < interval:
@@ -281,6 +289,33 @@ class SchedulerWorker:
                 "observations": proposal.observations,
             },
         )
+
+    def _maybe_watch_ms_pdf(self, session, polled_at: datetime) -> None:
+        """observe_progol_ms_pdf: re-check the LN MS PDF on a gentle interval,
+        detect a sha256 change, and activate the MS slate only when the PDF
+        carries a valid cierre for the correct concurso. Idempotent; one LN
+        fetch per interval; never touches Weekend."""
+        if not settings.ms_pdf_watch_enabled:
+            return
+        interval = timedelta(minutes=max(1, settings.ms_pdf_watch_interval_minutes))
+        backoff = timedelta(minutes=max(0, settings.ms_pdf_watch_min_backoff_minutes))
+        gate = max(interval, backoff)
+        last = self._state.last_ms_pdf_watched_at
+        if last is not None and (polled_at - last) < gate:
+            return
+        self._state.last_ms_pdf_watched_at = polled_at
+        try:
+            from app.services.ms_pdf_watch_service import run_ms_pdf_watch
+
+            result = run_ms_pdf_watch(session, now=polled_at)
+            session.commit()
+        except Exception:
+            session.rollback()
+            logger.exception(
+                "ms pdf watch failed", extra={"event": "ms_pdf_watch_failed"}
+            )
+            return
+        self._state.last_ms_pdf_status = result.get("last_ms_pdf_status")
 
     def _maybe_auto_promote_proposals(self, session, polled_at: datetime) -> None:
         # Fase 3: turn validated proposals into real slates without an

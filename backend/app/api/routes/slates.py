@@ -239,6 +239,34 @@ def _discovery_info(
     last_observed = session.scalar(
         select(func.max(ProgolSlateProposalModel.last_seen_at))
     )
+    # MS PDF watcher diagnostics + current MS candidate state.
+    from app.services.ms_pdf_watch_service import latest_ms_pdf_watch_diagnostics
+
+    watch = latest_ms_pdf_watch_diagnostics(session)
+    ms_candidate = None
+    ms_action = None
+    if midweek is not None:
+        ms_slate = session.scalar(
+            select(ProgolSlateModel).where(
+                ProgolSlateModel.draw_code.like(f"%{midweek.draw_code}"),
+                ProgolSlateModel.week_type == "midweek",
+            )
+        )
+        if ms_slate is not None:
+            from app.services.date_sanity_service import slate_date_status
+
+            ds, reasons = slate_date_status(session, ms_slate)
+            ms_candidate = {
+                "draw_code": ms_slate.draw_code,
+                "date_status": ds.value,
+                "activation_status": "open" if ds.value == "date_valid" and not ms_slate.is_archived else "blocked",
+                "reason": reasons[0] if reasons else None,
+            }
+            ms_action = (
+                "MS activada desde PDF oficial"
+                if ds.value == "date_valid"
+                else "Esperar PDF corregido de LN (cierre válido del concurso correcto)"
+            )
     return DiscoveryInfo(
         last_weekend_draw_code=weekend.draw_code if weekend else None,
         last_weekend_status=weekend.status if weekend else None,
@@ -248,6 +276,12 @@ def _discovery_info(
         last_midweek_seen_at=midweek.last_seen_at if midweek else None,
         last_observed_at=last_observed,
         suspect_slates=suspect_slates or [],
+        last_ms_pdf_checked_at=watch.get("last_ms_pdf_checked_at"),
+        last_ms_pdf_sha256=watch.get("last_ms_pdf_sha256"),
+        last_ms_pdf_changed_at=watch.get("last_ms_pdf_changed_at"),
+        last_ms_pdf_status=watch.get("last_ms_pdf_status"),
+        current_ms_candidate=ms_candidate,
+        ms_pdf_recommended_action=ms_action,
     )
 
 
