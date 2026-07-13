@@ -5,6 +5,19 @@ import pytest
 from httpx import ASGITransport
 from httpx import AsyncClient
 
+SLOW_TEST_FILES = {
+    "test_adaptive_retraining.py",
+    "test_backtest_publisher.py",
+    "test_e2e_prediction_pipeline.py",
+    "test_expected_goals_service.py",
+    "test_ingestion.py",
+    "test_neural_baseline.py",
+    "test_openapi_schema.py",
+    "test_train_rating_experiment.py",
+    "test_validate_rating_candidate.py",
+    "test_worker_routes.py",
+}
+
 os.environ.setdefault("PROAI_DATABASE_URL", "sqlite:///./backend/data/test_bootstrap.db")
 # Tests run inside a production-tagged container by default, which flips
 # auth_required on and rejects every unauthenticated call. Force the
@@ -23,6 +36,14 @@ os.environ["PROAI_ALLOWED_HOSTS"] = "*"
 # slim. Tests that exercise /api/worker/scheduler/run-once need
 # them on regardless of the inherited PROAI_ENVIRONMENT.
 os.environ["PROAI_ENABLE_WORKER_ROUTES"] = "true"
+
+
+def pytest_collection_modifyitems(items):
+    for item in items:
+        if item.get_closest_marker("anyio"):
+            item.add_marker(pytest.mark.integration)
+        if item.path.name in SLOW_TEST_FILES:
+            item.add_marker(pytest.mark.slow)
 
 
 @pytest.fixture(autouse=True)

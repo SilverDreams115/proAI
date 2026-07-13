@@ -33,10 +33,14 @@ Dashboard en `http://127.0.0.1:8000/`.
 
 ```bash
 cd backend
-.venv/bin/python -m pytest tests/ -q   # 458 tests
+.venv/bin/python -m pytest tests/ -q   # 1031 tests
 .venv/bin/ruff check app/ tests/       # linter
 .venv/bin/mypy app/                    # tipos
-make check                             # lint + typecheck + test
+make test-fast                         # unit/pure tests, feedback rapido
+make test-integration                  # ASGI/API/DB workflows no lentos
+make test-slow                         # entrenamientos/backtests amplios
+make test                              # suite completa
+make check                             # lint + typecheck + test-fast
 ```
 
 ## Rebuild tras cambios de código
