@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import json
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from time import perf_counter
 import logging
 
@@ -23,6 +25,7 @@ from app.services.slate_service import SlateService
 
 configure_logging(level=settings.log_level, json_logs=settings.log_json)
 logger = logging.getLogger("proai.worker.scheduler")
+WORKER_HEARTBEAT_PATH = Path("/data/scheduler_worker_heartbeat.json")
 
 
 @dataclass(slots=True)
@@ -135,6 +138,7 @@ class SchedulerWorker:
         finally:
             if session is not None:
                 session.close()
+            write_worker_heartbeat(self._state)
 
     def _maybe_observe_live_results(self, session, polled_at: datetime) -> None:
         # Persist a final JornadaScore for any closed slate that is now
@@ -501,6 +505,33 @@ worker = SchedulerWorker()
 
 def get_worker_state() -> WorkerState:
     return worker._state
+
+
+def write_worker_heartbeat(state: WorkerState) -> None:
+    payload = {
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "executed_runs": state.executed_runs,
+        "failed_iterations": state.failed_iterations,
+        "last_polled_at": state.last_polled_at,
+        "last_executed_at": state.last_executed_at,
+        "last_error_at": state.last_error_at,
+        "last_error_message": state.last_error_message,
+        "last_cycle_duration_ms": state.last_cycle_duration_ms,
+    }
+    try:
+        WORKER_HEARTBEAT_PATH.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = WORKER_HEARTBEAT_PATH.with_suffix(".tmp")
+        tmp_path.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
+        tmp_path.replace(WORKER_HEARTBEAT_PATH)
+    except Exception as exc:  # pragma: no cover - heartbeat must never stop the worker
+        logger.warning("worker heartbeat write failed: %s", exc)
+
+
+def read_worker_heartbeat() -> dict[str, object]:
+    try:
+        return json.loads(WORKER_HEARTBEAT_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return {}
 
 
 if __name__ == "__main__":

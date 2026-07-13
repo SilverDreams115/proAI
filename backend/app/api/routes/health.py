@@ -29,6 +29,7 @@ def _collect_operational_signals() -> dict[str, object]:
     from app.db import session as db_session
     from app.models.tables import IngestionRunModel, SourceModel
     from app.parsers.registry import parser_registry
+    from app.workers.scheduler_worker import read_worker_heartbeat
     from app.workers.scheduler_worker import worker as worker_module
 
     signals: dict[str, object] = {
@@ -89,13 +90,18 @@ def _collect_operational_signals() -> dict[str, object]:
         pass
 
     try:
-        state = worker_module._state
-        # WorkerState stores these as ISO-formatted strings (set via .isoformat()
-        # in the worker loop); assign directly, no second .isoformat() call needed.
-        if state.last_executed_at is not None:
-            signals["worker_last_executed_at"] = state.last_executed_at
-        if state.last_polled_at is not None:
-            signals["worker_last_polled_at"] = state.last_polled_at
+        heartbeat = read_worker_heartbeat()
+        if heartbeat:
+            signals["worker_last_executed_at"] = heartbeat.get("last_executed_at")
+            signals["worker_last_polled_at"] = heartbeat.get("last_polled_at")
+        else:
+            state = worker_module._state
+            # WorkerState stores these as ISO-formatted strings (set via .isoformat()
+            # in the worker loop); assign directly, no second .isoformat() call needed.
+            if state.last_executed_at is not None:
+                signals["worker_last_executed_at"] = state.last_executed_at
+            if state.last_polled_at is not None:
+                signals["worker_last_polled_at"] = state.last_polled_at
     except Exception:
         pass
 
