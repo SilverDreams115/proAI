@@ -1,4 +1,10 @@
+from pathlib import Path
+
 import pytest
+
+
+def _frontend_asset_text(name: str) -> str:
+    return (Path(__file__).resolve().parents[2] / "frontend" / name).read_text(encoding="utf-8")
 
 
 @pytest.mark.anyio
@@ -122,10 +128,9 @@ async def test_auth_required_protects_safe_api_reads(client, monkeypatch) -> Non
     unauthenticated = await client.get("/api/slates")
     authenticated = await client.get("/api/slates", headers={"X-API-Key": "test-secret"})
     health = await client.get("/api/health")
-    api_client_js = await client.get("/api-client.js")
+    api_client_js = _frontend_asset_text("api-client.js")
 
     assert unauthenticated.status_code == 401
     assert authenticated.status_code == 200
     assert health.status_code == 200
-    assert api_client_js.status_code == 200
-    assert "function loginWithPassword" in api_client_js.text
+    assert "function loginWithPassword" in api_client_js

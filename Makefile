@@ -56,24 +56,24 @@ update-current-context:
 	$(PYTHON) backend/scripts/update_current_context.py
 
 refresh-current:
-	docker compose exec proai python -m app.cli refresh-current
+	docker compose exec proai sh -c 'cd /app/backend && python -m app.cli refresh-current'
 
 ensure-current-job:
-	docker compose exec proai python -m app.cli ensure-current-job
+	docker compose exec proai sh -c 'cd /app/backend && python -m app.cli ensure-current-job'
 
 evaluate:
-	docker compose exec proai python -m app.cli evaluate --mode competitions
+	docker compose exec proai sh -c 'cd /app/backend && python -m app.cli evaluate --mode competitions'
 
 calibration:
-	docker compose exec proai python -m app.cli evaluate --mode calibration
+	docker compose exec proai sh -c 'cd /app/backend && python -m app.cli evaluate --mode calibration'
 
 publish-backtest:
-	docker compose exec proai python -m app.cli publish-backtest
+	docker compose exec proai sh -c 'cd /app/backend && python -m app.cli publish-backtest'
 
 confidence-report:
 	.venv/bin/python backend/scripts/current_progol_confidence_report.py
 
 production-check:
-	docker compose exec proai python -m app.cli production-check
+	docker compose exec proai sh -c 'cd /app/backend && python -m app.cli production-check'
 
 bootstrap-local-prod: restart ready production-check

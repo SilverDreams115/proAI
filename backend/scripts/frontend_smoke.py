@@ -59,7 +59,7 @@ def main() -> int:
 
     dom = completed.stdout
     required_dom = (
-        "Escritorio de quiniela inteligente",
+        "Quiniela inteligente",
         "login-form",
         "auth-password",
         "ops-panel",

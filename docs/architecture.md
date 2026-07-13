@@ -55,7 +55,7 @@ Fuentes externas (TheSportsDB, football-data.org, football-data.co.uk)
 Servidor principal. Registra 20 routers bajo `/api/`. Auth por middleware (API key o session cookie firmada). Rutas worker y openapi-schema con guard per-route adicional.
 
 ### PostgreSQL
-Base de datos principal. `SCHEMA_VERSION = 15`. Migraciones automáticas en startup (`app/db/migrations.py`), con Alembic como trail de auditoría (`backend/alembic/`). Nunca hacer cambios de schema fuera de este mecanismo.
+Base de datos principal. `SCHEMA_VERSION = 19`. Migraciones automáticas en startup (`app/db/migrations.py`), con Alembic como trail de auditoría (`backend/alembic/`). Nunca hacer cambios de schema fuera de este mecanismo.
 
 ### Worker (app/workers/scheduler_worker.py)
 Proceso separado. Ejecuta jobs programados: ingestion refresh, archive/observe/auto-promote del pipeline Progol. Controlable via `POST /api/worker/scheduler/run-once` (requiere auth cuando hay credenciales).
