@@ -19,7 +19,7 @@ async def get_db_session() -> AsyncIterator[Session]:
         session.close()
 
 
-def require_worker_auth(request: Request) -> None:
+async def require_worker_auth(request: Request) -> None:
     """Per-route auth guard for worker endpoints.
 
     Enforces API-key or session auth whenever credentials are configured,

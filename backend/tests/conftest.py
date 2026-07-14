@@ -36,6 +36,15 @@ os.environ["PROAI_ALLOWED_HOSTS"] = "*"
 # slim. Tests that exercise /api/worker/scheduler/run-once need
 # them on regardless of the inherited PROAI_ENVIRONMENT.
 os.environ["PROAI_ENABLE_WORKER_ROUTES"] = "true"
+# Keep worker route tests local-only. The production worker observes LN
+# PDFs, proposals, live results, and auto-refresh jobs by default; those
+# checks should not run during pytest when a test only validates the
+# scheduler API surface.
+os.environ["PROAI_CURRENT_PROGOL_AUTO_REFRESH_ENABLED"] = "false"
+os.environ["PROAI_PROGOL_PROPOSAL_OBSERVE_ENABLED"] = "false"
+os.environ["PROAI_MS_PDF_WATCH_ENABLED"] = "false"
+os.environ["PROAI_PROGOL_AUTO_PROMOTE_ENABLED"] = "false"
+os.environ["PROAI_LIVE_RESULTS_OBSERVE_ENABLED"] = "false"
 
 
 def pytest_collection_modifyitems(items):
