@@ -1,4 +1,5 @@
 import json
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -139,17 +140,20 @@ async def test_auth_required_protects_safe_api_reads(client, monkeypatch) -> Non
 
 @pytest.mark.anyio
 async def test_health_reads_persisted_worker_heartbeat(client, tmp_path, monkeypatch) -> None:
+    from app.core.settings import settings
     from app.workers import scheduler_worker
 
+    polled_at = datetime.now(timezone.utc)
+    executed_at = polled_at - timedelta(seconds=30)
     heartbeat_path = tmp_path / "worker-heartbeat.json"
     heartbeat_path.write_text(
         json.dumps(
             {
-                "updated_at": "2026-07-13T22:00:01+00:00",
+                "updated_at": polled_at.isoformat(),
                 "executed_runs": 3,
                 "failed_iterations": 0,
-                "last_polled_at": "2026-07-13T22:00:00+00:00",
-                "last_executed_at": "2026-07-13T21:59:30+00:00",
+                "last_polled_at": polled_at.isoformat(),
+                "last_executed_at": executed_at.isoformat(),
                 "last_error_at": None,
                 "last_error_message": None,
                 "last_cycle_duration_ms": 12.5,
@@ -158,10 +162,50 @@ async def test_health_reads_persisted_worker_heartbeat(client, tmp_path, monkeyp
         encoding="utf-8",
     )
     monkeypatch.setattr(scheduler_worker, "WORKER_HEARTBEAT_PATH", heartbeat_path)
+    monkeypatch.setattr(settings, "health_worker_poll_warning_age_seconds", 120)
+    monkeypatch.setattr(settings, "health_worker_poll_critical_age_seconds", 300)
 
     response = await client.get("/api/health")
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["worker_last_polled_at"] == "2026-07-13T22:00:00+00:00"
-    assert payload["worker_last_executed_at"] == "2026-07-13T21:59:30+00:00"
+    assert payload["worker_last_polled_at"] == polled_at.isoformat()
+    assert payload["worker_last_executed_at"] == executed_at.isoformat()
+    assert payload["worker_status"] == "executed"
+    assert payload["worker_last_polled_age_seconds"] < 10
+
+
+@pytest.mark.anyio
+async def test_health_reports_stale_worker_poll(client, tmp_path, monkeypatch) -> None:
+    from app.core.settings import settings
+    from app.workers import scheduler_worker
+
+    polled_at = datetime.now(timezone.utc) - timedelta(minutes=10)
+    heartbeat_path = tmp_path / "worker-heartbeat.json"
+    heartbeat_path.write_text(
+        json.dumps(
+            {
+                "updated_at": polled_at.isoformat(),
+                "executed_runs": 0,
+                "failed_iterations": 0,
+                "last_polled_at": polled_at.isoformat(),
+                "last_executed_at": None,
+                "last_error_at": None,
+                "last_error_message": None,
+                "last_cycle_duration_ms": 4.2,
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(scheduler_worker, "WORKER_HEARTBEAT_PATH", heartbeat_path)
+    monkeypatch.setattr(settings, "health_worker_poll_warning_age_seconds", 60)
+    monkeypatch.setattr(settings, "health_worker_poll_critical_age_seconds", 120)
+
+    response = await client.get("/api/health")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "degraded"
+    assert payload["worker_status"] == "stale"
+    assert payload["freshness_alerts"][0]["signal"] == "worker_poll"
+    assert payload["freshness_alerts"][0]["severity"] == "critical"

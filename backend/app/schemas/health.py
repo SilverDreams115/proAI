@@ -1,4 +1,13 @@
 from pydantic import BaseModel
+from pydantic import Field
+
+
+class FreshnessAlert(BaseModel):
+    signal: str
+    severity: str
+    age_seconds: float
+    threshold_seconds: float
+    message: str
 
 
 class HealthResponse(BaseModel):
@@ -20,6 +29,9 @@ class HealthResponse(BaseModel):
     backtest_verdict_age_seconds: float | None = None
     worker_last_executed_at: str | None = None
     worker_last_polled_at: str | None = None
+    worker_last_polled_age_seconds: float | None = None
+    worker_status: str = "unknown"
+    freshness_alerts: list[FreshnessAlert] = Field(default_factory=list)
     unregistered_parser_sources: int = 0
 
 

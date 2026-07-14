@@ -19,6 +19,57 @@ router = APIRouter(tags=["health"])
 START_TIME = monotonic()
 
 
+def _parse_iso_datetime(value: object) -> datetime | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _freshness_alert(
+    *,
+    signal: str,
+    age_seconds: object,
+    warning_threshold: float,
+    critical_threshold: float,
+) -> dict[str, object] | None:
+    if not isinstance(age_seconds, (int, float)):
+        return None
+    severity: str | None = None
+    threshold = warning_threshold
+    if age_seconds >= critical_threshold:
+        severity = "critical"
+        threshold = critical_threshold
+    elif age_seconds >= warning_threshold:
+        severity = "warning"
+    if severity is None:
+        return None
+    return {
+        "signal": signal,
+        "severity": severity,
+        "age_seconds": round(float(age_seconds), 1),
+        "threshold_seconds": float(threshold),
+        "message": f"{signal} age {round(float(age_seconds), 1)}s exceeds {severity} threshold {threshold}s",
+    }
+
+
+def _worker_status(worker_last_executed_at: object, worker_last_polled_age_seconds: object) -> str:
+    if not isinstance(worker_last_polled_age_seconds, (int, float)):
+        return "unknown"
+    if worker_last_polled_age_seconds >= settings.health_worker_poll_critical_age_seconds:
+        return "stale"
+    if worker_last_polled_age_seconds >= settings.health_worker_poll_warning_age_seconds:
+        return "degraded"
+    if worker_last_executed_at is not None:
+        return "executed"
+    return "polling"
+
+
 def _collect_operational_signals() -> dict[str, object]:
     """Pull the operational-health signals layered onto /health (P8).
     Each lookup is wrapped so a transient failure on one signal doesn't
@@ -40,6 +91,9 @@ def _collect_operational_signals() -> dict[str, object]:
         "backtest_verdict_age_seconds": None,
         "worker_last_executed_at": None,
         "worker_last_polled_at": None,
+        "worker_last_polled_age_seconds": None,
+        "worker_status": "unknown",
+        "freshness_alerts": [],
         "unregistered_parser_sources": 0,
     }
     now = datetime.now(timezone.utc)
@@ -81,11 +135,9 @@ def _collect_operational_signals() -> dict[str, object]:
             generated_at = data.get("generated_at")
             if isinstance(generated_at, str):
                 signals["backtest_verdict_generated_at"] = generated_at
-                try:
-                    parsed = datetime.fromisoformat(generated_at.replace("Z", "+00:00"))
+                parsed = _parse_iso_datetime(generated_at)
+                if parsed is not None:
                     signals["backtest_verdict_age_seconds"] = round((now - parsed).total_seconds(), 1)
-                except ValueError:
-                    pass
     except Exception:
         pass
 
@@ -105,6 +157,39 @@ def _collect_operational_signals() -> dict[str, object]:
     except Exception:
         pass
 
+    worker_polled_at = _parse_iso_datetime(signals.get("worker_last_polled_at"))
+    if worker_polled_at is not None:
+        signals["worker_last_polled_age_seconds"] = round((now - worker_polled_at).total_seconds(), 1)
+    signals["worker_status"] = _worker_status(
+        signals.get("worker_last_executed_at"),
+        signals.get("worker_last_polled_age_seconds"),
+    )
+
+    alerts = []
+    for alert in (
+        _freshness_alert(
+            signal="last_ingest",
+            age_seconds=signals.get("last_ingest_age_seconds"),
+            warning_threshold=settings.health_last_ingest_warning_age_seconds,
+            critical_threshold=settings.health_last_ingest_critical_age_seconds,
+        ),
+        _freshness_alert(
+            signal="backtest_verdict",
+            age_seconds=signals.get("backtest_verdict_age_seconds"),
+            warning_threshold=settings.health_backtest_warning_age_seconds,
+            critical_threshold=settings.health_backtest_critical_age_seconds,
+        ),
+        _freshness_alert(
+            signal="worker_poll",
+            age_seconds=signals.get("worker_last_polled_age_seconds"),
+            warning_threshold=settings.health_worker_poll_warning_age_seconds,
+            critical_threshold=settings.health_worker_poll_critical_age_seconds,
+        ),
+    ):
+        if alert is not None:
+            alerts.append(alert)
+    signals["freshness_alerts"] = alerts
+
     return signals
 
 
@@ -117,6 +202,8 @@ async def health() -> HealthResponse:
     status = "ok" if db_health["schema_up_to_date"] else "degraded"
     _unreg = ops.get("unregistered_parser_sources")
     if isinstance(_unreg, int) and _unreg > 0:
+        status = "degraded"
+    if ops.get("freshness_alerts"):
         status = "degraded"
     return HealthResponse(
         status=status,

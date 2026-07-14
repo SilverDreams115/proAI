@@ -4,7 +4,7 @@ PYTEST_FAST_ARGS ?= backend/tests -q -m "not integration and not slow"
 PYTEST_INTEGRATION_ARGS ?= backend/tests -q -m "integration and not slow"
 PYTEST_SLOW_ARGS ?= backend/tests -q -m "slow"
 
-.PHONY: lint typecheck test test-fast test-integration test-slow test-all frontend-smoke load-smoke check up down restart rebuild logs health ready docker-up docker-build update-current-context refresh-current ensure-current-job evaluate calibration production-check bootstrap-local-prod
+.PHONY: lint typecheck test test-fast test-integration test-slow test-all frontend-test frontend-smoke load-smoke check release-check up down restart rebuild logs health ready docker-up docker-build update-current-context refresh-current ensure-current-job evaluate calibration production-check bootstrap-local-prod
 
 lint:
 	$(PYTHON) -m ruff check backend frontend
@@ -26,6 +26,9 @@ test-slow:
 
 test-all: test
 
+frontend-test:
+	npm --prefix frontend test
+
 frontend-smoke:
 	$(PYTHON) backend/scripts/frontend_smoke.py
 
@@ -33,6 +36,9 @@ load-smoke:
 	$(PYTHON) backend/scripts/http_load_smoke.py
 
 check: lint typecheck test-fast
+
+release-check: check test-integration test-slow frontend-test frontend-smoke production-check health
+	docker compose ps
 
 up:
 	docker compose up -d

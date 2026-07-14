@@ -1,4 +1,5 @@
 import json
+from collections.abc import Callable
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -386,6 +387,7 @@ class ModelTrainingService(ModelTrainingArtifactsMixin):
         output_dir: Path,
         model_name: str | None = None,
         min_training_matches: int = 6,
+        progress: Callable[[dict[str, Any]], None] | None = None,
     ) -> dict[str, Any]:
         """Write one auditable JSON per competition with the full
         walk-forward trail: prediction, actual outcome, hit, and Brier per
@@ -407,7 +409,28 @@ class ModelTrainingService(ModelTrainingArtifactsMixin):
 
         output_dir.mkdir(parents=True, exist_ok=True)
         index_entries: list[dict[str, Any]] = []
-        for competition_key, league_matches in sorted(matches_by_competition.items()):
+        ordered_competitions = sorted(matches_by_competition.items())
+        total_competitions = len(ordered_competitions)
+        if progress is not None:
+            progress(
+                {
+                    "event": "start",
+                    "total_competitions": total_competitions,
+                    "output_dir": str(output_dir),
+                }
+            )
+        for position, (competition_key, league_matches) in enumerate(ordered_competitions, start=1):
+            if progress is not None:
+                progress(
+                    {
+                        "event": "competition_start",
+                        "position": position,
+                        "total_competitions": total_competitions,
+                        "competition_key": competition_key,
+                        "competition_name": competition_names[competition_key],
+                        "matches": len(league_matches),
+                    }
+                )
             entries, summary = self._backtest_entries_for_competition(
                 selected_model_name=selected_model_name,
                 ordered_matches=sorted(
@@ -436,6 +459,18 @@ class ModelTrainingService(ModelTrainingArtifactsMixin):
                     **summary,
                 }
             )
+            if progress is not None:
+                progress(
+                    {
+                        "event": "competition_done",
+                        "position": position,
+                        "total_competitions": total_competitions,
+                        "competition_key": competition_key,
+                        "competition_name": competition_names[competition_key],
+                        "matches_evaluated": summary.get("matches_evaluated", 0),
+                        "file": file_path.name,
+                    }
+                )
 
         index_payload = {
             "model_name": selected_model_name,
@@ -445,6 +480,14 @@ class ModelTrainingService(ModelTrainingArtifactsMixin):
         index_path = output_dir / "index.json"
         with index_path.open("w", encoding="utf-8") as handle:
             json.dump(index_payload, handle, ensure_ascii=False, indent=2, default=str)
+        if progress is not None:
+            progress(
+                {
+                    "event": "done",
+                    "total_competitions": total_competitions,
+                    "index_file": str(index_path),
+                }
+            )
         return index_payload
 
     # If XGBoost beats heuristic by at least this much in Brier (lower

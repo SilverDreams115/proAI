@@ -40,6 +40,12 @@ class Settings(BaseModel):
     docs_enabled: bool = Field(default=True)
     request_id_header: str = Field(default="X-Request-ID")
     healthcheck_timeout_seconds: float = Field(default=2.0)
+    health_last_ingest_warning_age_seconds: int = Field(default=86400)
+    health_last_ingest_critical_age_seconds: int = Field(default=172800)
+    health_backtest_warning_age_seconds: int = Field(default=604800)
+    health_backtest_critical_age_seconds: int = Field(default=1209600)
+    health_worker_poll_warning_age_seconds: int = Field(default=120)
+    health_worker_poll_critical_age_seconds: int = Field(default=300)
     auth_required: bool = Field(default=False)
     auth_api_key: str | None = Field(default=None)
     auth_password_hash: str | None = Field(default=None)
@@ -229,6 +235,24 @@ def load_settings() -> Settings:
         docs_enabled=_get_bool("PROAI_DOCS_ENABLED", True),
         request_id_header=os.getenv("PROAI_REQUEST_ID_HEADER", "X-Request-ID"),
         healthcheck_timeout_seconds=float(os.getenv("PROAI_HEALTHCHECK_TIMEOUT_SECONDS", "2.0")),
+        health_last_ingest_warning_age_seconds=int(
+            os.getenv("PROAI_HEALTH_LAST_INGEST_WARNING_AGE_SECONDS", "86400")
+        ),
+        health_last_ingest_critical_age_seconds=int(
+            os.getenv("PROAI_HEALTH_LAST_INGEST_CRITICAL_AGE_SECONDS", "172800")
+        ),
+        health_backtest_warning_age_seconds=int(
+            os.getenv("PROAI_HEALTH_BACKTEST_WARNING_AGE_SECONDS", "604800")
+        ),
+        health_backtest_critical_age_seconds=int(
+            os.getenv("PROAI_HEALTH_BACKTEST_CRITICAL_AGE_SECONDS", "1209600")
+        ),
+        health_worker_poll_warning_age_seconds=int(
+            os.getenv("PROAI_HEALTH_WORKER_POLL_WARNING_AGE_SECONDS", "120")
+        ),
+        health_worker_poll_critical_age_seconds=int(
+            os.getenv("PROAI_HEALTH_WORKER_POLL_CRITICAL_AGE_SECONDS", "300")
+        ),
         auth_required=_get_bool("PROAI_AUTH_REQUIRED", environment.lower() == "production"),
         auth_api_key=os.getenv("PROAI_AUTH_API_KEY"),
         auth_password_hash=os.getenv("PROAI_AUTH_PASSWORD_HASH"),

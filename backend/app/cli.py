@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from datetime import datetime, timezone
 from typing import Any
 
@@ -26,6 +27,38 @@ def _print_json(payload: Any) -> None:
     if hasattr(payload, "model_dump"):
         payload = payload.model_dump(mode="json")
     print(json.dumps(payload, indent=2, sort_keys=True, default=str))
+
+
+def _print_backtest_progress(event: dict[str, Any]) -> None:
+    name = event.get("competition_name") or event.get("competition_key")
+    if event["event"] == "start":
+        print(
+            f"publish-backtest: starting {event['total_competitions']} competitions -> {event['output_dir']}",
+            file=sys.stderr,
+            flush=True,
+        )
+    elif event["event"] == "competition_start":
+        print(
+            "publish-backtest: "
+            f"[{event['position']}/{event['total_competitions']}] {name} "
+            f"({event['matches']} matches)",
+            file=sys.stderr,
+            flush=True,
+        )
+    elif event["event"] == "competition_done":
+        print(
+            "publish-backtest: "
+            f"[{event['position']}/{event['total_competitions']}] {name} done "
+            f"({event['matches_evaluated']} evaluated, {event['file']})",
+            file=sys.stderr,
+            flush=True,
+        )
+    elif event["event"] == "done":
+        print(
+            f"publish-backtest: wrote index {event['index_file']}",
+            file=sys.stderr,
+            flush=True,
+        )
 
 
 def refresh_current(args: argparse.Namespace) -> None:
@@ -114,6 +147,7 @@ def publish_backtest(args: argparse.Namespace) -> None:
         index = service.publish_backtest_history(
             output_dir=Path(args.output_dir),
             min_training_matches=args.min_training_matches,
+            progress=None if args.no_progress else _print_backtest_progress,
         )
         _print_json(index)
     finally:
@@ -328,6 +362,11 @@ def build_parser() -> argparse.ArgumentParser:
         default="/data/backtest_history",
     )
     backtest_parser.add_argument("--min-training-matches", type=int, default=12)
+    backtest_parser.add_argument(
+        "--no-progress",
+        action="store_true",
+        help="Suppress per-competition progress on stderr; JSON output is still written to stdout.",
+    )
     backtest_parser.set_defaults(func=publish_backtest)
 
     check_parser = subparsers.add_parser("production-check", help="Validate production-facing settings")
