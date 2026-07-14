@@ -42,3 +42,21 @@ async def get_dashboard_fast(
 
     with read_only_transaction(session):
         return build_dashboard_fast(session)
+
+
+@router.get("/product-flow")
+async def get_product_flow(
+    slate_id: str | None = None,
+    session: Session = Depends(get_db_session),
+) -> dict:
+    """Read-only product workflow summary.
+
+    Aggregates the existing daily flow — active slate, data quality, Money Mode
+    recommendation/explanation, betting policy, drift audit and completed-slate
+    postmortem — without writing predictions, tickets, results or learning rows.
+    """
+    from app.db.session import read_only_transaction
+    from app.services.product_flow_service import build_product_flow
+
+    with read_only_transaction(session):
+        return build_product_flow(session, slate_id=slate_id)

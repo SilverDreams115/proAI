@@ -2921,3 +2921,30 @@ span.badge-canary {
 .trv-line { font-size: 0.88rem; margin: 2px 0; }
 .trv-missing { margin-top: 6px; }
 .trv-action { margin-top: 2px; }
+
+/* Product flow: compact operational path across data, recommendation, ticket and postmortem. */
+.product-flow-panel { display: grid; gap: 12px; }
+.product-flow-steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; }
+.product-flow-step { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; background: rgba(255,255,255,0.02); }
+.product-flow-step strong { display: block; font-size: 0.86rem; }
+.product-flow-step span { color: var(--muted); font-size: 0.78rem; }
+.product-flow-step.tone-ok { border-left: 4px solid var(--win); }
+.product-flow-step.tone-warn { border-left: 4px solid var(--warn); }
+.product-flow-step.tone-danger { border-left: 4px solid var(--bad); }
+.product-flow-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }
+.product-flow-grid.compact { grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }
+.product-flow-block,
+.product-flow-postmortem,
+.product-flow-actions {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: rgba(255,255,255,0.02);
+}
+.product-flow-block h3,
+.product-flow-postmortem h3,
+.product-flow-actions h3 { margin: 0 0 8px; font-size: 0.98rem; }
+.product-flow-stat { display: grid; grid-template-columns: minmax(92px, 0.42fr) 1fr; gap: 8px; margin: 4px 0; font-size: 0.86rem; }
+.product-flow-stat strong { color: var(--muted); font-weight: 600; }
+.product-flow-actions ul { margin: 4px 0 0 18px; padding: 0; }
+.product-flow-actions li { margin: 3px 0; }

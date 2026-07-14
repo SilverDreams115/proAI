@@ -45,6 +45,7 @@ import { renderExternalResultsPanel } from "./external-results.js";
 import { renderSlateOptionsPanel } from "./slate-options.js";
 import { renderTrackingResultsValidationPanel } from "./tracking-results-validation.js";
 import { renderLearningDashboard } from "./learning-dashboard.js";
+import { renderProductFlowPanel } from "./product-flow.js";
 import {
   getCachedDiagnostics,
   setCachedDiagnostics,
@@ -1519,6 +1520,10 @@ function renderOperationalMoneyModeStatus() {
   _diagBody("operational-money-mode-status-body", renderOperationalMoneyModeStatusPanel, state.moneyModeOpsStatus);
 }
 
+function renderProductFlow() {
+  _diagBody("product-flow-body", renderProductFlowPanel, state.productFlow);
+}
+
 function renderExternalResults() {
   _diagBody("external-results-body", renderExternalResultsPanel, state.externalResults);
 }
@@ -1543,6 +1548,7 @@ function renderTeamRatingReadiness() {
 // arrives), without re-rendering the whole prediction board.
 function renderDiagnosticsPanels() {
   renderOperationalMoneyModeStatus();
+  renderProductFlow();
   renderMoneyMode();
   renderSlateOptions();
   renderTrackingResultsValidation();
@@ -2133,7 +2139,7 @@ async function loadSlateDetails(slateId) {
 let diagnosticsRequestSeq = 0;
 
 function _applyDiagnostics(payload) {
-  const [shadow, dryRun, readiness, canary, ticketCanaryDryRun, moneyMode, opsStatus, externalResults, slateOptions, resultsValidation] = payload;
+  const [shadow, dryRun, readiness, canary, ticketCanaryDryRun, moneyMode, opsStatus, productFlow, externalResults, slateOptions, resultsValidation] = payload;
   state.teamRatingShadow = (shadow && !Array.isArray(shadow)) ? shadow : null;
   state.teamRatingDryRun = (dryRun && !Array.isArray(dryRun)) ? dryRun : null;
   state.teamRatingReadiness = (readiness && !Array.isArray(readiness)) ? readiness : null;
@@ -2141,6 +2147,7 @@ function _applyDiagnostics(payload) {
   state.ticketCanaryDryRun = (ticketCanaryDryRun && !Array.isArray(ticketCanaryDryRun)) ? ticketCanaryDryRun : null;
   state.moneyMode = (moneyMode && !Array.isArray(moneyMode)) ? moneyMode : null;
   state.moneyModeOpsStatus = (opsStatus && !Array.isArray(opsStatus)) ? opsStatus : null;
+  state.productFlow = (productFlow && !Array.isArray(productFlow)) ? productFlow : null;
   state.externalResults = (externalResults && !Array.isArray(externalResults)) ? externalResults : null;
   state.slateOptions = (slateOptions && !Array.isArray(slateOptions)) ? slateOptions : null;
   state.resultsValidation = (resultsValidation && !Array.isArray(resultsValidation)) ? resultsValidation : null;
@@ -2171,6 +2178,7 @@ async function loadSlateDiagnostics(slateId) {
     safeFetch(`/predictions/slates/${slateId}/ticket-canary-dry-run`, {optional: true}),
     safeFetch(`/predictions/slates/${slateId}/money-mode`, {optional: true}),
     safeFetch(`/operations/money-mode/status`, {optional: true}),
+    safeFetch(`/operations/product-flow?slate_id=${encodeURIComponent(slateId)}`, {optional: true}),
     safeFetch(`/results/slates/${slateId}/provider-dry-run`, {optional: true}),
     // R6.4: always-present ticket options + completed-slate result validation.
     safeFetch(`/predictions/slates/${slateId}/options`, {optional: true}),
