@@ -2782,3 +2782,142 @@ span.badge-canary {
   font-weight: 700;
   letter-spacing: 0.04em;
 }
+
+/* R6.0 — Money Mode RC panel. Reuses shadow/badge tokens; adds the
+   decision hero + ticket cards. tone-danger/tone-muted alias bad/neutral. */
+.tone-danger { --tone: var(--bad); --tone-bg: rgba(255, 122, 144, 0.12); }
+.tone-muted  { --tone: var(--muted, #9aa); --tone-bg: rgba(150, 160, 170, 0.10); }
+
+.money-mode-panel .money-decision {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 8px 0 4px;
+}
+.money-decision-label {
+  font-size: 1.05rem;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  padding: 6px 12px;
+}
+.money-decision-confidence { color: var(--ink-muted, #889); font-size: 0.85rem; }
+.money-decision-reason { margin: 4px 0 10px; line-height: 1.4; }
+.money-live-note { font-style: italic; color: var(--warn); }
+.money-tickets { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }
+.money-ticket { padding: 10px 12px; }
+.money-ticket-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
+.money-ticket-counts { font-weight: 700; margin-bottom: 4px; }
+.money-ticket-meta { font-size: 0.82rem; margin: 2px 0; }
+.money-ticket.money-ticket-balanced { border-color: rgba(155, 227, 106, 0.35); }
+.money-mode-table { width: 100%; margin-top: 12px; }
+
+/* R6.1 — Operational Money Mode Status panel. Reuses shadow/badge tokens. */
+.ops-money-panel .ops-summary { margin: 6px 0 10px; }
+.ops-money-table { width: 100%; margin-top: 10px; }
+.ops-money-table td { vertical-align: top; }
+.ops-decision { font-weight: 800; letter-spacing: 0.04em; }
+.ops-row-danger td:first-child { border-left: 3px solid var(--bad); }
+.ops-row-ok td:first-child { border-left: 3px solid var(--win); }
+.ops-row-warn td:first-child { border-left: 3px solid var(--warn); }
+
+/* R6.2 — Money Mode executive UI polish. Hero decision dominates; non-playable
+   simulations are visually de-emphasised; technical detail is collapsible. */
+
+/* Operational status hero + slate cards */
+.ops-hero {
+  border-radius: 14px;
+  padding: 18px 20px;
+  margin: 6px 0 14px;
+  border: 1px solid var(--line);
+  background: rgba(150, 160, 170, 0.06);
+}
+.ops-hero-danger { border-color: rgba(255, 122, 144, 0.5); background: rgba(255, 122, 144, 0.10); }
+.ops-hero-ok { border-color: rgba(155, 227, 106, 0.45); background: rgba(155, 227, 106, 0.10); }
+.ops-hero-muted { opacity: 0.85; }
+.ops-hero-headline { font-size: 1.9rem; font-weight: 900; letter-spacing: 0.04em; line-height: 1.1; }
+.ops-hero-danger .ops-hero-headline { color: var(--bad); }
+.ops-hero-ok .ops-hero-headline { color: var(--win); }
+.ops-hero-counts { margin-top: 6px; font-size: 1rem; }
+.ops-hero-action { margin-top: 4px; font-size: 0.95rem; color: var(--ink); }
+.ops-slate-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+.ops-slate-card { border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; background: rgba(255,255,255,0.02); }
+.ops-slate-danger { border-left: 4px solid var(--bad); }
+.ops-slate-ok { border-left: 4px solid var(--win); }
+.ops-slate-warn { border-left: 4px solid var(--warn); }
+.ops-slate-top { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.ops-slate-code { font-weight: 800; font-size: 1.05rem; }
+.ops-slate-decision { display: inline-block; margin: 8px 0; font-weight: 800; letter-spacing: 0.04em; }
+.ops-slate-action { font-size: 0.92rem; margin-bottom: 2px; }
+.ops-slate-reason { font-size: 0.9rem; color: var(--ink); }
+.ops-slate-foot { margin-top: 8px; }
+.ops-updated { margin-top: 10px; }
+
+/* Money Mode RC hero */
+.mm-hero {
+  border-radius: 14px;
+  padding: 16px 20px;
+  margin: 6px 0 12px;
+  border: 1px solid var(--line);
+  background: rgba(150, 160, 170, 0.06);
+}
+.mm-hero-danger { border-color: rgba(255, 122, 144, 0.5); background: rgba(255, 122, 144, 0.10); }
+.mm-hero-ok { border-color: rgba(155, 227, 106, 0.45); background: rgba(155, 227, 106, 0.10); }
+.mm-hero-warn { border-color: rgba(255, 209, 102, 0.45); background: rgba(255, 209, 102, 0.10); }
+.mm-hero-top { font-size: 0.85rem; color: var(--muted); }
+.mm-hero-decision { font-size: 1.7rem; font-weight: 900; letter-spacing: 0.05em; line-height: 1.1; margin: 4px 0; }
+.mm-hero-danger .mm-hero-decision { color: var(--bad); }
+.mm-hero-ok .mm-hero-decision { color: var(--win); }
+.mm-hero-warn .mm-hero-decision { color: var(--warn); }
+.mm-hero-action { font-size: 1rem; margin-bottom: 4px; }
+.mm-hero-reason { font-size: 0.92rem; color: var(--ink); line-height: 1.4; }
+
+.mm-recommended { margin: 4px 0 10px; font-size: 0.95rem; }
+.mm-recommended-none { color: var(--bad); }
+.mm-tickets-heading { font-weight: 700; margin: 10px 0 6px; }
+
+/* Plain-language counts grid */
+.mm-counts-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 4px 14px; margin: 4px 0 8px; }
+.mm-count { display: flex; justify-content: space-between; font-size: 0.88rem; }
+.mm-count-label { color: var(--muted); }
+.mm-count-value { font-weight: 700; }
+
+/* Non-playable simulations: muted, never green/selected */
+.mm-ticket-sim { opacity: 0.72; border-style: dashed; }
+.mm-sim-badge { font-style: italic; }
+
+.mm-technical { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 8px; }
+.mm-technical > summary { cursor: pointer; font-weight: 700; padding: 4px 0; }
+.mm-tech-table { width: 100%; margin: 8px 0; font-size: 0.85rem; }
+
+/* R6.3 — deferred panel skeleton + external results panel */
+.panel-skeleton { padding: 8px 0; }
+.panel-skeleton .skeleton-block { height: 14px; border-radius: 6px; background: linear-gradient(90deg, rgba(255,255,255,0.04), rgba(255,255,255,0.10), rgba(255,255,255,0.04)); background-size: 200% 100%; animation: skeleton-shimmer 1.2s ease-in-out infinite; margin: 6px 0; }
+.panel-skeleton .skeleton-block.short { width: 55%; }
+@keyframes skeleton-shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+.ext-results-head { display: flex; align-items: center; gap: 10px; margin: 4px 0 8px; }
+.ext-results-provider { font-weight: 800; font-size: 1.05rem; }
+.ext-results-table { width: 100%; margin-top: 8px; }
+
+/* R6.4 — slate options + tracking results validation panels */
+.opt-action { display: flex; align-items: center; gap: 10px; margin: 6px 0 8px; font-size: 1rem; }
+.opt-action-danger { color: var(--bad); }
+.opt-action-ok { color: var(--win); }
+.opt-pricing-note { color: var(--warn); font-style: italic; }
+.opt-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }
+.opt-card { padding: 10px 12px; }
+.opt-card-sim { opacity: 0.72; border-style: dashed; }
+.opt-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
+.opt-counts { font-weight: 700; margin-bottom: 4px; }
+.opt-meta { font-size: 0.85rem; margin: 2px 0; }
+.opt-cost-unverified { color: var(--warn); font-style: italic; }
+.opt-sim { font-style: italic; }
+.trv-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; margin-top: 8px; }
+.trv-card { border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; }
+.trv-danger { border-left: 4px solid var(--bad); }
+.trv-ok { border-left: 4px solid var(--win); }
+.trv-warn { border-left: 4px solid var(--warn); }
+.trv-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+.trv-code { font-weight: 800; font-size: 1.05rem; }
+.trv-line { font-size: 0.88rem; margin: 2px 0; }
+.trv-missing { margin-top: 6px; }
+.trv-action { margin-top: 2px; }

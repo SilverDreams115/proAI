@@ -29,6 +29,10 @@ target-version = "py311"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+  "integration: exercises ASGI/API/DB/CLI workflows instead of pure unit logic",
+  "slow: computationally expensive or broad workflow tests kept out of fast checks",
+]
 
 [tool.mypy]
 python_version = "3.12"

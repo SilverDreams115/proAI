@@ -279,6 +279,12 @@ class TicketRecommendationService:
         # is a pure combinatorial fix: it only ever *raises* coverage and
         # touches neither probabilities nor confidence bands.
         doubles, full = self._enforce_monotonic_coverage(simple, doubles, full, best, second)
+        # Draw-coverage floor: when the (draw-calibrated) decision p_draw is at
+        # least the live-draw threshold, X must appear in coverage. If neither
+        # doubles nor full already covers it, lift `full` to a triple — this
+        # only ever RAISES coverage and keeps simple ⊆ doubles ⊆ full intact.
+        # Never touches the simple pick, so X is never made a fixed/auto draw.
+        full = self._ensure_draw_coverage(prediction, doubles, full)
         decisions = {"simple": simple, "doubles": doubles, "full": full}
         return MatchTicketRecommendationResponse(
             position=prediction.position,
@@ -327,6 +333,29 @@ class TicketRecommendationService:
                 pick_type="double", picks=[best[0], second[0]], source=source
             )
         return TicketDecisionResponse(pick_type="fixed", picks=[best[0]], source=source)
+
+    def _ensure_draw_coverage(
+        self,
+        prediction: MatchPredictionResponse,
+        doubles: TicketDecisionResponse,
+        full: TicketDecisionResponse,
+    ) -> TicketDecisionResponse:
+        """Guarantee X coverage when the calibrated draw is live.
+
+        Uses the DECISION vector's p_draw (already draw-calibrated). When it
+        reaches the live-draw threshold and X is covered by neither doubles nor
+        full, lift `full` to a triple. Monotonic-safe (triple is the max
+        coverage) and reporting-only on the simple pick — X never becomes the
+        fixed pick.
+        """
+        _home, p_draw, _away = prediction.decision_vector()
+        if p_draw < self.LIVE_DRAW_THRESHOLD:
+            return full
+        if Outcome.DRAW in doubles.picks or Outcome.DRAW in full.picks:
+            return full
+        return TicketDecisionResponse(
+            pick_type="triple", picks=list(self.OUTCOME_ORDER), source="draw_coverage"
+        )
 
     def _draw_risk(
         self,

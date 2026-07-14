@@ -1,4 +1,11 @@
+import json
+from pathlib import Path
+
 import pytest
+
+
+def _frontend_asset_text(name: str) -> str:
+    return (Path(__file__).resolve().parents[2] / "frontend" / name).read_text(encoding="utf-8")
 
 
 @pytest.mark.anyio
@@ -122,10 +129,39 @@ async def test_auth_required_protects_safe_api_reads(client, monkeypatch) -> Non
     unauthenticated = await client.get("/api/slates")
     authenticated = await client.get("/api/slates", headers={"X-API-Key": "test-secret"})
     health = await client.get("/api/health")
-    api_client_js = await client.get("/api-client.js")
+    api_client_js = _frontend_asset_text("api-client.js")
 
     assert unauthenticated.status_code == 401
     assert authenticated.status_code == 200
     assert health.status_code == 200
-    assert api_client_js.status_code == 200
-    assert "function loginWithPassword" in api_client_js.text
+    assert "function loginWithPassword" in api_client_js
+
+
+@pytest.mark.anyio
+async def test_health_reads_persisted_worker_heartbeat(client, tmp_path, monkeypatch) -> None:
+    from app.workers import scheduler_worker
+
+    heartbeat_path = tmp_path / "worker-heartbeat.json"
+    heartbeat_path.write_text(
+        json.dumps(
+            {
+                "updated_at": "2026-07-13T22:00:01+00:00",
+                "executed_runs": 3,
+                "failed_iterations": 0,
+                "last_polled_at": "2026-07-13T22:00:00+00:00",
+                "last_executed_at": "2026-07-13T21:59:30+00:00",
+                "last_error_at": None,
+                "last_error_message": None,
+                "last_cycle_duration_ms": 12.5,
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(scheduler_worker, "WORKER_HEARTBEAT_PATH", heartbeat_path)
+
+    response = await client.get("/api/health")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["worker_last_polled_at"] == "2026-07-13T22:00:00+00:00"
+    assert payload["worker_last_executed_at"] == "2026-07-13T21:59:30+00:00"

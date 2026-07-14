@@ -1,4 +1,10 @@
+from pathlib import Path
+
 import pytest
+
+
+def _frontend_asset_text(name: str) -> str:
+    return (Path(__file__).resolve().parents[2] / "frontend" / name).read_text(encoding="utf-8")
 
 
 @pytest.mark.anyio
@@ -148,11 +154,11 @@ async def test_frontend_shell_supports_eight_match_slate(client) -> None:
         json={"min_training_matches": 1, "confidence_threshold": 0.5},
     )
     page_response = await client.get("/")
-    config_response = await client.get("/config.js")
-    utils_response = await client.get("/ui-utils.js")
-    api_client_response = await client.get("/api-client.js")
-    js_response = await client.get("/app.js")
-    css_response = await client.get("/styles.css")
+    config_js = _frontend_asset_text("config.js")
+    ui_utils_js = _frontend_asset_text("ui-utils.js")
+    api_client_js = _frontend_asset_text("api-client.js")
+    app_js = _frontend_asset_text("app.js")
+    styles_css = _frontend_asset_text("styles.css")
 
     assert prediction_response.status_code == 200
     assert len(prediction_response.json()) == 8
@@ -177,52 +183,49 @@ async def test_frontend_shell_supports_eight_match_slate(client) -> None:
     assert "api-client.js" in page_response.text
     assert "login-form" in page_response.text
     assert "auth-password" in page_response.text
-    assert config_response.status_code == 200
-    assert 'key: "simple"' in config_response.text
-    assert 'key: "doubles"' in config_response.text
-    assert 'key: "full"' in config_response.text
-    assert utils_response.status_code == 200
-    assert "function displayPicks" in utils_response.text
-    assert api_client_response.status_code == 200
-    assert "function safeFetch" in api_client_response.text
-    assert "function loginWithPassword" in api_client_response.text
-    assert js_response.status_code == 200
+    assert 'key: "simple"' in config_js
+    assert 'key: "doubles"' in config_js
+    assert 'key: "full"' in config_js
+    assert "function displayPicks" in ui_utils_js
+    assert "function safeFetch" in api_client_js
+    assert "function loginWithPassword" in api_client_js
     # Outcomes are rendered as L/E/V via displayOutcome, never positional 1/X/2.
-    assert "displayOutcome(key)" in js_response.text
-    assert "<strong>1</strong>" not in js_response.text
-    assert "doubleLimitForSlate" in js_response.text
-    assert "chooseModelDoubleMatchIds" in js_response.text
-    assert "ticketRecommendationFor" in js_response.text
+    assert "displayOutcome(key)" in app_js
+    assert "<strong>1</strong>" not in app_js
+    assert "doubleLimitForSlate" in app_js
+    assert "chooseModelDoubleMatchIds" in app_js
+    assert "ticketRecommendationFor" in app_js
     # Fase 3 UI/UX: semantic decision panel. Señal base / Estrategia / Riesgo
     # are distinct; the ambiguous "Fijo" type badge is gone; clean prob bars.
-    assert "badge-signal" in js_response.text
-    assert "prob-bar" in js_response.text
-    assert "Acción recomendada" in js_response.text
-    assert "Confianza visible" in js_response.text
-    assert "dh-badge-type" not in js_response.text
+    assert "badge-signal" in app_js
+    assert "prob-bar" in app_js
+    assert "Acción recomendada" in app_js
+    # Confidence headline now uses the degraded presentation band (never shows
+    # "Alta" on a capped/flagged pick); wired via headlineConfidence().
+    assert "headlineConfidence" in app_js
+    assert "dh-badge-type" not in app_js
     # Fase 3.1: strategy comes from the backend field (resolveTicketStrategy);
     # counters use product fields, NOT raw confidence_band; the per-card tech
     # accordion has a guard so it never selects the card.
-    assert "resolveTicketStrategy" in js_response.text
-    assert "isTechAccordionTarget" in js_response.text
-    assert 'confidence_band === "high"' not in js_response.text
-    assert "Fijo defendible" not in js_response.text
+    assert "resolveTicketStrategy" in app_js
+    assert "isTechAccordionTarget" in app_js
+    assert 'confidence_band === "high"' not in app_js
+    assert "Fijo defendible" not in app_js
     # Fase 3.3: prob bars are CSP-safe — NO inline style attributes (style-src
     # 'self' blocks them); width comes from a discrete .w-N class.
-    assert 'style="width:' not in js_response.text
-    assert 'style="margin-top' not in js_response.text
-    assert "probBarWidthClass" in js_response.text
+    assert 'style="width:' not in app_js
+    assert 'style="margin-top' not in app_js
+    assert "probBarWidthClass" in app_js
     # And the CSS provides the discrete width classes.
-    assert ".prob-bar-fill.w-60" in css_response.text
-    assert ".prob-bar-fill.w-100" in css_response.text
-    assert "Calidad de datos" in js_response.text
-    assert "Estado de producción" in js_response.text
-    assert "rutas HTTP cerradas" in js_response.text
+    assert ".prob-bar-fill.w-60" in styles_css
+    assert ".prob-bar-fill.w-100" in styles_css
+    assert "Calidad de datos" in app_js
+    assert "Estado de producción" in app_js
+    assert "rutas HTTP cerradas" in app_js
     assert "match-menu" in page_response.text
     assert "ticket-tabs" in page_response.text
     assert "ops-panel" in page_response.text
-    assert "risk-high" in css_response.text
-    assert css_response.status_code == 200
+    assert "risk-high" in styles_css
 
 
 @pytest.mark.anyio

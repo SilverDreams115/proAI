@@ -118,6 +118,15 @@
       </div>
 
       <div class="view" id="view-aprendizaje" data-view="aprendizaje" hidden>
+        <section class="panel" id="learning-tracking-panel">
+          <div class="panel-head">
+            <h2>Seguimiento y aprendizaje</h2>
+            <p class="meta-copy">Slates terminadas y su estado de aprendizaje: comparable / pendiente / conflicto, predicciones vs resultados, comparables y readiness de entrenamiento. Solo lectura; no entrena ni aplica resultados.</p>
+          </div>
+          <div id="learning-dashboard-body">
+            <p class="meta-copy">Cargando inventario de aprendizaje…</p>
+          </div>
+        </section>
         <section class="panel" id="learning-panel">
           <div class="panel-head">
             <h2>Aprendizaje</h2>
@@ -130,6 +139,41 @@
       </div>
 
       <div class="view" id="view-diagnostico" data-view="diagnostico" hidden>
+        <section class="panel" id="operational-money-mode-status-panel">
+          <div class="panel-head">
+            <h2>Operational Money Mode Status</h2>
+            <p class="meta-copy">Estado operativo de todas las slates activas/próximas: JUGAR / NO JUGAR por slate. Solo lectura; nunca oculta un NO JUGAR ni cambia el ticket real.</p>
+          </div>
+          <div id="operational-money-mode-status-body"></div>
+        </section>
+        <section class="panel" id="money-mode-panel">
+          <div class="panel-head">
+            <h2>Money Mode RC</h2>
+            <p class="meta-copy">Decisión operativa JUGAR / NO JUGAR por papeleta, con boletos agresivo/balanceado/conservador calculados en memoria. Solo lectura; no activa ni cambia el ticket real.</p>
+          </div>
+          <div id="money-mode-body"></div>
+        </section>
+        <section class="panel" id="slate-options-panel">
+          <div class="panel-head">
+            <h2>Opciones de boleto</h2>
+            <p class="meta-copy">Opciones agresiva/balanceada/conservadora/manual por papeleta, con combinaciones y costo. Siempre visibles; si Money Mode dice NO JUGAR se muestran como simulaciones no recomendadas. Precio solo si está verificado.</p>
+          </div>
+          <div id="slate-options-body"></div>
+        </section>
+        <section class="panel" id="tracking-results-validation-panel">
+          <div class="panel-head">
+            <h2>Validación de resultados (slates terminadas)</h2>
+            <p class="meta-copy">Estado de PG-2337 / PGM-800 y demás slates cerradas: predicciones vs resultados, coverage y qué falta. Solo lectura; no aplica resultados.</p>
+          </div>
+          <div id="tracking-results-validation-body"></div>
+        </section>
+        <section class="panel" id="external-results-panel">
+          <div class="panel-head">
+            <h2>Resultados externos</h2>
+            <p class="meta-copy">Dry-run de una fuente gratuita de resultados (football-data.org). Solo lectura; no escribe en match_results. Aplicar requiere confirmación manual explícita.</p>
+          </div>
+          <div id="external-results-body"></div>
+        </section>
         <section class="panel" id="team-rating-shadow-panel">
           <div class="panel-head">
             <h2>Team Rating Shadow</h2>

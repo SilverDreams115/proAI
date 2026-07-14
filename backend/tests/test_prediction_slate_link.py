@@ -186,6 +186,17 @@ def test_persist_audit_saves_slate_fields(db):
             "head_to_head_matches": 3.0,
             "evidence_count": 0.0,
         },
+        # R7.6 lineage contract requires a complete sanity_audit to persist.
+        sanity_audit={
+            "raw_probabilities": {"L": 0.5, "E": 0.3, "V": 0.2},
+            "display_probabilities": {"L": 0.5, "E": 0.3, "V": 0.2},
+            "decision_probabilities": {"L": 0.5, "E": 0.3, "V": 0.2},
+            "final_status": "LISTO",
+            "evidence_level": "medium",
+            "sanity_policy_version": "test_v1",
+            "model_artifact_id": "test-artifact",
+            "fallback_used": False,
+        },
     )
 
     row = db.execute(
@@ -198,37 +209,43 @@ def test_persist_audit_saves_slate_fields(db):
     assert row[2] == slate.slate_version
 
 
-def test_persist_audit_without_slate_context(db):
-    """_persist_prediction_audit still works when called without slate context (legacy path)."""
+def test_persist_audit_without_slate_context_is_blocked(db):
+    """R7.6 — persisting without slate/lineage is now blocked by the contract.
+
+    (Previously this path persisted a NULL-slate row; the lineage contract
+    forbids blind persistence. Historical rows are untouched, but new writes
+    must be fully traced.)"""
+    from app.domain.prediction_lineage import PredictionLineageError
+
     match_id = _make_match_and_competition(db)
     db.commit()
 
     svc = _make_service_with_session(db)
-    svc._persist_prediction_audit(
-        match_id=match_id,
-        generated_at=datetime.now(timezone.utc),
-        home_probability=0.4,
-        draw_probability=0.3,
-        away_probability=0.3,
-        recommended_outcome="1",
-        confidence_band="low",
-        competition_readiness="active",
-        feature_map={
-            "home_recent_matches": 5.0,
-            "away_recent_matches": 5.0,
-            "head_to_head_matches": 3.0,
-            "evidence_count": 0.0,
-        },
-    )
+    with pytest.raises(PredictionLineageError) as exc:
+        svc._persist_prediction_audit(
+            match_id=match_id,
+            generated_at=datetime.now(timezone.utc),
+            home_probability=0.4,
+            draw_probability=0.3,
+            away_probability=0.3,
+            recommended_outcome="1",
+            confidence_band="low",
+            competition_readiness="active",
+            feature_map={
+                "home_recent_matches": 5.0,
+                "away_recent_matches": 5.0,
+                "head_to_head_matches": 3.0,
+                "evidence_count": 0.0,
+            },
+        )
+    assert "slate_id" in str(exc.value)
 
+    # Nothing was persisted.
     row = db.execute(
-        text("SELECT slate_id, composition_hash, slate_version FROM predictions WHERE match_id = :mid"),
+        text("SELECT slate_id FROM predictions WHERE match_id = :mid"),
         {"mid": match_id},
     ).fetchone()
-    assert row is not None
-    assert row[0] is None
-    assert row[1] is None
-    assert row[2] is None
+    assert row is None
 
 
 def test_legacy_prediction_null_slate_fields_readable(db):

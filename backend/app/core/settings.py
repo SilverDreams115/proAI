@@ -57,6 +57,12 @@ class Settings(BaseModel):
     current_progol_refresh_job_name: str = Field(default="current-progol-refresh")
     progol_proposal_observe_enabled: bool = Field(default=True)
     progol_proposal_observe_interval_minutes: int = Field(default=60)
+    # MS PDF watcher: re-checks the LN guiamedia.pdf and activates the MS slate
+    # only when the PDF carries a valid cierre for the correct concurso. Default
+    # follows the discovery flag; interval is gentle to avoid hammering LN.
+    ms_pdf_watch_enabled: bool = Field(default=True)
+    ms_pdf_watch_interval_minutes: int = Field(default=90)
+    ms_pdf_watch_min_backoff_minutes: int = Field(default=30)
     # Fase 3: auto-promote validated proposals when the active slate's
     # cierre is imminent (or no active slate exists). Threshold is in
     # hours; default 2 means "promote the next concurso once we're
@@ -95,6 +101,15 @@ class Settings(BaseModel):
     apifootball_enabled: bool = Field(default=False)
     apifootball_api_key: str | None = Field(default=None)
     apifootball_base_url: str | None = Field(default=None)
+    # R6.3 free results provider (football-data.org). Disabled + dry-run-only by
+    # default: even when enabled it never writes match_results without an
+    # explicit, confirmed CLI apply. No secret is hardcoded — the key is read
+    # from the environment.
+    results_provider_enabled: bool = Field(default=False)
+    results_provider_primary: str = Field(default="football_data_org")
+    results_provider_dry_run_only: bool = Field(default=True)
+    football_data_api_key: str | None = Field(default=None)
+    football_data_base_url: str = Field(default="https://api.football-data.org/v4")
     # Sentry SDK is opt-in. With no DSN set the SDK import is skipped
     # entirely (zero overhead). When the DSN is present we tag events
     # with the environment and the asset version hash so each release is
@@ -238,6 +253,15 @@ def load_settings() -> Settings:
         progol_proposal_observe_interval_minutes=int(
             os.getenv("PROAI_PROGOL_PROPOSAL_OBSERVE_INTERVAL_MINUTES", "60")
         ),
+        ms_pdf_watch_enabled=_get_bool(
+            "PROAI_MS_PDF_WATCH_ENABLED", _get_bool("PROAI_PROGOL_PROPOSAL_OBSERVE_ENABLED", True)
+        ),
+        ms_pdf_watch_interval_minutes=int(
+            os.getenv("PROAI_MS_PDF_WATCH_INTERVAL_MINUTES", "90")
+        ),
+        ms_pdf_watch_min_backoff_minutes=int(
+            os.getenv("PROAI_MS_PDF_WATCH_MIN_BACKOFF_MINUTES", "30")
+        ),
         progol_auto_promote_enabled=_get_bool("PROAI_PROGOL_AUTO_PROMOTE_ENABLED", True),
         progol_auto_promote_threshold_hours=float(
             os.getenv("PROAI_PROGOL_AUTO_PROMOTE_THRESHOLD_HOURS", "2.0")
@@ -269,6 +293,13 @@ def load_settings() -> Settings:
         apifootball_enabled=_get_bool("PROAI_APIFOOTBALL_ENABLED", False),
         apifootball_api_key=os.getenv("PROAI_APIFOOTBALL_API_KEY") or None,
         apifootball_base_url=os.getenv("PROAI_APIFOOTBALL_BASE_URL") or None,
+        results_provider_enabled=_get_bool("PROAI_RESULTS_PROVIDER_ENABLED", False),
+        results_provider_primary=os.getenv("PROAI_RESULTS_PROVIDER_PRIMARY", "football_data_org"),
+        results_provider_dry_run_only=_get_bool("PROAI_RESULTS_PROVIDER_DRY_RUN_ONLY", True),
+        football_data_api_key=os.getenv("PROAI_FOOTBALL_DATA_API_KEY") or None,
+        football_data_base_url=os.getenv(
+            "PROAI_FOOTBALL_DATA_BASE_URL", "https://api.football-data.org/v4"
+        ),
         team_rating_feature_enabled=_get_bool("PROAI_TEAM_RATING_FEATURE_ENABLED", False),
         team_rating_gate_enabled=_get_bool("PROAI_TEAM_RATING_GATE_ENABLED", False),
         team_rating_gate_competitions=_get_csv(

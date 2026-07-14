@@ -24,6 +24,7 @@ import {
   riskLevelLabel,
   riskTone,
   visibleConfidenceLabel,
+  headlineConfidence,
   confidenceTone,
   decisionStatusLabel,
   limitChips,
@@ -38,13 +39,76 @@ import { renderTeamRatingActivationReadinessPanel } from "./team-rating-activati
 import { renderTeamRatingCanaryPanel } from "./team-rating-canary.js";
 import { presentationGuardOf, SIGNAL_LABEL } from "./presentation-guard.js";
 import { renderTicketCanaryDryRunPanel } from "./ticket-canary-dry-run.js";
-import { resolveActiveSelection, selectedSlateCountdownMs } from "./slate-selection.js";
+import { renderMoneyModePanel } from "./money-mode.js";
+import { renderOperationalMoneyModeStatusPanel } from "./operational-money-mode-status.js";
+import { renderExternalResultsPanel } from "./external-results.js";
+import { renderSlateOptionsPanel } from "./slate-options.js";
+import { renderTrackingResultsValidationPanel } from "./tracking-results-validation.js";
+import { renderLearningDashboard } from "./learning-dashboard.js";
+import {
+  getCachedDiagnostics,
+  setCachedDiagnostics,
+  clearDiagnosticsCache,
+} from "./slate-panel-cache.js";
+import { resolveActiveSelection, resolveVisibleSelection, selectedSlateCountdownMs, slateBadges, suspectSlateDiagnostics, pdfSourceDiagnosticLines, msPdfWatchStatus } from "./slate-selection.js";
 // NOTE: live-tracking is loaded via a guarded dynamic import in the
 // bootstrap (not a static import), so a failure to load/link that module
 // can never abort app.js and blank out the main selector.
 
 function currentSlate() {
   return state.slates.find((item) => item.id === state.activeSlateId) || null;
+}
+
+// Useful empty state (never a blank screen): when no official slate is
+// visible, explain discovery status + worker state + next action instead of
+// a bare "Sin quiniela activa".
+function renderNoSlateState() {
+  const d = state.discovery || {};
+  const workerState = state.worker
+    ? (state.worker.running === false ? "detenido" : "activo")
+    : "no disponible";
+  const lastDiscovery = d.last_observed_at ? formatDate(d.last_observed_at) : "sin registro";
+  const wk = d.last_weekend_draw_code
+    ? `${escapeHtml(d.last_weekend_draw_code)} (${escapeHtml(d.last_weekend_status || "—")})`
+    : "—";
+  const ms = d.last_midweek_draw_code
+    ? `${escapeHtml(d.last_midweek_draw_code)} (${escapeHtml(d.last_midweek_status || "—")})`
+    : "—";
+  const watch = msPdfWatchStatus({ discovery: d });
+  const watchBlock = watch
+    ? `<div class="ms-pdf-watch"><strong>Revisión PDF MS:</strong> ${escapeHtml(watch.status_label)}` +
+      (watch.sha_short ? ` · <span class="mono">${escapeHtml(watch.sha_short)}</span>` : "") +
+      (watch.checked_at ? ` · ${escapeHtml(formatDate(watch.checked_at))}` : "") +
+      (watch.detail ? `<br><span>${escapeHtml(watch.detail)}</span>` : "") +
+      `</div>`
+    : "";
+  const suspectDiag = suspectSlateDiagnostics({ discovery: d });
+  const suspectBlock = suspectDiag.length
+    ? `<div class="no-slate-suspect"><strong>Detectadas desde PDF oficial, no jugables (fecha inválida):</strong>` +
+      suspectDiag
+        .map(
+          (s) =>
+            `<div class="suspect-entry" data-suspect="${escapeHtml(s.draw_code)}">` +
+            `<div class="suspect-head"><span class="mono">${escapeHtml(s.draw_code)}</span> <span class="suspect-status">${escapeHtml(s.date_status)}</span></div>` +
+            `<ul>${pdfSourceDiagnosticLines(s).map((l) => `<li>${escapeHtml(l)}</li>`).join("")}</ul>` +
+            `<p class="suspect-action">${escapeHtml(s.action)}</p></div>`,
+        )
+        .join("") +
+      `</div>`
+    : "";
+  return `
+    <div class="empty-state no-slate-state">
+      <strong>No hay boletas oficiales cargadas</strong>
+      <ul class="no-slate-meta">
+        <li>Último intento de discovery: <span>${escapeHtml(lastDiscovery)}</span></li>
+        <li>Última Weekend observada: <span>${wk}</span></li>
+        <li>Última Media Semana observada: <span>${ms}</span></li>
+        <li>Worker: <span>${escapeHtml(workerState)}</span></li>
+        <li>Acción: ejecutar Scheduler o revisar la fuente LN.</li>
+      </ul>
+      ${watchBlock}
+      ${suspectBlock}
+    </div>`;
 }
 
 function multipleRuleForSlate(slate, matchCount = 0) {
@@ -755,10 +819,14 @@ function renderAsideSlates() {
     const statusLabel = slate.status_label || (slate.is_archived ? "Archivada" : "Activa");
     const statusCls = STATUS_CLASS[statusLabel] || "";
     const matchCount = (slate.matches || []).length;
+    const badges = slateBadges(slate)
+      .map((b) => `<span class="aside-badge badge-${b === "Solo lectura" ? "readonly" : b.toLowerCase().replace(/\s+/g, "-")}">${escapeHtml(b)}</span>`)
+      .join("");
     return `
-      <button class="aside-slate ${isActive ? "active" : ""}" data-slate-id="${escapeHtml(slate.id)}">
+      <button class="aside-slate ${isActive ? "active" : ""} ${slate.read_only ? "is-readonly" : ""}" data-slate-id="${escapeHtml(slate.id)}">
         <strong>${escapeHtml(slate.draw_code)}</strong>
         <span class="aside-slate-status ${statusCls}">${escapeHtml(statusLabel)}</span>
+        <span class="aside-badges">${badges}</span>
         <small>${matchCount} partidos</small>
       </button>
     `;
@@ -1309,7 +1377,7 @@ function buildAnalysis(match) {
           <div class="dh-line"><span class="dh-key">Señal base</span><span class="badge-signal">${escapeHtml(basePick.label)}</span></div>
           <div class="dh-line"><span class="dh-key">Estrategia</span><span class="badge-strategy tone-${strategy.tone}">${escapeHtml(strategy.label)}</span></div>
           <div class="dh-line"><span class="dh-key">Riesgo</span><span class="badge-risk tone-${riskTone(riskLevel)}">${escapeHtml(riskLevelLabel(riskLevel))}</span></div>
-          <div class="dh-line"><span class="dh-key">Confianza visible</span><span class="conf-tag tone-${confidenceTone(visibleConf)}">${escapeHtml(visibleConfidenceLabel(visibleConf))}</span></div>
+          <div class="dh-line"><span class="dh-key">Confianza</span><span class="conf-tag tone-${headlineConfidence(pred).tone}">${escapeHtml(headlineConfidence(pred).label)}</span></div>
         </div>
       </div>
       <div class="analysis-grid">
@@ -1419,34 +1487,71 @@ function renderCanaryBadge(pred) {
   return `<span class="badge-canary" title="Team Rating Canary activo · Δ prob máx ${escapeHtml(delta)} · El ticket aún NO usa canary (motor: ${escapeHtml(c.engine || "")})">CANARY</span>`;
 }
 
-function renderTeamRatingShadow() {
-  const node = getById("team-rating-shadow-body");
+// R6.3: a deferred diagnostic panel shows a lightweight skeleton while its
+// (lazy) payload is still loading, instead of an empty/"sin datos" state.
+function _diagBody(id, renderFn, data) {
+  const node = getById(id);
   if (!node) return;
-  node.innerHTML = renderTeamRatingShadowPanel(state.teamRatingShadow);
+  if (state.diagnosticsLoading && !data) {
+    node.innerHTML = `<div class="panel-skeleton"><div class="skeleton-block"></div><div class="skeleton-block short"></div></div>`;
+    return;
+  }
+  node.innerHTML = renderFn(data);
+}
+
+function renderTeamRatingShadow() {
+  _diagBody("team-rating-shadow-body", renderTeamRatingShadowPanel, state.teamRatingShadow);
 }
 
 function renderTeamRatingCanary() {
-  const node = getById("team-rating-canary-body");
-  if (!node) return;
-  node.innerHTML = renderTeamRatingCanaryPanel(state.teamRatingCanary);
+  _diagBody("team-rating-canary-body", renderTeamRatingCanaryPanel, state.teamRatingCanary);
 }
 
 function renderTicketCanaryDryRun() {
-  const node = getById("ticket-canary-dry-run-body");
-  if (!node) return;
-  node.innerHTML = renderTicketCanaryDryRunPanel(state.ticketCanaryDryRun);
+  _diagBody("ticket-canary-dry-run-body", renderTicketCanaryDryRunPanel, state.ticketCanaryDryRun);
+}
+
+function renderMoneyMode() {
+  _diagBody("money-mode-body", renderMoneyModePanel, state.moneyMode);
+}
+
+function renderOperationalMoneyModeStatus() {
+  _diagBody("operational-money-mode-status-body", renderOperationalMoneyModeStatusPanel, state.moneyModeOpsStatus);
+}
+
+function renderExternalResults() {
+  _diagBody("external-results-body", renderExternalResultsPanel, state.externalResults);
+}
+
+function renderSlateOptions() {
+  _diagBody("slate-options-body", renderSlateOptionsPanel, state.slateOptions);
+}
+
+function renderTrackingResultsValidation() {
+  _diagBody("tracking-results-validation-body", renderTrackingResultsValidationPanel, state.resultsValidation);
 }
 
 function renderTeamRatingDryRun() {
-  const node = getById("team-rating-dry-run-body");
-  if (!node) return;
-  node.innerHTML = renderTeamRatingActivationDryRunPanel(state.teamRatingDryRun);
+  _diagBody("team-rating-dry-run-body", renderTeamRatingActivationDryRunPanel, state.teamRatingDryRun);
 }
 
 function renderTeamRatingReadiness() {
-  const node = getById("team-rating-readiness-body");
-  if (!node) return;
-  node.innerHTML = renderTeamRatingActivationReadinessPanel(state.teamRatingReadiness);
+  _diagBody("team-rating-readiness-body", renderTeamRatingActivationReadinessPanel, state.teamRatingReadiness);
+}
+
+// Render only the deferred Diagnóstico panels (used when their lazy payload
+// arrives), without re-rendering the whole prediction board.
+function renderDiagnosticsPanels() {
+  renderOperationalMoneyModeStatus();
+  renderMoneyMode();
+  renderSlateOptions();
+  renderTrackingResultsValidation();
+  renderTicketCanaryDryRun();
+  renderExternalResults();
+  renderTeamRatingShadow();
+  renderTeamRatingDryRun();
+  renderTeamRatingReadiness();
+  renderTeamRatingCanary();
 }
 
 function renderBoard() {
@@ -1461,11 +1566,7 @@ function renderBoard() {
   const qualityFilterNode = getById("quality-filter");
   const activeSlate = currentSlate();
   renderProductionStatus();
-  renderTeamRatingShadow();
-  renderTeamRatingDryRun();
-  renderTeamRatingReadiness();
-  renderTeamRatingCanary();
-  renderTicketCanaryDryRun();
+  renderDiagnosticsPanels();
   if (qualityFilterNode) qualityFilterNode.innerHTML = renderQualityFilterOptions();
 
   if (!state.authenticated) {
@@ -1499,16 +1600,22 @@ function renderBoard() {
     if (slateSwitcherNode) slateSwitcherNode.innerHTML = hasSlatePicked ? renderSlateSwitcher() : "";
     if (tabsNode) tabsNode.innerHTML = renderTicketTabs();
     if (validationSummaryNode) validationSummaryNode.innerHTML = "";
+    const readOnlyPicked = hasSlatePicked && Boolean(activeSlate?.read_only);
     const noPredCopy = hasSlatePicked
       ? `Esta boleta (${escapeHtml(slateCode)}) no tiene predicciones generadas aún.`
       : "El sistema cargará la quiniela activa en la próxima ejecución.";
-    const generateBtn = hasSlatePicked
+    // No generate/reset action on a closed/archived (read-only) slate.
+    const generateBtn = hasSlatePicked && !readOnlyPicked
       ? `<button class="primary-button generate-cta" id="generate-predictions-btn" data-slate-id="${escapeHtml(slateId)}">Generar predicción</button>`
       : "";
     if (summaryNode) summaryNode.innerHTML = `<div class="empty-state">${noPredCopy}${generateBtn}</div>`;
-    if (gridNode) gridNode.innerHTML = hasSlatePicked
-      ? renderEmpty("Sin predicciones. Usa el botón para generarlas.")
-      : renderEmpty("Sin quiniela activa. Selecciona una boleta en el panel izquierdo o espera a que el sistema la cargue.");
+    if (gridNode) {
+      if (hasSlatePicked) {
+        gridNode.innerHTML = renderEmpty("Sin predicciones. Usa el botón para generarlas.");
+      } else {
+        gridNode.innerHTML = renderNoSlateState();
+      }
+    }
     if (analysisNode) analysisNode.innerHTML = renderEmpty("Selecciona un partido para ver la explicación del modelo.");
     return;
   }
@@ -1647,6 +1754,9 @@ async function _handleDelegatedClick(event) {
         state.isLoading = false;
         renderSidebar();
         renderBoard();
+        // If the operator is on Diagnóstico, refresh its panels for the new
+        // slate (deferred + cached); otherwise they load when the tab opens.
+        if (_isDiagnosticoActive()) loadSlateDiagnostics(slateId);
       }
     }
     return;
@@ -1743,13 +1853,44 @@ function activateView(view) {
   document.querySelectorAll(".view").forEach((node) => {
     node.hidden = node.dataset.view !== view;
   });
-  if (view === "aprendizaje") loadLearningSummary();
+  if (view === "aprendizaje") {
+    loadLearningDashboard();
+    loadLearningSummary();
+  }
+  // R6.3: the heavy Diagnóstico panels load only when this tab is opened, and
+  // only if not already loaded for the active slate (cache makes re-open free).
+  if (view === "diagnostico" && state.activeSlateId && state.diagnosticsSlateId !== state.activeSlateId) {
+    loadSlateDiagnostics(state.activeSlateId);
+  }
+}
+
+function _isDiagnosticoActive() {
+  const node = document.querySelector('.view[data-view="diagnostico"]');
+  return Boolean(node) && !node.hidden;
 }
 
 function setupMainTabs() {
   document.querySelectorAll(".main-tab").forEach((tab) => {
     tab.addEventListener("click", () => activateView(tab.dataset.view));
   });
+}
+
+let learningDashboardLoaded = false;
+async function loadLearningDashboard() {
+  if (learningDashboardLoaded) return;
+  learningDashboardLoaded = true;
+  const body = getById("learning-dashboard-body");
+  if (!body) return;
+  try {
+    const [inventory, readiness] = await Promise.all([
+      safeFetch("/learning/completed-slates/inventory", { optional: true }),
+      safeFetch("/learning/dataset-readiness", { optional: true }),
+    ]);
+    if (!inventory) return; // keep the honest "cargando…" placeholder on any non-OK response
+    body.innerHTML = renderLearningDashboard(inventory, readiness || null);
+  } catch (_err) {
+    // Leave the placeholder; the learning dashboard is best-effort and read-only.
+  }
 }
 
 let learningSummaryLoaded = false;
@@ -1889,7 +2030,10 @@ function updateAuthControls() {
   if (secretField) secretField.hidden = Boolean(state.authenticated);
   if (logoutButton) logoutButton.disabled = !state.authenticated;
   if (passwordInput) passwordInput.disabled = state.authenticated;
-  if (refreshButton) refreshButton.disabled = !state.authenticated || state.isLoading;
+  // Read-only slate (closed/archived): no regenerate/refresh of a closed
+  // prediction. The postmortem stays fully viewable.
+  const readOnly = Boolean(currentSlate()?.read_only);
+  if (refreshButton) refreshButton.disabled = !state.authenticated || state.isLoading || readOnly;
   if (demoButton) {
     const isProduction = state.health?.environment === "production";
     demoButton.hidden = isProduction;
@@ -1898,7 +2042,7 @@ function updateAuthControls() {
   if (workerButton) workerButton.disabled = !state.authenticated || !state.worker || state.isLoading;
   if (copyButton) copyButton.disabled = !state.authenticated || !state.matches.length || state.isLoading;
   if (downloadButton) downloadButton.disabled = !state.authenticated || !state.matches.length || state.isLoading;
-  if (resetButton) resetButton.disabled = !state.authenticated || !Object.keys(state.manualSelections).length;
+  if (resetButton) resetButton.disabled = !state.authenticated || readOnly || !Object.keys(state.manualSelections).length;
   if (filterNode) filterNode.disabled = !state.authenticated || !state.matches.length || state.isLoading;
   if (feedbackNode) {
     feedbackNode.textContent = state.authStatusMessage || "";
@@ -1917,15 +2061,20 @@ function renderLoadingRows() {
 }
 
 async function loadSlateDetails(slateId) {
+  // R6.3 performance: the prediction board only awaits the CORE fetches it needs
+  // to render (predictions, features, ticket, quality + the three batch context
+  // maps). The heavy diagnostics (Money Mode, ticket canary dry-run, the four
+  // team-rating panels, external results) are deferred to loadSlateDiagnostics
+  // so they never block first paint of the board.
+  //
   // Stale-response guard: every switch bumps the sequence; if a newer switch
   // started while these fetches were in flight, we drop this (older) result so
   // a late response can never clobber the slate the user is now viewing.
   const seq = ++slateRequestSeq;
-  // Seven parallel fetches replace ~50 sequential round-trips. The three
-  // batch endpoints (`/evidence/slates`, `/availability/slates`,
-  // `/results/slates/{id}/context`) each return a {match_id: [...]}
-  // mapping so the per-match loop below is a dict lookup, not a fetch.
-  const [predictions, features, ticketPlan, quality, evidenceBySlate, availabilityBySlate, resultsBySlate, teamRatingShadow, teamRatingDryRun, teamRatingReadiness, teamRatingCanary, ticketCanaryDryRun] = await Promise.all([
+  // Switching slate resets the deferred-diagnostic state so panels show a
+  // skeleton, not the previous slate's data. The cache makes a re-open instant.
+  state.diagnosticsSlateId = null;
+  const [predictions, features, ticketPlan, quality, evidenceBySlate, availabilityBySlate, resultsBySlate] = await Promise.all([
     safeFetch(`/predictions/slates/${slateId}`),
     safeFetch(`/predictions/slates/${slateId}/features`),
     safeFetch(`/predictions/slates/${slateId}/ticket`, {optional: true}),
@@ -1933,26 +2082,9 @@ async function loadSlateDetails(slateId) {
     safeFetch(`/evidence/slates/${slateId}`, {optional: true}),
     safeFetch(`/availability/slates/${slateId}`, {optional: true}),
     safeFetch(`/results/slates/${slateId}/context`, {optional: true}),
-    // R5.4: read-only shadow diagnostic. Optional so a failure never blocks
-    // the prediction board.
-    safeFetch(`/predictions/slates/${slateId}/team-rating-shadow`, {optional: true}),
-    // R5.5: read-only activation dry-run diagnostic. Optional for the same
-    // reason — never blocks the prediction board.
-    safeFetch(`/predictions/slates/${slateId}/team-rating-activation-dry-run`, {optional: true}),
-    // R5.6-A: read-only activation readiness diagnostic. Optional too.
-    safeFetch(`/predictions/slates/${slateId}/team-rating-activation-readiness`, {optional: true}),
-    // R5.6-B: read-only controlled-canary status. Optional too.
-    safeFetch(`/predictions/slates/${slateId}/team-rating-canary-status`, {optional: true}),
-    // R5.7: read-only ticket canary dry-run (current vs canary ticket). Optional.
-    safeFetch(`/predictions/slates/${slateId}/ticket-canary-dry-run`, {optional: true}),
   ]);
   // A newer slate switch superseded this request — discard the stale payload.
   if (seq !== slateRequestSeq) return;
-  state.teamRatingShadow = (teamRatingShadow && !Array.isArray(teamRatingShadow)) ? teamRatingShadow : null;
-  state.teamRatingDryRun = (teamRatingDryRun && !Array.isArray(teamRatingDryRun)) ? teamRatingDryRun : null;
-  state.teamRatingReadiness = (teamRatingReadiness && !Array.isArray(teamRatingReadiness)) ? teamRatingReadiness : null;
-  state.teamRatingCanary = (teamRatingCanary && !Array.isArray(teamRatingCanary)) ? teamRatingCanary : null;
-  state.ticketCanaryDryRun = (ticketCanaryDryRun && !Array.isArray(ticketCanaryDryRun)) ? ticketCanaryDryRun : null;
   if (!Array.isArray(predictions) || !Array.isArray(features)) {
     state.matches = [];
     state.ticketPlan = null;
@@ -1998,6 +2130,61 @@ async function loadSlateDetails(slateId) {
   state.manualSelections = {};
 }
 
+let diagnosticsRequestSeq = 0;
+
+function _applyDiagnostics(payload) {
+  const [shadow, dryRun, readiness, canary, ticketCanaryDryRun, moneyMode, opsStatus, externalResults, slateOptions, resultsValidation] = payload;
+  state.teamRatingShadow = (shadow && !Array.isArray(shadow)) ? shadow : null;
+  state.teamRatingDryRun = (dryRun && !Array.isArray(dryRun)) ? dryRun : null;
+  state.teamRatingReadiness = (readiness && !Array.isArray(readiness)) ? readiness : null;
+  state.teamRatingCanary = (canary && !Array.isArray(canary)) ? canary : null;
+  state.ticketCanaryDryRun = (ticketCanaryDryRun && !Array.isArray(ticketCanaryDryRun)) ? ticketCanaryDryRun : null;
+  state.moneyMode = (moneyMode && !Array.isArray(moneyMode)) ? moneyMode : null;
+  state.moneyModeOpsStatus = (opsStatus && !Array.isArray(opsStatus)) ? opsStatus : null;
+  state.externalResults = (externalResults && !Array.isArray(externalResults)) ? externalResults : null;
+  state.slateOptions = (slateOptions && !Array.isArray(slateOptions)) ? slateOptions : null;
+  state.resultsValidation = (resultsValidation && !Array.isArray(resultsValidation)) ? resultsValidation : null;
+}
+
+// R6.3: deferred, cached, cancellable load of the heavy Diagnóstico panels.
+// Never blocks the prediction board — invoked when the Diagnóstico tab is opened
+// (or right after a slate's core load if that tab is already active).
+async function loadSlateDiagnostics(slateId) {
+  if (!slateId || !state.authenticated) return;
+  const cached = getCachedDiagnostics(slateId);
+  if (cached) {
+    state.diagnosticsSlateId = slateId;
+    state.diagnosticsLoading = false;
+    _applyDiagnostics(cached);
+    renderDiagnosticsPanels();
+    return;
+  }
+  const seq = ++diagnosticsRequestSeq;
+  state.diagnosticsLoading = true;
+  state.diagnosticsSlateId = null;
+  renderDiagnosticsPanels(); // immediate skeleton
+  const payload = await Promise.all([
+    safeFetch(`/predictions/slates/${slateId}/team-rating-shadow`, {optional: true}),
+    safeFetch(`/predictions/slates/${slateId}/team-rating-activation-dry-run`, {optional: true}),
+    safeFetch(`/predictions/slates/${slateId}/team-rating-activation-readiness`, {optional: true}),
+    safeFetch(`/predictions/slates/${slateId}/team-rating-canary-status`, {optional: true}),
+    safeFetch(`/predictions/slates/${slateId}/ticket-canary-dry-run`, {optional: true}),
+    safeFetch(`/predictions/slates/${slateId}/money-mode`, {optional: true}),
+    safeFetch(`/operations/money-mode/status`, {optional: true}),
+    safeFetch(`/results/slates/${slateId}/provider-dry-run`, {optional: true}),
+    // R6.4: always-present ticket options + completed-slate result validation.
+    safeFetch(`/predictions/slates/${slateId}/options`, {optional: true}),
+    safeFetch(`/tracking/completed-slates/results-validation`, {optional: true}),
+  ]);
+  // A newer slate switch / diagnostics load superseded this one — drop it.
+  if (seq !== diagnosticsRequestSeq) return;
+  setCachedDiagnostics(slateId, payload);
+  state.diagnosticsSlateId = slateId;
+  state.diagnosticsLoading = false;
+  _applyDiagnostics(payload);
+  renderDiagnosticsPanels();
+}
+
 async function boot() {
   state.isLoading = true;
   updateAuthControls();
@@ -2026,17 +2213,15 @@ async function boot() {
     return;
   }
 
-  const [slates, providers, worker] = await Promise.all([
-    // Main sidebar shows only active/upcoming concursos. Archived jornadas are
-    // intentionally excluded here (they are reachable via the explicit
-    // include_closed=true history/diagnostic query, not mixed into the main
-    // list). The default endpoint already filters out closed/archived slates.
-    safeFetch("/slates"),
+  const [visible, providers, worker] = await Promise.all([
+    // Selector source of truth: open official slates first, else the most
+    // recent official slates in read-only mode, so the UI is never empty
+    // when there is no open boleta. Demo/unverified are excluded server-side.
+    safeFetch("/slates/visible", {optional: true}),
     safeFetch("/sources/providers"),
     safeFetch("/worker/scheduler/status", {optional: true}),
   ]);
 
-  state.slates = Array.isArray(slates) ? slates : [];
   state.providers = Array.isArray(providers) ? providers : [];
   state.worker = worker && !Array.isArray(worker) ? worker : null;
   const workerButton = getById("run-worker");
@@ -2047,16 +2232,32 @@ async function boot() {
       : "Las rutas HTTP del worker están cerradas en modo producción";
   }
 
+  // Resolve the visible set (open + recent fallback). If /slates/visible is
+  // unavailable (older backend), degrade gracefully to /slates (open-only).
+  const savedSlateId = readSavedSlateId();
+  if (visible && !Array.isArray(visible)) {
+    const decision = resolveVisibleSelection({ visible, savedId: savedSlateId });
+    state.slates = decision.slates;
+    state.activeSlateId = decision.selectedId;
+    state.visibleReason = decision.reason;
+    state.readOnlySelection = decision.readOnly;
+    state.discovery = visible.discovery || null;
+    state.visibleMessage = decision.message;
+  } else {
+    const fallback = await safeFetch("/slates", {optional: true});
+    state.slates = Array.isArray(fallback) ? fallback : [];
+    state.activeSlateId = (savedSlateId && state.slates.some((s) => s.id === savedSlateId))
+      ? savedSlateId
+      : (state.slates[0]?.id || null);
+    state.visibleReason = state.slates.length ? "open_slate" : "no_official_slates";
+    state.readOnlySelection = false;
+    state.discovery = null;
+    state.visibleMessage = "";
+  }
+
   if (!state.slates.length && !demoLoadAttempted) {
     demoLoadAttempted = true;
   }
-
-  // Restore the last manually-selected slate if it is still active; otherwise
-  // fall back to the most-urgent (first) active slate.
-  const savedSlateId = readSavedSlateId();
-  state.activeSlateId = (savedSlateId && state.slates.some((s) => s.id === savedSlateId))
-    ? savedSlateId
-    : (state.slates[0]?.id || null);
 
   if (state.activeSlateId) {
     await loadSlateDetails(state.activeSlateId);
@@ -2069,11 +2270,17 @@ async function boot() {
     state.selectedMatchId = null;
   }
 
+  // Persistent notice when the selector fell back to a recent read-only slate.
+  state.transitionBanner = state.visibleReason === "fallback_recent"
+    ? state.visibleMessage
+    : state.transitionBanner;
+
   state.authStatusMessage = "Conectado";
   state.isLoading = false;
   updateAuthControls();
   renderSidebar();
   renderBoard();
+  renderTransitionBanner();
   renderProductionStatus();
   attachEvents();
 }

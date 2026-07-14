@@ -5,7 +5,7 @@ services:
     environment:
       POSTGRES_DB: proai
       POSTGRES_USER: proai
-      POSTGRES_PASSWORD: proai
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-proai}
     volumes:
       - proai-postgres-data:/var/lib/postgresql/data
     restart: unless-stopped
@@ -78,7 +78,7 @@ services:
     environment:
       PGHOST: postgres
       PGUSER: proai
-      PGPASSWORD: proai
+      PGPASSWORD: ${POSTGRES_PASSWORD:-proai}
       PGDATABASE: proai
       PROAI_BACKUP_DIR: /backups
       PROAI_BACKUP_INTERVAL_SECONDS: "86400"
@@ -94,7 +94,7 @@ services:
       # the service degraded. Without it a silent pg_dump failure
       # (corrupt volume, password change, disk full) goes unnoticed
       # until the next disaster.
-      test: ["CMD-SHELL", "test -f /backups/.last_success && test $(( $(date -u +%s) - $(date -u -d \"$(cat /backups/.last_success)\" +%s) )) -lt 108000"]
+      test: ["CMD-SHELL", "test -f /backups/.last_success_epoch && test $(( $(date -u +%s) - $(cat /backups/.last_success_epoch) )) -lt 108000"]
       interval: 1h
       timeout: 5s
       retries: 3

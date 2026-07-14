@@ -313,6 +313,45 @@ export function confidenceTone(value) {
   return "bad";
 }
 
+// UI-facing presentation confidence band (from presentation_guard). Never
+// shows "Alta" for a capped/flagged/non-playable pick. Allowed backend values:
+// high | medium | low | review | blocked | unreliable.
+export function presentationConfidenceLabel(value) {
+  return (
+    {
+      high: "Alta",
+      medium: "Media",
+      low: "Baja · ajustada",
+      review: "Revisar · probabilidad ajustada",
+      blocked: "Bloqueado",
+      unreliable: "No firmar · sin evidencia",
+    }[String(value || "").toLowerCase()] || "Revisar · probabilidad ajustada"
+  );
+}
+
+export function presentationConfidenceTone(value) {
+  const v = String(value || "").toLowerCase();
+  if (v === "high") return "ok";
+  if (v === "medium") return "warn";
+  return "bad"; // low / review / blocked / unreliable
+}
+
+// The single confidence value the UI should render as headline: prefer the
+// degraded presentation band from the guard, fall back to visible_confidence.
+export function headlineConfidence(pred) {
+  const guard = (pred && pred.presentation_guard) || {};
+  if (guard.presentation_confidence_band) {
+    return {
+      kind: "presentation",
+      band: guard.presentation_confidence_band,
+      label: presentationConfidenceLabel(guard.presentation_confidence_band),
+      tone: presentationConfidenceTone(guard.presentation_confidence_band),
+    };
+  }
+  const vc = (pred && pred.visible_confidence) || "baja";
+  return { kind: "visible", band: vc, label: visibleConfidenceLabel(vc), tone: confidenceTone(vc) };
+}
+
 // Decision status bucket for the chip/tab vocabulary.
 export function decisionStatusLabel(finalStatus) {
   return (
