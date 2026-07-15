@@ -11,12 +11,17 @@ missing, conflicts are high, or there are too few labelled rows.
 """
 from __future__ import annotations
 
+import json
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.models.tables import MatchFeatureSnapshotModel, ProgolSlateModel
+from app.models.tables import (
+    MatchFeatureSnapshotModel,
+    ProgolJornadaScoreModel,
+    ProgolSlateModel,
+)
 from app.models.team_rating import TeamRatingSnapshotModel
 from app.repositories.canonical_result_repository import CanonicalResultRepository
 from app.services.learning_slate_scoring_service import _audit_probs
@@ -26,6 +31,7 @@ from app.services.slate_classification_service import classify_slate
 MIN_COMPARABLE_SLATES = 8
 MIN_COMPARABLE_MATCHES = 112  # ~8 weekend jornadas
 MAX_CONFLICT_RATIO = 0.05
+MIN_CLASSIFICATION_MATCHES = 20
 
 
 def _teams_with_rating(session: Session) -> set[str]:
@@ -43,6 +49,73 @@ def _matches_with_features(session: Session, match_ids: list[str]) -> set[str]:
     return set(rows)
 
 
+def _latest_scores_by_slate(session: Session) -> dict[str, ProgolJornadaScoreModel]:
+    ranked = (
+        select(
+            ProgolJornadaScoreModel.id.label("score_id"),
+            func.row_number()
+            .over(
+                partition_by=ProgolJornadaScoreModel.slate_id,
+                order_by=(ProgolJornadaScoreModel.computed_at.desc(), ProgolJornadaScoreModel.id.desc()),
+            )
+            .label("rn"),
+        )
+        .subquery()
+    )
+    rows = session.scalars(
+        select(ProgolJornadaScoreModel)
+        .join(ranked, ProgolJornadaScoreModel.id == ranked.c.score_id)
+        .where(ranked.c.rn == 1)
+    ).all()
+    return {score.slate_id: score for score in rows}
+
+
+def _is_sign_only_classification_detail(detail: dict[str, Any]) -> bool:
+    return (
+        detail.get("result_is_canonical") is False
+        and detail.get("result_code") in {"1", "X", "2"}
+        and detail.get("home_goals") is None
+        and detail.get("away_goals") is None
+    )
+
+
+def _classification_row_count_from_score(
+    score: ProgolJornadaScoreModel | None,
+    *,
+    canonical_ids: set[str],
+    conflict_ids: set[str],
+) -> int:
+    """Fast count equivalent for AdaptiveDatasetService.build_rows_for_slate.
+
+    Readiness only needs to know whether a completed slate has one trainable
+    classification row per match. Building full Pydantic rows here makes the
+    Aprendizaje tab slow as the slate history grows, so this reads the already
+    materialized jornada score details and applies the same row gates.
+    """
+    if score is None or not score.composition_hash or not score.is_complete:
+        return 0
+    try:
+        details: list[dict[str, Any]] = json.loads(score.details_json or "[]")
+    except (json.JSONDecodeError, TypeError):
+        return 0
+
+    count = 0
+    for detail in details:
+        match_id = detail.get("match_id")
+        if not match_id or match_id in conflict_ids:
+            continue
+        if detail.get("result_code") is None:
+            continue
+        if detail.get("recommended_outcome") is None:
+            continue
+        if detail.get("result_is_canonical") is True or match_id in canonical_ids:
+            count += 1
+            continue
+        if _is_sign_only_classification_detail(detail):
+            count += 1
+    return count
+
+
 def build_dataset_readiness(session: Session) -> dict[str, Any]:
     from app.repositories.slate_repository import SlateRepository
     from app.services.learning_slate_scoring_service import LearningSlateScoringService
@@ -52,10 +125,13 @@ def build_dataset_readiness(session: Session) -> dict[str, Any]:
     slates: list[ProgolSlateModel] = service.list_slates(include_closed=True)
     scorer = LearningSlateScoringService(session)
     rated_teams = _teams_with_rating(session)
+    latest_scores = _latest_scores_by_slate(session)
 
     comparable_slates: list[str] = []
+    classification_slates: list[str] = []
     excluded: dict[str, str] = {}
     comparable_matches = 0
+    classification_matches = 0
     conflict_matches = 0
     with_features = 0
     with_rating = 0
@@ -73,24 +149,46 @@ def build_dataset_readiness(session: Session) -> dict[str, Any]:
             excluded[slate.draw_code] = f"not_comparable_lineage ({reality.classification.value})"
             continue
         canonical = CanonicalResultRepository(session).get_with_conflict_info(match_ids)
-        conflicts = sum(1 for mid in match_ids if mid in canonical and canonical[mid].is_conflicting)
-        covered = sum(
-            1 for mid in match_ids if mid in canonical and not canonical[mid].is_conflicting
-        )
+        conflict_ids = {
+            mid for mid in match_ids if mid in canonical and canonical[mid].is_conflicting
+        }
+        canonical_ids = {
+            mid for mid in match_ids if mid in canonical and not canonical[mid].is_conflicting
+        }
+        conflicts = len(conflict_ids)
+        covered = len(canonical_ids)
         conflict_matches += conflicts
-        if covered < len(match_ids):
-            excluded[slate.draw_code] = (
-                f"incomplete_results ({covered}/{len(match_ids)} canonical, {conflicts} conflicts)"
+        classification_rows = 0
+        if conflicts == 0:
+            classification_rows = _classification_row_count_from_score(
+                latest_scores.get(slate.id),
+                canonical_ids=canonical_ids,
+                conflict_ids=conflict_ids,
             )
+        if classification_rows == len(match_ids):
+            classification_slates.append(slate.draw_code)
+            classification_matches += classification_rows
+        if covered < len(match_ids):
+            if classification_rows == len(match_ids):
+                excluded[slate.draw_code] = (
+                    f"classification_only_results "
+                    f"({covered}/{len(match_ids)} canonical, "
+                    f"{classification_rows} classification, {conflicts} conflicts)"
+                )
+            else:
+                excluded[slate.draw_code] = (
+                    f"incomplete_results ({covered}/{len(match_ids)} canonical, {conflicts} conflicts)"
+                )
             continue
 
         # Comparable slate confirmed.
         comparable_slates.append(slate.draw_code)
         predictions = scorer._latest_predictions(slate, match_ids)
         feature_matches = _matches_with_features(session, match_ids)
-        money_mode_ok = scorer._money_mode_blocked(slate) in (True, False)  # decision existed
-        if money_mode_ok:
-            with_money_mode += len(match_ids)
+        # Historical behavior counted every comparable match as having a
+        # money-mode decision because _money_mode_blocked always returns bool.
+        # Keep the count, but avoid rebuilding Money Mode for every old slate.
+        with_money_mode += len(match_ids)
 
         for sm in slate.matches:
             comparable_matches += 1
@@ -123,6 +221,10 @@ def build_dataset_readiness(session: Session) -> dict[str, Any]:
         )
 
     training_ready = not minimum_missing and comparable_matches > 0
+    classification_training_ready = (
+        classification_matches >= MIN_CLASSIFICATION_MATCHES
+        and conflict_ratio <= MAX_CONFLICT_RATIO
+    )
 
     if comparable_matches == 0:
         reason = "no comparable matches — no official results applied yet"
@@ -141,12 +243,16 @@ def build_dataset_readiness(session: Session) -> dict[str, Any]:
         "mode": "learning_dataset_readiness",
         "trains": False,
         "training_ready": training_ready,
+        "classification_training_ready": classification_training_ready,
         "reason": reason,
         "minimum_missing": minimum_missing,
         "recommended_next_data_action": recommended,
         "comparable_slate_count": len(comparable_slates),
         "comparable_slates": comparable_slates,
         "comparable_match_count": comparable_matches,
+        "classification_comparable_slate_count": len(classification_slates),
+        "classification_comparable_slates": classification_slates,
+        "classification_match_count": classification_matches,
         "conflict_match_count": conflict_matches,
         "conflict_ratio": conflict_ratio,
         "matches_with_features": with_features,
@@ -158,6 +264,7 @@ def build_dataset_readiness(session: Session) -> dict[str, Any]:
         "thresholds": {
             "min_comparable_slates": MIN_COMPARABLE_SLATES,
             "min_comparable_matches": MIN_COMPARABLE_MATCHES,
+            "min_classification_matches": MIN_CLASSIFICATION_MATCHES,
             "max_conflict_ratio": MAX_CONFLICT_RATIO,
         },
         "write_safety": {"writes_performed": False, "snapshots_created": False},

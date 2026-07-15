@@ -111,6 +111,27 @@ def test_parser_sign_only():
     assert all(r.is_final and r.home_goals is None for r in rows)
 
 
+def test_parser_ln_html_historical_combo_sign_only():
+    html = """
+    <table>
+      <tbody>
+        <tr>
+          <td class="text-center">2341</td>
+          <td class="text-center">12/07/2026</td>
+          <td class="text-center">E E L V V L E L V L V L L E</td>
+        </tr>
+      </tbody>
+    </table>
+    """
+
+    draw_code, rows = parse_progol_resultados_text(html)
+
+    assert draw_code == "2341"
+    assert len(rows) == 14
+    assert [row.result_code for row in rows[:4]] == ["X", "X", "1", "2"]
+    assert all(row.is_final and row.home_goals is None for row in rows)
+
+
 # --------------------------------------------------------------------------
 # Mapping + ingestion
 # --------------------------------------------------------------------------

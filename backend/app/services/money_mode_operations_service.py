@@ -32,6 +32,7 @@ from app.models.tables import (
 from app.models.team_rating import TeamRatingRunModel, TeamRatingSnapshotModel
 from app.repositories.slate_repository import SlateRepository
 from app.services.active_slate_scope import build_active_slate_scope
+from app.services.diagnostic_ttl_cache import cached_diagnostic_report
 from app.services.money_mode_service import build_money_mode
 from app.services.money_mode_validation_service import validate_slate_for_money_mode
 from app.services.slate_service import SlateService
@@ -119,6 +120,15 @@ def _slate_status(report: dict[str, Any]) -> dict[str, Any]:
 def build_operational_status(session: Session) -> dict[str, Any]:
     """Compact operational status for every active/upcoming slate (read-only)."""
     scope = build_active_slate_scope(session)
+    key = tuple((info.slate_id, info.draw_code, info.week_type) for info in scope)
+    return cached_diagnostic_report(
+        "money_mode_operational_status",
+        key,
+        lambda: _build_operational_status_uncached(session, scope),
+    )
+
+
+def _build_operational_status_uncached(session: Session, scope: list[Any]) -> dict[str, Any]:
     slate_service = SlateService(SlateRepository(session))
     statuses: list[dict[str, Any]] = []
     playable = 0

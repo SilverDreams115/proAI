@@ -40,6 +40,7 @@ function renderCurrent(current) {
   const reco = current.recommendation || {};
   const policy = current.betting_policy || {};
   const drift = current.drift_audit || {};
+  const gate = current.publication_gate || null;
   const explanation = reco.explanation || {};
   return `
     <div class="product-flow-grid">
@@ -67,6 +68,7 @@ function renderCurrent(current) {
         ${stat("No jugar", policy.hard_no_play ? "sí" : "no")}
         ${stat("Combinaciones máx.", policy.max_combinations)}
       </section>
+      ${renderPublicationGate(gate)}
       <section class="product-flow-block">
         <h3>Drift</h3>
         ${stat("Estado", drift.status)}
@@ -79,6 +81,20 @@ function renderCurrent(current) {
         ${stat("Violaciones", (current.active_slate_contract?.violations || []).join(", ") || "ninguna")}
       </section>
     </div>`;
+}
+
+function renderPublicationGate(gate) {
+  if (!gate) return "";
+  const debt = gate.data_debt || {};
+  return `
+      <section class="product-flow-block">
+        <h3>Gate de publicación</h3>
+        ${stat("Estado", gate.status)}
+        ${stat("Publicar", gate.publish_allowed ? "sí" : "no")}
+        ${stat("Placeholders", debt.placeholder_count ?? 0)}
+        ${stat("Bloqueados", debt.blocked_count ?? 0)}
+        ${stat("ML", gate.ml_activation_gate?.activation_allowed ? "activable" : "bloqueado")}
+      </section>`;
 }
 
 function renderPostmortem(postmortem) {

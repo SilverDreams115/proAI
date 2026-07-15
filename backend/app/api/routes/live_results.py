@@ -26,11 +26,15 @@ from app.repositories.slate_repository import SlateRepository
 from app.schemas.live_results import (
     LiveDashboardEntry,
     LiveDashboardResponse,
+    LiveResultsObserverStatusResponse,
     LiveResultsResponse,
     LiveScoreResponse,
     ResultComparisonResponse,
 )
 from app.schemas.tracking import TrackingResponse
+from app.services.live_results_observer_status_service import (
+    LiveResultsObserverStatusService,
+)
 from app.services.live_results_service import LiveResultsService
 from app.services.results_ingestion_service import (
     OPERATOR_SOURCE_KIND,
@@ -89,6 +93,26 @@ async def live_dashboard(session: Session = Depends(get_db_session)) -> LiveDash
 
 
 @router.get(
+    "/live/results-observer-status",
+    response_model=LiveResultsObserverStatusResponse,
+    summary="Read-only validation that active slates receive marked live results",
+)
+async def live_results_observer_status(
+    session: Session = Depends(get_db_session),
+) -> LiveResultsObserverStatusResponse:
+    """Operational check for the worker's live-results path.
+
+    Read-only: it does not fetch LN, does not ingest documents, and does not
+    create sources. It reports whether the existing LN results source is
+    configured and which active slates currently have live/final results with
+    source markers.
+    """
+    return LiveResultsObserverStatusResponse(
+        **LiveResultsObserverStatusService(session).build_status()
+    )
+
+
+@router.get(
     "/{slate_id}/live-results",
     response_model=LiveResultsResponse,
     summary="Per-match prediction + live/final result + hit + draw coverage",
@@ -137,7 +161,7 @@ async def slate_tracking(
 ) -> TrackingResponse:
     """Phase A tracking view: original pick, raw/decision split, ticket
     strategy, real result, prediction_status (hit/miss/pending) and
-    learning_status (ready/waiting_result/excluded) per match, plus a
+    learning_status (ready/classification_ready/waiting_result/excluded) per match, plus a
     slate-level summary. Read-only; pending matches never become learning
     ready and conflicting results are excluded."""
     slate = _require_slate(session, slate_id)
@@ -185,7 +209,27 @@ async def ingest_results(
             documents = connector.fetch()
         except Exception as exc:  # network / parse failure — surface, don't crash
             raise HTTPException(status_code=502, detail=f"No se pudo obtener resultados LN: {exc}")
-        text = str(documents[0].payload.get("raw_text", "")) if documents else ""
+        reports = []
+        for document in documents:
+            report = ResultsIngestionService(session).ingest_for_slate(
+                slate,
+                str(document.payload.get("raw_text", "")),
+                source_url=document.source_url,
+            )
+            reports.append(report)
+            if report.get("error") != "draw_code_mismatch":
+                session.commit()
+                return report
+        session.commit()
+        if reports:
+            return {
+                "slate_id": slate.id,
+                "draw_code": slate.draw_code,
+                "error": "no_matching_results_document",
+                "reports": reports,
+                "recorded": 0,
+            }
+        text = ""
         source_url = source_url or connector.base_url
     ingest_kwargs: dict = {"source_url": source_url}
     if body.source_name:

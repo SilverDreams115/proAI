@@ -21,6 +21,7 @@ class MatchScoreDetailResponse(BaseModel):
     result_code: str | None
     home_goals: int | None
     away_goals: int | None
+    result_is_canonical: bool = True
     recommended_outcome: str | None
     confidence_band: str | None
     home_probability: float | None

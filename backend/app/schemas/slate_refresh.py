@@ -27,6 +27,8 @@ class CurrentProgolRefreshResponse(BaseModel):
     draw_code: str
     label: str
     match_count: int
+    prediction_count: int = 0
     archived_slate_ids: list[str]
     ingestion_run_id: str | None = None
     ingestion_status: str | None = None
+    step_durations_ms: dict[str, float] = Field(default_factory=dict)

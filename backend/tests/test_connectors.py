@@ -2,6 +2,7 @@ from app.connectors.football_data_uk import FootballDataUkSeasonConnector
 from app.connectors.html import GenericHtmlConnector
 from app.connectors.local_context_json import LocalContextJsonConnector
 from app.connectors.progol_catalog_html import ProgolCatalogHtmlConnector
+from app.connectors.progol_resultados import ProgolResultadosConnector
 from io import BytesIO
 import json
 from urllib.request import addinfourl
@@ -67,6 +68,26 @@ def test_progol_catalog_connector_extracts_current_media_draw_number() -> None:
     )
 
     assert draw_number == 796
+
+
+def test_progol_resultados_connector_fetches_media_semana_companion_page(monkeypatch) -> None:
+    payloads = {
+        ProgolResultadosConnector.DEFAULT_RESULTS_URL: "CONCURSO 2341\n1 L\n2 E\n",
+        ProgolResultadosConnector.MEDIA_SEMANA_RESULTS_URL: "CONCURSO 803\n1 V\n2 L\n",
+    }
+
+    def fake_download(url: str) -> str:
+        return payloads[url]
+
+    monkeypatch.setattr(ProgolResultadosConnector, "_download_text", staticmethod(fake_download))
+
+    documents = ProgolResultadosConnector().fetch()
+
+    assert [doc.source_url for doc in documents] == [
+        ProgolResultadosConnector.DEFAULT_RESULTS_URL,
+        ProgolResultadosConnector.MEDIA_SEMANA_RESULTS_URL,
+    ]
+    assert [doc.payload["draw_code"] for doc in documents] == ["2341", "803"]
 
 
 def test_generic_html_connector_extracts_current_progol_media_fixture_section(monkeypatch) -> None:

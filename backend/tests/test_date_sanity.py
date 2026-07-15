@@ -129,6 +129,19 @@ def test_gate_stale_on_low_extraction_confidence():
     assert status == DateStatus.STALE_SOURCE
 
 
+def test_gate_accepts_provisional_ms_pdf_window():
+    status, reasons = evaluate_slate_dates(
+        registration_closes_at=_dt(2026, 7, 16),
+        created_at=_dt(2026, 7, 12),
+        extraction_confidence="provisional",
+        registration_close_source="provisional_ms_pdf_window",
+        fixtures_present=True,
+        rejected_close_block=True,
+    )
+    assert status == DateStatus.DATE_VALID
+    assert "provisional" in " ".join(reasons)
+
+
 def test_gate_suspect_when_not_monotonic_vs_previous():
     # PGM-802 must not close before PGM-801 (2026-06-24).
     status, _ = evaluate_slate_dates(

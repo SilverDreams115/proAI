@@ -132,6 +132,61 @@ class IngestionService:
             )
             return failed_run
 
+    def run_for_source_documents_only(self, source_id: str) -> IngestionRunModel:
+        """Fetch, parse and persist source documents without global side effects.
+
+        Current Progol context refresh already knows the exact slate it is
+        updating. Running the full ingestion pipeline for that local JSON source
+        needlessly scans every match for discovery/evidence/stats/results and
+        can make operator refreshes feel hung. This path keeps the ingestion run
+        audit trail and stored source documents, then lets the caller perform
+        the scoped slate work.
+        """
+        source = self.repository.get_source(source_id)
+        if source is None:
+            raise NotFoundError("Source not found.")
+
+        started = perf_counter()
+        with managed_transaction(self.repository.session):
+            run = self.repository.create_run(source_id)
+        try:
+            documents = self._fetch_parsed_documents(source)
+            with managed_transaction(self.repository.session):
+                completed_run = self.repository.mark_run_success(run, documents)
+                metrics_store.record_ingestion_run(
+                    source_name=source.name,
+                    status=completed_run.status,
+                    duration_ms=(perf_counter() - started) * 1000,
+                )
+                return completed_run
+        except Exception as exc:
+            logger.exception(
+                "documents-only ingestion run failed",
+                extra={
+                    "event": "ingestion_documents_only_failed",
+                    "source_id": source_id,
+                    "source_name": source.name,
+                    "error_type": type(exc).__name__,
+                },
+            )
+            self.repository.session.rollback()
+            with managed_transaction(self.repository.session):
+                failed_run = self.repository.mark_run_failure(run, str(exc))
+            metrics_store.record_ingestion_run(
+                source_name=source.name,
+                status=failed_run.status,
+                duration_ms=(perf_counter() - started) * 1000,
+            )
+            return failed_run
+
+    def _fetch_parsed_documents(self, source) -> list[SourceDocument]:
+        connector = self.get_connector_for_source(source)
+        parser = parser_registry.get(source.parser_profile)
+        return [
+            self._normalize_document(document, parser.parse(document.payload))
+            for document in self._fetch_documents(connector)
+        ]
+
     def get_connector_for_source(self, source) -> SourceConnector:
         existing = connector_registry.get(source.name)
         if existing is not None:

@@ -18,9 +18,11 @@ from app.services.active_slate_scope import build_active_slate_scope
 from app.services.completed_slate_results_validation_service import (
     build_completed_slates_validation,
 )
+from app.services.diagnostic_ttl_cache import cached_diagnostic_report
 from app.services.learning_error_attribution_service import build_error_attribution
 from app.services.learning_slate_scoring_service import LearningSlateScoringService
 from app.services.money_mode_service import build_money_mode
+from app.services.publication_gate_service import build_publication_gate_for_slate
 from app.services.slate_classification_service import classify_slate
 from app.services.slate_service import SlateService
 
@@ -32,6 +34,23 @@ def build_product_flow(session: Session, slate_id: str | None = None) -> dict[st
         slate for info in active_scope if (slate := slate_service.get_slate(info.slate_id)) is not None
     ]
     selected = _select_slate(active_slates, slate_service, slate_id)
+    key = (
+        selected.id if selected is not None else None,
+        tuple((slate.id, slate.composition_hash, slate.slate_version) for slate in active_slates),
+    )
+    return cached_diagnostic_report(
+        "product_flow",
+        key,
+        lambda: _build_product_flow_uncached(session, slate_id, active_slates, selected),
+    )
+
+
+def _build_product_flow_uncached(
+    session: Session,
+    slate_id: str | None,
+    active_slates: list[ProgolSlateModel],
+    selected: ProgolSlateModel | None,
+) -> dict[str, Any]:
 
     current = _current_slate_flow(session, selected, active_slates) if selected is not None else None
     postmortem = _postmortem_flow(session)
@@ -70,6 +89,7 @@ def _current_slate_flow(
     quality = _data_quality(money)
     recommendation = _recommendation(money)
     policy = _betting_policy(money, quality)
+    publication_gate = build_publication_gate_for_slate(session, slate)
     active_contract = _active_slate_contract(slate, active_slates)
     drift = _drift_audit(reality, money, quality)
     return {
@@ -93,6 +113,7 @@ def _current_slate_flow(
         "data_quality": quality,
         "recommendation": recommendation,
         "betting_policy": policy,
+        "publication_gate": publication_gate,
         "active_slate_contract": active_contract,
         "drift_audit": drift,
     }
@@ -248,6 +269,14 @@ def _drift_audit(reality: Any, money: dict[str, Any], quality: dict[str, Any]) -
 
 
 def _postmortem_flow(session: Session) -> dict[str, Any]:
+    return cached_diagnostic_report(
+        "product_flow_postmortem",
+        "all_completed_slates",
+        lambda: _postmortem_flow_uncached(session),
+    )
+
+
+def _postmortem_flow_uncached(session: Session) -> dict[str, Any]:
     validation = build_completed_slates_validation(session)
     slates = list(validation.get("slates", []) or [])
     latest = slates[0] if slates else None
@@ -309,6 +338,9 @@ def _next_actions(current: dict[str, Any] | None, postmortem: dict[str, Any]) ->
     else:
         if current["data_quality"]["blockers"]:
             actions.append("Resolver bloqueadores de datos antes de recomendar boleto.")
+        gate = current.get("publication_gate") or {}
+        if gate.get("status") == "DO_NOT_PLAY":
+            actions.append(str(gate.get("reason") or "Gate de publicación bloqueado."))
         if current["drift_audit"]["status"] != "clear":
             actions.append("Revisar drift/lineage antes de confiar en la recomendación.")
         if current["betting_policy"]["hard_no_play"]:

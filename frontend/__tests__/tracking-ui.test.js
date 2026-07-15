@@ -7,6 +7,7 @@ import { dirname, join } from "node:path";
 
 import {
   renderComparisonRow,
+  renderComparisonDetail,
   renderLiveDashboard,
   renderDashboardEntry,
   renderNoComparableResults,
@@ -99,6 +100,7 @@ describe("comparison: acierto / fallo / pendiente + learning", () => {
   });
   it("renders the learning column states", () => {
     expect(renderComparisonRow(cmp())).toContain("Ready");
+    expect(renderComparisonRow(cmp({ learning_status: "classification_ready" }))).toContain("Clasificación");
     expect(renderComparisonRow(cmp({ learning_status: "excluded" }))).toContain("Excluido");
     expect(renderComparisonRow(cmp({ learning_status: "waiting_result" }))).toContain("Pendiente");
   });
@@ -107,10 +109,31 @@ describe("comparison: acierto / fallo / pendiente + learning", () => {
     // a comparison row still renders without a learning_status (tracking 401/blip)
     expect(() => renderComparisonRow(cmp({ learning_status: undefined }))).not.toThrow();
   });
-  it("renders sign_only as a distinct, non-ready badge", () => {
-    expect(learningBadge("sign_only")).toContain("Solo signo");
-    expect(learningBadge("sign_only")).toContain("learn-warn");
-    expect(learningBadge("ready")).not.toContain("Solo signo");
+  it("renders sign-only classification rows as training-ready", () => {
+    expect(learningBadge("classification_ready")).toContain("Clasificación");
+    expect(learningBadge("classification_ready")).toContain("learn-hit");
+    expect(learningBadge("ready")).not.toContain("Clasificación");
+  });
+
+  it("shows classification-only row count in comparison detail", () => {
+    const html = renderComparisonDetail({
+      slate_id: "s1",
+      draw_code: "PG-2336",
+      week_type: "weekend",
+      comparable: true,
+      results_ingested: true,
+      completed_count: 14,
+      match_count: 14,
+      live_count: 0,
+      pending_count: 0,
+      is_complete: true,
+      learning_rows_sign_only: 14,
+      original_snapshot: {},
+      score: { simple_hits: 7, doubles_hits: 7, full_hits: 7, max_possible_hits: 7 },
+      matches: [cmp({ learning_status: "classification_ready" })],
+    });
+    expect(html).toContain("14</strong> filas listas para clasificación");
+    expect(html).toContain("sin marcador canónico");
   });
 });
 

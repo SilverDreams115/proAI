@@ -541,6 +541,38 @@ details.ops-details[open] .ops-summary::after {
   font-size: 0.62rem;
 }
 
+.aside-blocked-slate {
+  display: grid;
+  gap: 4px;
+  margin-top: 6px;
+  padding: 8px 9px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--paper);
+  color: var(--muted);
+  font-size: 0.68rem;
+  line-height: 1.35;
+}
+
+.aside-blocked-slate strong {
+  color: var(--ink);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.72rem;
+}
+
+.aside-blocked-slate span {
+  color: var(--warn);
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.62rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.aside-blocked-slate small {
+  color: var(--muted);
+  font-size: 0.64rem;
+}
+
 .aside-week-label {
   font-family: "IBM Plex Mono", monospace;
   font-size: 0.62rem;
@@ -1313,6 +1345,13 @@ details.ops-details[open] .ops-summary::after {
 
 .summary-band .bad {
   border-color: rgba(215, 74, 52, 0.5);
+}
+
+.export-status-line {
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-family: "IBM Plex Mono", monospace;
 }
 
 .review-list {
@@ -2751,6 +2790,26 @@ details.analysis-block summary h4 {
 .readiness-chip-block { background: rgba(240, 90, 90, 0.16); color: #f05a5a; }
 .readiness-count { color: var(--muted); font-size: 0.74rem; }
 .readiness-details { color: var(--muted); font-size: 0.78rem; }
+.readiness-filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 12px 0;
+}
+.readiness-filter {
+  border: 1px solid var(--line);
+  background: var(--paper-strong);
+  color: var(--muted);
+  border-radius: 6px;
+  padding: 7px 10px;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+.readiness-filter.active {
+  color: var(--ink);
+  border-color: var(--accent-2);
+  background: rgba(53, 208, 186, 0.14);
+}
 .readiness-rollback { display: flex; flex-direction: column; gap: 6px; }
 .readiness-rollback-list { margin: 0; padding-left: 4px; list-style: none; display: flex; flex-direction: column; gap: 6px; }
 .readiness-rollback-list li { display: flex; align-items: center; gap: 8px; color: var(--ink); font-size: 0.84rem; }
@@ -2948,3 +3007,16 @@ span.badge-canary {
 .product-flow-stat strong { color: var(--muted); font-weight: 600; }
 .product-flow-actions ul { margin: 4px 0 0 18px; padding: 0; }
 .product-flow-actions li { margin: 3px 0; }
+
+/* Operational prediction audit */
+.opa-panel { display: grid; gap: 12px; }
+.opa-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; }
+.opa-grid section {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: rgba(255,255,255,0.02);
+}
+.opa-grid h4 { margin: 0 0 8px; font-size: 0.98rem; }
+.opa-table { width: 100%; margin-top: 8px; }
+.opa-table.compact { font-size: 0.84rem; }

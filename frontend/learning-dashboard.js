@@ -82,3 +82,22 @@ export function renderLearningDashboard(inventory, readiness) {
     </div>
   `;
 }
+
+export function renderLearningSummary(summary) {
+  if (!summary) {
+    return `<p class="meta-copy">Disponible cuando haya learning rows suficientes.</p>`;
+  }
+  const rows = Number(summary.total_rows || 0);
+  if (rows <= 0) {
+    return `<p class="meta-copy">Disponible cuando haya learning rows suficientes. Los resultados oficiales de Progol son solo-signo (sin marcador) y no aportan filas de entrenamiento; el aprendizaje necesita marcadores de una fuente deportiva. (${escapeHtml(summary.total_slates_scored || 0)} jornadas scoreadas, ${escapeHtml(summary.total_slates_complete || 0)} completas.)</p>`;
+  }
+  const hitRate = summary.hit_rate == null ? "—" : `${Math.round(Number(summary.hit_rate) * 100)}%`;
+  return `
+    <div class="learn-summary">
+      <div class="ls-cell"><strong>${escapeHtml(rows)}</strong><span>learning rows</span></div>
+      <div class="ls-cell"><strong>${escapeHtml(summary.rows_with_canonical_result || 0)}</strong><span>con resultado canónico</span></div>
+      <div class="ls-cell"><strong>${escapeHtml(summary.rows_with_conflict || 0)}</strong><span>en conflicto (excluidas)</span></div>
+      <div class="ls-cell"><strong>${hitRate}</strong><span>hit rate</span></div>
+    </div>
+    <p class="meta-copy subtle">Solo lectura. No se entrena ni se promueve ningún modelo desde esta vista.</p>`;
+}

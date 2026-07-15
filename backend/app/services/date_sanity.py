@@ -50,6 +50,7 @@ def evaluate_slate_dates(
     observed_at: datetime | None = None,
     prev_same_type_closes_at: datetime | None = None,
     extraction_confidence: str | None = None,
+    registration_close_source: str | None = None,
     fixtures_present: bool = False,
     rejected_close_block: bool = False,
 ) -> tuple[DateStatus, list[str]]:
@@ -83,7 +84,10 @@ def evaluate_slate_dates(
         reasons.append("no se extrajo una fecha de cierre confiable del guía")
         return DateStatus.NEEDS_OPERATOR_CONFIRMATION, reasons
 
-    if (extraction_confidence or "").lower() == "low":
+    close_source = (registration_close_source or "").lower()
+    provisional_ms_close = close_source == "provisional_ms_pdf_window"
+
+    if (extraction_confidence or "").lower() == "low" and not provisional_ms_close:
         reasons.append("extracción de fecha con baja confianza (bloque cierre stale/ambiguo)")
         return DateStatus.STALE_SOURCE, reasons
 
@@ -116,5 +120,8 @@ def evaluate_slate_dates(
     # / non-monotonic), and ``kicks`` is still accepted for callers that want
     # to inspect it without changing the verdict.
     _ = kicks
-    reasons.append("fechas coherentes")
+    if provisional_ms_close:
+        reasons.append("cierre provisional derivado de la ventana de guía MS oficial")
+    else:
+        reasons.append("fechas coherentes")
     return DateStatus.DATE_VALID, reasons

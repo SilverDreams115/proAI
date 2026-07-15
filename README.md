@@ -118,5 +118,6 @@ XGBoost es la única librería ML del runtime. scikit-learn está explícitament
 | `GET /api/predictions/slates/{id}` | Predicciones de la slate |
 | `GET /api/predictions/slates/{id}/ticket` | Boleta recomendada |
 | `GET /api/predictions/slates/{id}/quality` | Quality report con anchor gap |
+| `GET /api/operations/publication-gate` | Gate unificado publicar/jugar/ML |
 | `GET /api/training/adaptive/readiness` | Gate de readiness para retraining |
 | `POST /api/training/adaptive/dry-run` | Simulación de retraining |

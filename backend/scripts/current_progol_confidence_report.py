@@ -14,13 +14,15 @@ def main() -> int:
     parser.add_argument("--base-url", default=os.getenv("PROAI_BASE_URL", "http://127.0.0.1:8000"))
     parser.add_argument("--api-key", default=os.getenv("PROAI_AUTH_API_KEY"))
     parser.add_argument("--output", default="reports/current_progol_confidence.md")
+    parser.add_argument("--slate-id", default=None)
+    parser.add_argument("--draw-code", default=None)
     args = parser.parse_args()
 
     client = ApiClient(args.base_url.rstrip("/"), args.api_key)
     slates = client.get("/api/slates")
     if not slates:
         raise SystemExit("No active slates were returned by the API.")
-    slate = slates[0]
+    slate = select_slate(slates, slate_id=args.slate_id, draw_code=args.draw_code)
     slate_id = slate["id"]
     predictions = client.get(f"/api/predictions/slates/{slate_id}")
     features = client.get(f"/api/predictions/slates/{slate_id}/features")
@@ -46,6 +48,26 @@ class ApiClient:
             request.add_header("X-API-Key", self.api_key)
         with urllib.request.urlopen(request, timeout=20) as response:
             return json.loads(response.read().decode("utf-8"))
+
+
+def select_slate(
+    slates: list[dict[str, Any]],
+    *,
+    slate_id: str | None = None,
+    draw_code: str | None = None,
+) -> dict[str, Any]:
+    if slate_id:
+        for slate in slates:
+            if str(slate.get("id")) == slate_id:
+                return slate
+        raise SystemExit(f"Slate id not found: {slate_id}")
+    if draw_code:
+        normalized = draw_code.strip().lower()
+        for slate in slates:
+            if str(slate.get("draw_code") or "").strip().lower() == normalized:
+                return slate
+        raise SystemExit(f"Draw code not found: {draw_code}")
+    return slates[0]
 
 
 def build_report(

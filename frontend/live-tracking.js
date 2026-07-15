@@ -76,19 +76,20 @@ export function diagnosisBadge(diagnosis) {
 }
 
 // Learning eligibility for the adaptive dataset, merged in from the
-// /tracking endpoint: ready (canonical final + prediction), waiting_result
-// (no result yet) or excluded (conflict / non-comparable / no prediction).
+// /tracking endpoint: ready (canonical final + prediction),
+// classification_ready (official sign-only final), waiting_result (no result
+// yet) or excluded (conflict / non-comparable / no prediction).
 const LEARNING_LABELS = {
   ready: "Ready",
+  classification_ready: "Clasificación",
   waiting_result: "Pendiente",
   excluded: "Excluido",
   sign_only: "Solo signo",
 };
 
 export function learningBadge(status) {
-  // sign_only = result known but not canonical/scored -> not training-ready.
   const tone =
-    status === "ready" ? "hit"
+    status === "ready" || status === "classification_ready" ? "hit"
     : status === "excluded" ? "miss"
     : status === "sign_only" ? "warn"
     : "pending";
@@ -279,7 +280,12 @@ export function renderComparisonDetail(data) {
   const counts = `${data.completed_count}/${data.match_count} finalizados` +
     (data.live_count ? ` · ${data.live_count} en vivo` : "") +
     (data.pending_count ? ` · ${data.pending_count} pendientes` : "");
-  const drawLine = `Empates reales ${s.empates_reales_hasta_ahora ?? 0} vs esperados ${(s.empates_esperados ?? 0).toFixed ? (s.empates_esperados).toFixed(1) : s.empates_esperados}`;
+  const expectedDraws = Number(s.empates_esperados ?? 0);
+  const drawLine = `Empates reales ${s.empates_reales_hasta_ahora ?? 0} vs esperados ${expectedDraws.toFixed(1)}`;
+  const classificationRows = Number(data.learning_rows_sign_only || 0);
+  const learningLine = classificationRows > 0
+    ? `<p class="meta-copy subtle learning-note"><strong>${classificationRows}</strong> filas listas para clasificación · sin marcador canónico</p>`
+    : "";
   const rows = (data.matches || []).map(renderComparisonRow).join("");
   return `
     <div class="cmp-detail">
@@ -287,6 +293,7 @@ export function renderComparisonDetail(data) {
         <h3>${escapeHtml(data.draw_code)} · ${typeLabel}</h3>
         <p class="meta-copy">${counts}${data.is_complete ? " · Completa" : ""} · ${drawLine}</p>
         <p class="meta-copy subtle">${snapLine}</p>
+        ${learningLine}
       </div>
       <div class="cmp-scoreline">
         <span><strong>${s.simple_hits ?? 0}</strong> simple</span>
@@ -472,6 +479,10 @@ export function initLiveTracking({ container, detailContainer, fetchJson }) {
       ]);
       if (!data) throw new Error("empty");
       if (tracking && Array.isArray(tracking.matches) && Array.isArray(data.matches)) {
+        data.learning_rows_ready = tracking.learning_rows_ready;
+        data.learning_rows_pending = tracking.learning_rows_pending;
+        data.learning_rows_excluded = tracking.learning_rows_excluded;
+        data.learning_rows_sign_only = tracking.learning_rows_sign_only;
         const learnByPos = new Map(
           tracking.matches.map((m) => [m.position, m])
         );

@@ -12,6 +12,7 @@
     <meta http-equiv="X-Content-Type-Options" content="nosniff" />
     <meta name="referrer" content="strict-origin-when-cross-origin" />
     <title>proAI Progol Desk</title>
+    <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
     <link rel="stylesheet" href="./styles.css?v=__ASSET_VERSION__" />
   </head>
   <body>
@@ -31,7 +32,6 @@
           </label>
           <button id="login-button" type="submit">Entrar</button>
           <button id="refresh" type="button" class="ghost-button">Actualizar</button>
-          <button id="run-worker" type="button" class="ghost-button">Scheduler</button>
           <button id="logout-button" type="button" class="ghost-button">Salir</button>
           <button id="load-demo" type="button" class="ghost-button">Cargar demo</button>
           <div class="auth-feedback" id="auth-feedback" role="status"></div>
@@ -93,8 +93,9 @@
                   <select id="quality-filter"></select>
                 </label>
                 <button id="copy-ticket" class="action-button" type="button">Copiar jugada</button>
+                <button id="share-whatsapp" class="ghost-button" type="button">WhatsApp</button>
+                <button id="print-ticket" class="ghost-button" type="button">Boleta PDF</button>
                 <button id="download-ticket" class="ghost-button" type="button">TXT</button>
-                <button id="reset-picks" class="ghost-button" type="button">Resetear a modelo</button>
               </div>
             </div>
             <div class="validation-summary" id="validation-summary"></div>
@@ -153,6 +154,20 @@
           </div>
           <div id="product-flow-body"></div>
         </section>
+        <section class="panel" id="operational-prediction-audit-panel">
+          <div class="panel-head">
+            <h2>Auditoría operativa</h2>
+            <p class="meta-copy">Predicciones vs resultados, cola de placeholders, confianza explicable, gate de publicación y frescura de resultados. Solo lectura.</p>
+          </div>
+          <div id="operational-prediction-audit-body"></div>
+        </section>
+        <section class="panel" id="slate-readiness-report-panel">
+          <div class="panel-head">
+            <h2>Readiness de slate</h2>
+            <p class="meta-copy">Motivos por partido para LISTO / REVISAR / BLOQUEADO, nombres sospechosos y candidatos seguros. Solo lectura.</p>
+          </div>
+          <div id="slate-readiness-report-body"></div>
+        </section>
         <section class="panel" id="money-mode-panel">
           <div class="panel-head">
             <h2>Money Mode RC</h2>
@@ -180,6 +195,20 @@
             <p class="meta-copy">Dry-run de una fuente gratuita de resultados (football-data.org). Solo lectura; no escribe en match_results. Aplicar requiere confirmación manual explícita.</p>
           </div>
           <div id="external-results-body"></div>
+        </section>
+        <section class="panel" id="ln-results-observer-panel">
+          <div class="panel-head">
+            <h2>Resultados LN en vivo</h2>
+            <p class="meta-copy">Pull oficial de Lotería Nacional con fuente marcada, último ingreso y estado por slate activa.</p>
+          </div>
+          <div id="ln-results-observer-body"></div>
+        </section>
+        <section class="panel" id="neural-shadow-panel">
+          <div class="panel-head">
+            <h2>Neural Shadow</h2>
+            <p class="meta-copy">Comparación solo lectura entre baseline servido y red neuronal activa. No cambia pick ni ticket.</p>
+          </div>
+          <div id="neural-shadow-body"></div>
         </section>
         <section class="panel" id="team-rating-shadow-panel">
           <div class="panel-head">

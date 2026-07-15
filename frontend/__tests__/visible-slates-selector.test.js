@@ -15,6 +15,7 @@ import {
   slateBadges,
   suspectSlateDiagnostics,
   pdfSourceDiagnosticLines,
+  blockedMidweekSlateDiagnostic,
 } from "../slate-selection.js";
 
 const openSlate = {
@@ -221,5 +222,52 @@ describe("suspectSlateDiagnostics", () => {
     });
     expect(r.open_slates ?? r.slates.filter((s) => !s.read_only)).toEqual([]);
     expect(r.reason).toBe("fallback_recent");
+  });
+});
+
+describe("blockedMidweekSlateDiagnostic", () => {
+  it("surfaces the current blocked MS candidate without making it active", () => {
+    const visible = {
+      open_slates: [{ ...recentReal, id: "wk-open", draw_code: "PG-2342", is_closed: false, is_archived: false, read_only: false }],
+      recent_slates: [],
+      reason: "open_slate",
+      discovery: {
+        current_ms_candidate: { draw_code: "PGM-804", date_status: "source_invalid", activation_status: "blocked" },
+        suspect_slates: [
+          {
+            draw_code: "PGM-803",
+            week_type: "midweek",
+            date_status: "source_invalid",
+            reasons: ["old invalid MS"],
+          },
+          {
+            draw_code: "PGM-804",
+            week_type: "midweek",
+            date_status: "source_invalid",
+            activation_status: "blocked",
+            visible_as_open: false,
+            reasons: ["el PDF oficial trae el bloque de cierre de OTRO concurso; no se aplica"],
+            recommended_action: "Esperar PDF corregido de LN (cierre válido del concurso correcto)",
+            extracted_fixture_draw_code: "804",
+            match_count: 9,
+            rejected_close_block_draw_code: "800",
+            rejected_close_year: "2025",
+          },
+        ],
+      },
+    };
+
+    const activeDecision = resolveVisibleSelection({ visible });
+    const blockedMs = blockedMidweekSlateDiagnostic(visible);
+
+    expect(activeDecision.slates.map((s) => s.draw_code)).toEqual(["PG-2342"]);
+    expect(blockedMs.draw_code).toBe("PGM-804");
+    expect(blockedMs.playable).toBe(false);
+    expect(pdfSourceDiagnosticLines(blockedMs).join(" | ")).toContain("Concurso 800");
+  });
+
+  it("returns null when discovery has no blocked MS", () => {
+    expect(blockedMidweekSlateDiagnostic({ discovery: { suspect_slates: [] } })).toBe(null);
+    expect(blockedMidweekSlateDiagnostic({ discovery: { suspect_slates: [{ draw_code: "PG-2341", week_type: "weekend" }] } })).toBe(null);
   });
 });

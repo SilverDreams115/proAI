@@ -1,29 +1,30 @@
-"""MS PDF watcher — detect when LN corrects guiamedia.pdf and activate the
-Progol Media Semana slate only when the PDF carries a VALID cierre for the
-correct concurso.
+"""MS PDF watcher — detect guiamedia.pdf changes and activate Progol MS.
 
 Wraps the existing ``SlateProposalService.observe_ms`` (single network fetch,
 idempotent upsert — no duplicate proposals/slates) and adds:
 
   * provenance change detection by ``pdf_sha256`` (vs the last recorded one);
   * a status: unchanged | changed_valid | changed_invalid | parse_error;
-  * activation of the existing MS slate (date_valid/open + future cierre) when
-    — and only when — the PDF now has an accepted cierre for THIS concurso;
+  * activation of the existing MS slate when the PDF has an accepted cierre for
+    THIS concurso or current fixtures with a stale/mismatched cierre block;
   * optional pre-close snapshot/prediction generation (never post-close);
   * watch diagnostics persisted on the proposal payload (no migration).
 
-Never invents a date, never overrides, never activates a source_invalid slate,
-never generates a retroactive (post-close) prediction, never touches Weekend.
+Never generates a retroactive (post-close) prediction, never touches Weekend.
+When LN keeps publishing the wrong cierre block, the provisional window is
+audited in the proposal payload and expires through the normal cierre archival
+job.
 """
 from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from sqlalchemy import select
 
+from app.core.settings import settings
 from app.models.tables import ProgolSlateModel, ProgolSlateProposalModel
 from app.repositories.slate_repository import SlateRepository
 from app.services.slate_proposal_service import SlateProposalService
@@ -60,6 +61,44 @@ def _parse_iso(value: Any) -> datetime | None:
     except ValueError:
         return None
     return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
+
+
+def _aware(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value
+
+
+def _provisional_ms_close(
+    proposal: ProgolSlateProposalModel,
+    payload: dict[str, Any],
+    *,
+    now: datetime,
+) -> datetime | None:
+    """Bounded close for MS guides with current fixtures but stale cierre."""
+    if payload.get("week_type") != "midweek":
+        return None
+    fixtures = payload.get("fixtures") or []
+    if not isinstance(fixtures, list) or len(fixtures) < 9:
+        return None
+    block = payload.get("block_diagnostics") or {}
+    if not block.get("rejected_close_block_draw_code"):
+        return None
+    first_seen = _aware(proposal.first_seen_at) or now
+    close = first_seen + timedelta(days=max(0.25, float(settings.ms_pdf_provisional_active_days)))
+    return close if close > now else None
+
+
+def _mark_provisional_close(
+    proposal: ProgolSlateProposalModel,
+    payload: dict[str, Any],
+    closes_at: datetime,
+) -> None:
+    proposal.registration_closes_at = closes_at
+    payload["registration_closes_at"] = closes_at.isoformat()
+    payload["registration_close_source"] = "provisional_ms_pdf_window"
+    payload["provisional_close_window_days"] = settings.ms_pdf_provisional_active_days
+    payload["extraction_confidence"] = "provisional"
 
 
 def run_ms_pdf_watch(
@@ -100,6 +139,7 @@ def run_ms_pdf_watch(
     closes_at = _parse_iso(payload.get("registration_closes_at"))
     draw_code = payload.get("draw_code")
     changed = bool(force or new_sha != prev_sha)
+    provisional_closes_at = _provisional_ms_close(proposal, payload, now=now)
 
     if not changed:
         status = "unchanged"
@@ -122,31 +162,47 @@ def run_ms_pdf_watch(
     prediction_generated = False
     activation_reason = reason
 
-    # Activation ONLY on a valid future cierre for the correct concurso.
-    if status == "changed_valid" and closes_at is not None and closes_at > now:
+    activation_closes_at = closes_at
+    activation_source = str(payload.get("registration_close_source") or "official_pdf_close")
+    if activation_closes_at is None and provisional_closes_at is not None:
+        activation_closes_at = provisional_closes_at
+        activation_source = "provisional_ms_pdf_window"
+
+    if activation_closes_at is not None and activation_closes_at > now:
         slate = _find_ms_slate(session, draw_code)
         if slate is not None:
-            slate.registration_closes_at = closes_at
+            slate.registration_closes_at = activation_closes_at
             if slate.is_archived:
                 slate.is_archived = False
+            if activation_source == "provisional_ms_pdf_window":
+                _mark_provisional_close(proposal, payload, activation_closes_at)
             session.add(slate)
             session.flush()
             activated = True
-            activation_reason = f"MS {slate.draw_code} activada desde PDF oficial"
+            activation_reason = (
+                f"MS {slate.draw_code} activada con cierre provisional desde fixtures oficiales"
+                if activation_source == "provisional_ms_pdf_window"
+                else f"MS {slate.draw_code} activada desde PDF oficial"
+            )
             logger.info(
                 "ms_pdf_watch_activated",
                 extra={"event": "ms_pdf_watch_activated", "draw_code": slate.draw_code,
-                       "registration_closes_at": closes_at.isoformat()},
+                       "registration_closes_at": activation_closes_at.isoformat(),
+                       "registration_close_source": activation_source},
             )
             if generate_prediction:
                 prediction_generated = _maybe_generate_preclose(session, slate, now)
         else:
+            if activation_source == "provisional_ms_pdf_window":
+                _mark_provisional_close(proposal, payload, activation_closes_at)
             # No existing slate for this concurso → leave to auto-promote.
             activation_reason = (
-                f"cierre válido {draw_code}; sin slate existente, auto-promote la creará"
+                f"cierre {activation_source} {draw_code}; sin slate existente, auto-promote la creará"
             )
     elif status == "changed_valid" and (closes_at is None or closes_at <= now):
         activation_reason = "cierre válido pero ya pasó; no se activa ni se predice (no retroactivo)"
+    elif closes_at is None and payload.get("fixtures"):
+        activation_reason = reason + "; ventana provisional expirada o no aplicable"
 
     changed_at = now.isoformat() if changed else prev_watch.get("last_ms_pdf_changed_at")
     result = {
@@ -157,6 +213,7 @@ def run_ms_pdf_watch(
         "activated": activated,
         "prediction_generated": prediction_generated,
         "reason": activation_reason,
+        "registration_close_source": activation_source if activated else None,
     }
     # Persist watch diagnostics on the (refreshed) proposal payload.
     payload["watch"] = result

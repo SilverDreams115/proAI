@@ -69,16 +69,25 @@ class AdaptiveRetrainingService:
         thresholds = thresholds or RetrainingThresholds()
         summary = AdaptiveDatasetService(self.session).build_summary()
         last_run = TrainingRepository(self.session).latest_run(self.MODEL_NAME)
-        new_rows = self._count_new_rows_since_run(last_run)
+        all_rows = self._build_all_rows()
+        xgboost_rows = [row for row in all_rows if row.result_is_canonical]
+        new_rows = self._count_new_rows_since_run(last_run, canonical_only=True)
 
-        total_rows = summary.total_rows
-        complete_slates = summary.total_slates_complete
+        # This gate controls the production XGBoost retrain, whose pipeline
+        # still consumes canonical scored rows from match_results. Official
+        # sign-only rows are classification-ready for the neural baseline, but
+        # must not by themselves trigger an XGBoost retrain.
+        total_rows = len(xgboost_rows)
+        complete_slates = len({row.slate_id for row in xgboost_rows})
 
-        blocked_band = summary.by_confidence_band.get("blocked")
-        blocked_total = blocked_band.total if blocked_band else 0
+        blocked_total = sum(1 for row in xgboost_rows if row.confidence_band == "blocked")
         blocked_rate = round(blocked_total / total_rows, 4) if total_rows > 0 else 0.0
 
-        results_seen = summary.rows_with_canonical_result + summary.rows_with_conflict
+        results_seen = (
+            summary.rows_with_canonical_result
+            + summary.rows_with_sign_only_result
+            + summary.rows_with_conflict
+        )
         conflict_rate = (
             round(summary.rows_with_conflict / results_seen, 4) if results_seen > 0 else 0.0
         )
@@ -201,12 +210,14 @@ class AdaptiveRetrainingService:
         """
         summary = AdaptiveDatasetService(self.session).build_summary()
         last_run = TrainingRepository(self.session).latest_run(self.MODEL_NAME)
-        new_rows = self._count_new_rows_since_run(last_run)
+        new_rows = self._count_new_rows_since_run(last_run, canonical_only=True)
         return {
             "complete_slates": summary.total_slates_complete,
             "total_slates_scored": summary.total_slates_scored,
-            "trainable_rows": summary.total_rows,
+            "trainable_rows": summary.rows_with_canonical_result,
+            "classification_trainable_rows": summary.total_rows,
             "rows_with_canonical_result": summary.rows_with_canonical_result,
+            "rows_with_sign_only_result": summary.rows_with_sign_only_result,
             "rows_with_conflict": summary.rows_with_conflict,
             "new_rows_since_last_train": new_rows,
             "last_training_run_id": last_run.id if last_run else None,
@@ -431,7 +442,12 @@ class AdaptiveRetrainingService:
             return "recalibrate_only"
         return "full_xgboost_retrain"
 
-    def _count_new_rows_since_run(self, last_run: ModelTrainingRunModel | None) -> int:
+    def _count_new_rows_since_run(
+        self,
+        last_run: ModelTrainingRunModel | None,
+        *,
+        canonical_only: bool = False,
+    ) -> int:
         """Count trainable rows from complete jornadas scored after last_run."""
         stmt = select(ProgolJornadaScoreModel).where(
             ProgolJornadaScoreModel.is_complete.is_(True),
@@ -443,6 +459,8 @@ class AdaptiveRetrainingService:
         total = 0
         for score in new_scores:
             rows = AdaptiveDatasetService(self.session).build_rows_for_slate(score.slate_id)
+            if canonical_only:
+                rows = [row for row in rows if row.result_is_canonical]
             total += len(rows)
         return total
 

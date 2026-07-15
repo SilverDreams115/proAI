@@ -1,14 +1,17 @@
-"""Experimental offline neural baseline for Progol adaptive learning.
+"""Experimental neural baseline for Progol adaptive learning.
 
-STATUS: EXPERIMENTAL — NOT INTEGRATED INTO PRODUCTION PREDICTIONS.
+STATUS: EXPERIMENTAL — READ-ONLY SHADOW IN PRODUCTION PREDICTION RESPONSES.
 
 This module implements a lightweight 2-hidden-layer MLP trained on the
 adaptive dataset produced by ``AdaptiveDatasetService``.  It is intended
 for offline research only:
 
   * It does NOT replace XGBoost / ELO / Poisson.
-  * It does NOT write to ``model_training_runs`` with production entries.
-  * It does NOT touch any live prediction endpoint.
+  * ``dry_run_train`` and ``train_offline`` do NOT write to the DB.
+  * Candidate/active registry helpers may write non-production
+    ``model_training_runs`` entries under neural-specific model names.
+  * It can add read-only ``neural_shadow`` diagnostics to live prediction
+    responses, but it does NOT replace probabilities, picks, or tickets.
   * It does NOT train when ``trainable_rows < config.min_rows``.
   * Every artifact it writes carries ``model_type = "neural_baseline_experimental"``
     and ``is_production = False``.
@@ -28,22 +31,20 @@ Architecture:
   loss  = multi-class cross-entropy
   optim = vanilla SGD (no momentum for minimal complexity)
 
-Feature set (15 fixed-width columns):
+Feature set (13 fixed-width columns, pre-match safe):
   0  prob_home      (float, 0–1)
   1  prob_draw      (float, 0–1)
   2  prob_away      (float, 0–1)
-  3  brier_score    (float, normalized to 0–1)
-  4  band_high      (0/1)
-  5  band_medium    (0/1)
-  6  band_low       (0/1)
-  7  band_blocked   (0/1)
-  8  wt_weekend     (0/1)
-  9  wt_midweek     (0/1)
-  10 has_block_reason (0/1)
-  11 ticket_pick_1  (0/1)
-  12 ticket_pick_X  (0/1)
-  13 ticket_pick_2  (0/1)
-  14 ticket_hit_simple (0/1)
+  3  band_high      (0/1)
+  4  band_medium    (0/1)
+  5  band_low       (0/1)
+  6  band_blocked   (0/1)
+  7  wt_weekend     (0/1)
+  8  wt_midweek     (0/1)
+  9  has_block_reason (0/1)
+  10 ticket_pick_1  (0/1)
+  11 ticket_pick_X  (0/1)
+  12 ticket_pick_2  (0/1)
 
 Target labels:
   0 = home win  ("1")
@@ -54,11 +55,14 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any
 
 import numpy as np
 
+from app.repositories.training_repository import TrainingRepository
 from app.schemas.adaptive_dataset import AdaptiveDatasetRow
+from app.schemas.prediction import MatchPredictionResponse, NeuralShadowInfo
 
 logger = logging.getLogger(__name__)
 
@@ -67,20 +71,21 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 FEATURE_NAMES: list[str] = [
-    "prob_home", "prob_draw", "prob_away", "brier_normalized",
+    "prob_home", "prob_draw", "prob_away",
     "band_high", "band_medium", "band_low", "band_blocked",
     "wt_weekend", "wt_midweek",
     "has_blocked_reason",
     "ticket_pick_1", "ticket_pick_X", "ticket_pick_2",
-    "ticket_hit_simple",
 ]
-INPUT_DIM = len(FEATURE_NAMES)  # 15
+INPUT_DIM = len(FEATURE_NAMES)
 
 RESULT_TO_IDX: dict[str, int] = {"1": 0, "X": 1, "2": 2}
 IDX_TO_RESULT: dict[int, str] = {0: "1", 1: "X", 2: "2"}
 
 _BANDS = ("high", "medium", "low", "blocked")
 _WEEK_TYPES = ("weekend", "midweek")
+NEURAL_CANDIDATE_MODEL_NAME = "neural_baseline_candidate"
+NEURAL_ACTIVE_MODEL_NAME = "neural_baseline_active"
 
 
 # ---------------------------------------------------------------------------
@@ -147,8 +152,6 @@ class NeuralDatasetBuilder:
         pd = row.prob_draw or 1.0 / 3
         pa = row.prob_away or 1.0 / 3
 
-        brier_norm = min(row.brier_score or 1.0, 2.0) / 2.0
-
         band = row.confidence_band or "low"
         band_feats = [1.0 if band == b else 0.0 for b in _BANDS]
 
@@ -160,9 +163,21 @@ class NeuralDatasetBuilder:
         picks = set(row.ticket_pick_simple or [])
         pick_feats = [1.0 if o in picks else 0.0 for o in ("1", "X", "2")]
 
-        hit_simple = 1.0 if row.ticket_hit_simple else 0.0
+        return [ph, pd, pa, *band_feats, *wt_feats, has_block, *pick_feats]
 
-        return [ph, pd, pa, brier_norm, *band_feats, *wt_feats, has_block, *pick_feats, hit_simple]
+    @staticmethod
+    def encode_prediction(prediction: MatchPredictionResponse, *, week_type: str) -> list[float]:
+        vector = prediction.decision_probabilities or prediction.probabilities or {}
+        ph = float(vector.get("L", prediction.home_probability))
+        pd = float(vector.get("E", prediction.draw_probability))
+        pa = float(vector.get("V", prediction.away_probability))
+        band = prediction.confidence_band or "low"
+        band_feats = [1.0 if band == b else 0.0 for b in _BANDS]
+        wt_feats = [1.0 if week_type == w else 0.0 for w in _WEEK_TYPES]
+        has_block = 1.0 if prediction.final_status == "BLOQUEADO" or prediction.flags else 0.0
+        pick = getattr(prediction.recommended_outcome, "value", prediction.recommended_outcome)
+        pick_feats = [1.0 if pick == o else 0.0 for o in ("1", "X", "2")]
+        return [ph, pd, pa, *band_feats, *wt_feats, has_block, *pick_feats]
 
 
 # ---------------------------------------------------------------------------
@@ -402,6 +417,8 @@ class NeuralBaselineModel:
                 "random_seed": cfg.random_seed,
             },
             "feature_names": FEATURE_NAMES,
+            "shadow_safe": True,
+            "post_result_features_used": False,
             "label_map": IDX_TO_RESULT,
             "trained_on_rows": self._trained_on_rows,
             "train_loss_history": self._train_history,
@@ -488,6 +505,7 @@ class NeuralBaselineService:
 
         model = NeuralBaselineModel(self.config).fit(X, y)
         metrics = model.evaluate(X, y)
+        artifact = model.to_artifact()
         return {
             "status": "ok",
             "trained": True,
@@ -495,6 +513,7 @@ class NeuralBaselineService:
             "trainable_rows": n,
             "encoded_rows": len(X),
             "metrics": metrics,
+            "comparison": self.compare_against_baseline(artifact),
         }
 
     def train_offline(self) -> dict[str, Any]:
@@ -619,3 +638,282 @@ class NeuralBaselineService:
             "neural_better_brier": brier_delta > 0,
             "neural_better_accuracy": acc_delta > 0,
         }
+
+
+class NeuralBaselineRegistryService:
+    """Persist and promote neural baseline artifacts safely.
+
+    This registry intentionally uses neural-specific ``model_name`` values so
+    it cannot replace the production ``elo_poisson_blend`` artifact by
+    accident. The latest ``neural_baseline_active`` row is the active neural
+    candidate; rollback appends a copy of the previous active row.
+    """
+
+    def __init__(
+        self,
+        rows: list[AdaptiveDatasetRow],
+        training_repository: TrainingRepository,
+        config: NeuralBaselineConfig | None = None,
+    ) -> None:
+        self.rows = rows
+        self.training_repository = training_repository
+        self.config = config or NeuralBaselineConfig()
+
+    def train_candidate(self) -> dict[str, Any]:
+        svc = NeuralBaselineService(self.rows, self.config)
+        result = svc.train_offline()
+        if not result.get("trained"):
+            return {**result, "saved": False}
+
+        artifact = result["artifact"]
+        comparison = svc.compare_against_baseline(artifact)
+        artifact.update(
+            {
+                "model_name": NEURAL_CANDIDATE_MODEL_NAME,
+                "lifecycle_status": "candidate",
+                "is_production": False,
+                "saved_at": _utc_iso(),
+                "metrics": result["metrics"],
+                "comparison": comparison,
+                "dataset": self._dataset_summary(),
+            }
+        )
+        run = self.training_repository.save_run(
+            NEURAL_CANDIDATE_MODEL_NAME,
+            int(result["encoded_rows"]),
+            artifact,
+        )
+        return {
+            "status": "ok",
+            "trained": True,
+            "saved": True,
+            "candidate_run_id": run.id,
+            "model_name": run.model_name,
+            "trained_at": run.trained_at,
+            "trainable_rows": result["trainable_rows"],
+            "encoded_rows": result["encoded_rows"],
+            "metrics": result["metrics"],
+            "comparison": comparison,
+        }
+
+    def latest_candidate(self, *, include_artifact: bool = False) -> dict[str, Any]:
+        run = self.training_repository.latest_run(NEURAL_CANDIDATE_MODEL_NAME)
+        return self._run_payload(
+            run,
+            missing_status="no_candidate",
+            include_artifact=include_artifact,
+        )
+
+    def active(self, *, include_artifact: bool = False) -> dict[str, Any]:
+        run = self.training_repository.latest_run(NEURAL_ACTIVE_MODEL_NAME)
+        return self._run_payload(
+            run,
+            missing_status="no_active_model",
+            include_artifact=include_artifact,
+        )
+
+    def promote_candidate(
+        self,
+        *,
+        candidate_run_id: str | None = None,
+        force: bool = False,
+    ) -> dict[str, Any]:
+        candidate = (
+            self.training_repository.get_run(candidate_run_id)
+            if candidate_run_id
+            else self.training_repository.latest_run(NEURAL_CANDIDATE_MODEL_NAME)
+        )
+        if candidate is None or candidate.model_name != NEURAL_CANDIDATE_MODEL_NAME:
+            return {"status": "not_found", "promoted": False, "reason": "candidate_not_found"}
+
+        artifact = _artifact(candidate)
+        comparison = artifact.get("comparison") or {}
+        if not force and not (
+            comparison.get("neural_better_brier") is True
+            and float(comparison.get("brier_delta") or 0.0) > 0.0
+        ):
+            return {
+                "status": "blocked",
+                "promoted": False,
+                "reason": "candidate_does_not_improve_brier",
+                "candidate_run_id": candidate.id,
+                "comparison": comparison,
+            }
+
+        previous_active = self.training_repository.latest_run(NEURAL_ACTIVE_MODEL_NAME)
+        active_artifact = {
+            **artifact,
+            "model_name": NEURAL_ACTIVE_MODEL_NAME,
+            "lifecycle_status": "active",
+            "is_production": False,
+            "source_candidate_run_id": candidate.id,
+            "previous_active_run_id": previous_active.id if previous_active else None,
+            "promoted_at": _utc_iso(),
+        }
+        run = self.training_repository.save_run(
+            NEURAL_ACTIVE_MODEL_NAME,
+            candidate.training_sample_size,
+            active_artifact,
+        )
+        return {
+            "status": "ok",
+            "promoted": True,
+            "active_run_id": run.id,
+            "candidate_run_id": candidate.id,
+            "previous_active_run_id": previous_active.id if previous_active else None,
+            "comparison": comparison,
+            "rollback_available": previous_active is not None,
+        }
+
+    def rollback_active(self) -> dict[str, Any]:
+        active_runs = self.training_repository.list_runs(NEURAL_ACTIVE_MODEL_NAME, limit=2)
+        if len(active_runs) < 2:
+            return {
+                "status": "blocked",
+                "rolled_back": False,
+                "reason": "no_previous_active_run",
+            }
+        current, previous = active_runs[0], active_runs[1]
+        previous_artifact = _artifact(previous)
+        rollback_artifact = {
+            **previous_artifact,
+            "model_name": NEURAL_ACTIVE_MODEL_NAME,
+            "lifecycle_status": "active",
+            "is_production": False,
+            "rollback_from_run_id": current.id,
+            "rollback_source_run_id": previous.id,
+            "rolled_back_at": _utc_iso(),
+        }
+        run = self.training_repository.save_run(
+            NEURAL_ACTIVE_MODEL_NAME,
+            previous.training_sample_size,
+            rollback_artifact,
+        )
+        return {
+            "status": "ok",
+            "rolled_back": True,
+            "active_run_id": run.id,
+            "rollback_from_run_id": current.id,
+            "rollback_source_run_id": previous.id,
+        }
+
+    def _dataset_summary(self) -> dict[str, Any]:
+        sign_only = sum(1 for row in self.rows if not row.result_is_canonical)
+        canonical = len(self.rows) - sign_only
+        return {
+            "rows": len(self.rows),
+            "canonical_rows": canonical,
+            "sign_only_rows": sign_only,
+            "slates": len({row.slate_id for row in self.rows}),
+        }
+
+    @staticmethod
+    def _run_payload(
+        run: Any | None,
+        *,
+        missing_status: str,
+        include_artifact: bool = False,
+    ) -> dict[str, Any]:
+        if run is None:
+            return {"status": missing_status, "available": False}
+        artifact = _artifact(run)
+        payload = {
+            "status": "ok",
+            "available": True,
+            "run_id": run.id,
+            "model_name": run.model_name,
+            "trained_at": run.trained_at,
+            "training_sample_size": run.training_sample_size,
+            "metrics": artifact.get("metrics"),
+            "comparison": artifact.get("comparison"),
+            "dataset": artifact.get("dataset"),
+            "lifecycle_status": artifact.get("lifecycle_status"),
+            "source_candidate_run_id": artifact.get("source_candidate_run_id"),
+            "previous_active_run_id": artifact.get("previous_active_run_id"),
+        }
+        if include_artifact:
+            payload["artifact"] = artifact
+        return payload
+
+
+def _artifact(run: Any) -> dict[str, Any]:
+    import json
+
+    return json.loads(run.artifact_json or "{}")
+
+
+def _utc_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+class NeuralShadowService:
+    """Apply active neural model as read-only shadow on prediction payloads."""
+
+    def __init__(self, training_repository: TrainingRepository) -> None:
+        self.training_repository = training_repository
+
+    def apply_to_predictions(
+        self,
+        predictions: list[MatchPredictionResponse],
+        *,
+        week_type: str,
+    ) -> None:
+        run = self.training_repository.latest_run(NEURAL_ACTIVE_MODEL_NAME)
+        if run is None:
+            for pred in predictions:
+                pred.neural_shadow = NeuralShadowInfo(active=False, status="no_active_model")
+            return
+
+        artifact = _artifact(run)
+        if artifact.get("shadow_safe") is not True or artifact.get("feature_names") != FEATURE_NAMES:
+            for pred in predictions:
+                pred.neural_shadow = NeuralShadowInfo(
+                    active=False,
+                    status="incompatible_artifact",
+                    run_id=run.id,
+                    reason="active neural artifact is not pre-match shadow safe",
+                )
+            return
+
+        try:
+            model = NeuralBaselineModel.from_artifact(artifact)
+            X = np.array(
+                [NeuralDatasetBuilder.encode_prediction(pred, week_type=week_type) for pred in predictions],
+                dtype=np.float32,
+            )
+            probs = model.predict_proba(X)
+        except Exception as exc:  # pragma: no cover - diagnostic must not block predictions
+            logger.exception("neural_shadow_failed", extra={"event": "neural_shadow_failed"})
+            for pred in predictions:
+                pred.neural_shadow = NeuralShadowInfo(
+                    active=False,
+                    status="error",
+                    run_id=run.id,
+                    reason=str(exc),
+                )
+            return
+
+        for pred, row in zip(predictions, probs, strict=True):
+            neural_probs = {
+                "L": round(float(row[0]), 4),
+                "E": round(float(row[1]), 4),
+                "V": round(float(row[2]), 4),
+            }
+            baseline = pred.decision_probabilities or pred.probabilities
+            delta = {
+                k: round(neural_probs[k] - float(baseline.get(k, 0.0)), 4)
+                for k in ("L", "E", "V")
+            }
+            top_pick = max(neural_probs, key=lambda key: neural_probs[key])
+            baseline_top = max(baseline, key=lambda key: baseline[key])
+            pred.neural_shadow = NeuralShadowInfo(
+                active=True,
+                status="ok",
+                run_id=run.id,
+                probabilities=neural_probs,
+                top_pick=top_pick,
+                baseline_top_pick=baseline_top,
+                top_pick_changed=top_pick != baseline_top,
+                probability_delta=delta,
+                max_abs_delta=round(max(abs(v) for v in delta.values()), 4),
+            )

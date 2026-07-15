@@ -82,6 +82,12 @@ make check  # lint + typecheck + test
 # Actualizar current.json desde fuente externa
 make update-current-context
 
+# Reexportar current.json desde slates activas ya validadas en DB
+make update-current-context-from-db
+
+# Auditar slates activas: gate, placeholders, bloqueos y frescura
+make audit-current
+
 # Refrescar slate activa en el contenedor
 make refresh-current
 
@@ -127,7 +133,38 @@ curl -H "X-API-Key: $PROAI_AUTH_API_KEY" \
 
 # Reporte de confianza completo
 make confidence-report
+
+# Reporte desde el stack Docker, escribiendo en ./reports del host
+make confidence-report-docker
 ```
+
+---
+
+## Gate operativo unificado
+
+Antes de publicar, compartir o jugar una slate con dinero real, revisar el gate
+unificado. Es solo lectura y combina Money Mode, deuda de datos, placeholders,
+posiciones bloqueadas y readiness de aprendizaje.
+
+```bash
+# Todas las slates activas/próximas
+curl -H "X-API-Key: $PROAI_AUTH_API_KEY" \
+  http://localhost:8000/api/operations/publication-gate
+
+# Una slate específica
+curl -H "X-API-Key: $PROAI_AUTH_API_KEY" \
+  "http://localhost:8000/api/operations/publication-gate?slate_id=$SLATE_ID"
+```
+
+Estados:
+
+- `DO_NOT_PLAY`: no jugar; resolver bloqueadores antes de publicar.
+- `PLAY_CONSERVATIVE_ONLY`: solo boleto conservador, con cautela.
+- `READY_TO_PLAY`: gate limpio para el boleto recomendado.
+- `REVIEW_REQUIRED`: falta revisión operativa antes de publicar.
+
+La activación de ML queda bloqueada mientras `learning_gate.training_ready` sea
+false, aunque existan candidatos experimentales.
 
 ---
 

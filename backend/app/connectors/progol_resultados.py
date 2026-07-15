@@ -21,6 +21,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from html import unescape
 from typing import Any
 
 from app.connectors.base import SourceConnector, SourceDocument
@@ -39,6 +40,14 @@ _SCORE_RE = re.compile(
 )
 # "1  L" / "1 X" / "13 2"  → pos, sign
 _SIGN_RE = re.compile(r"^\s*(?P<pos>\d{1,2})[\.\)]?\s+(?P<sign>[LEV12X])\s*$", flags=re.IGNORECASE)
+_HTML_COMBO_ROW_RE = re.compile(
+    r"<tr[^>]*>\s*"
+    r"<td[^>]*>\s*(?P<draw>\d{3,5})\s*</td>\s*"
+    r"<td[^>]*>\s*(?P<date>[^<]*)\s*</td>\s*"
+    r"<td[^>]*>\s*(?P<combo>[LEV12X\s]+)\s*</td>\s*"
+    r"</tr>",
+    flags=re.IGNORECASE | re.DOTALL,
+)
 # "14 GHANA vs PANAMA PENDIENTE"  → pos, home, away (no score yet)
 _PENDING_RE = re.compile(
     r"^\s*(?P<pos>\d{1,2})[\.\)]?\s+(?P<home>.+?)\s+(?:VS|V\.S\.?|-)\s+(?P<away>.+?)"
@@ -169,7 +178,42 @@ def parse_progol_resultados_text(text: str) -> tuple[str | None, list[ResultLine
                 )
             )
     rows.sort(key=lambda r: r.position)
+    if not rows:
+        return _parse_html_historical_combo(text)
     return draw_code, rows
+
+
+def _parse_html_historical_combo(text: str) -> tuple[str | None, list[ResultLine]]:
+    """Parse LN's current HTML historical table.
+
+    LN's live results page currently publishes the latest official result as a
+    table row: Sorteo / Fecha / Combinación Ganadora. The combination is
+    sign-only (L/E/V), so we record final outcomes without inventing scorelines.
+    """
+    for match in _HTML_COMBO_ROW_RE.finditer(text):
+        signs = [
+            _SIGN_TO_CODE[token.upper()]
+            for token in unescape(match.group("combo")).split()
+            if token.upper() in _SIGN_TO_CODE
+        ]
+        if len(signs) not in {7, 9, 14}:
+            continue
+        rows = [
+            ResultLine(
+                position=i,
+                home=None,
+                away=None,
+                home_goals=None,
+                away_goals=None,
+                result_code=code,
+                status=MatchResultStatus.FULL_TIME,
+                minute=None,
+                is_final=True,
+            )
+            for i, code in enumerate(signs, start=1)
+        ]
+        return match.group("draw"), rows
+    return None, []
 
 
 def _clean(raw: str) -> str:
@@ -182,28 +226,38 @@ class ProgolResultadosConnector(SourceConnector):
     kind = "progol_resultados"
     description = "Lotería Nacional Progol official results (marcadores)."
     DEFAULT_RESULTS_URL = "https://www.loterianacional.gob.mx/Progol/Resultados"
+    MEDIA_SEMANA_RESULTS_URL = "https://www.loterianacional.gob.mx/ProgolMediaSemana/Resultados"
 
     def __init__(self, name: str = "LN Progol Resultados", base_url: str | None = None) -> None:
         self.name = name
         self.base_url = base_url or self.DEFAULT_RESULTS_URL
 
     def fetch(self) -> list[SourceDocument]:
-        text = self._download_text(self.base_url)
-        draw_code, rows = parse_progol_resultados_text(text)
-        captured_at = datetime.now(timezone.utc)
-        payload: dict[str, Any] = {
-            "draw_code": draw_code,
-            "raw_text": text,
-            "result_count": len(rows),
-        }
-        return [
-            SourceDocument(
-                source_name=self.name,
-                source_url=self.base_url,
-                captured_at=captured_at,
-                payload=payload,
+        documents: list[SourceDocument] = []
+        for url in self._urls_to_fetch():
+            text = self._download_text(url)
+            draw_code, rows = parse_progol_resultados_text(text)
+            captured_at = datetime.now(timezone.utc)
+            payload: dict[str, Any] = {
+                "draw_code": draw_code,
+                "raw_text": text,
+                "result_count": len(rows),
+            }
+            documents.append(
+                SourceDocument(
+                    source_name=self.name,
+                    source_url=url,
+                    captured_at=captured_at,
+                    payload=payload,
+                )
             )
-        ]
+        return documents
+
+    def _urls_to_fetch(self) -> list[str]:
+        urls = [self.base_url]
+        if self.base_url.rstrip("/") == self.DEFAULT_RESULTS_URL:
+            urls.append(self.MEDIA_SEMANA_RESULTS_URL)
+        return urls
 
     @staticmethod
     def _download_text(url: str) -> str:

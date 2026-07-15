@@ -130,6 +130,71 @@ class LiveDashboardResponse(BaseModel):
     open: list[LiveDashboardEntry]
 
 
+class LiveResultsObserverSource(BaseModel):
+    id: str
+    name: str
+    kind: str
+    base_url: str
+    is_active: bool
+    priority: int
+
+
+class LiveResultsObserverIngestedDraw(BaseModel):
+    slate_id: str
+    draw_code: str
+    week_type: str
+    result_rows: int
+    final_rows: int
+    last_updated_at: datetime | None = None
+
+
+class LiveResultsObserverLatestIngestion(BaseModel):
+    last_success_at: datetime | None = None
+    slate_count: int
+    result_rows: int
+    draws: list[LiveResultsObserverIngestedDraw]
+
+
+class LiveResultsObserverSlate(BaseModel):
+    slate_id: str
+    draw_code: str
+    week_type: str
+    is_archived: bool
+    is_closed: bool
+    classification: str = "unverified"
+    comparable: bool = False
+    match_count: int
+    completed_count: int
+    live_count: int
+    pending_count: int
+    is_complete: bool
+    has_any_result: bool
+    has_scorelines: bool
+    sign_only_final_count: int
+    results_with_source_count: int
+    sources: list[str]
+    last_updated_at: datetime | None = None
+    pull_state: str
+
+
+class LiveResultsObserverStatusResponse(BaseModel):
+    status: str
+    observer_enabled: bool
+    fetch_enabled: bool
+    observe_interval_minutes: int
+    configured_source_url: str | None = None
+    expected_source_name: str
+    expected_source_kind: str
+    expected_source_url: str
+    uses_existing_sources_only: bool
+    existing_source_count: int
+    pull_ready: bool
+    warnings: list[str]
+    sources: list[LiveResultsObserverSource]
+    latest_ingestion: LiveResultsObserverLatestIngestion | None = None
+    active_slates: list[LiveResultsObserverSlate]
+
+
 class OriginalSnapshotMeta(BaseModel):
     snapshot_id: str | None = None
     generated_at: datetime | None = None

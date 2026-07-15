@@ -48,6 +48,18 @@ const state = {
   // only the served effective probabilities for scoped positions; the ticket is
   // never affected. Diagnóstico tab + per-card CANARY badge.
   teamRatingCanary: null,
+  liveResultsObserver: null,
+  liveResultsObserverAlert: null,
+  neuralShadowPanel: null,
+  moneyMode: null,
+  moneyModeOpsStatus: null,
+  productFlow: null,
+  slateOptions: null,
+  slateReadinessReport: null,
+  operationalPredictionAudit: null,
+  slateReadinessFilter: "all",
+  exportStatusBySlate: {},
+  diagnosticsPreheatedSlateId: null,
 };
 
 const qualityFilters = [

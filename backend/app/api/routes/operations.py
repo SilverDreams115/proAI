@@ -60,3 +60,16 @@ async def get_product_flow(
 
     with read_only_transaction(session):
         return build_product_flow(session, slate_id=slate_id)
+
+
+@router.get("/publication-gate")
+async def get_publication_gate(
+    slate_id: str | None = None,
+    session: Session = Depends(get_db_session),
+) -> dict:
+    """Unified read-only gate for publish/play/ML activation decisions."""
+    from app.db.session import read_only_transaction
+    from app.services.publication_gate_service import build_publication_gate
+
+    with read_only_transaction(session):
+        return build_publication_gate(session, slate_id=slate_id)

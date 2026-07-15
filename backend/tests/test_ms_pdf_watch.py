@@ -1,8 +1,9 @@
-"""MS PDF watcher — detects LN corrections and activates only on a valid cierre.
+"""MS PDF watcher — detects LN corrections and activates MS safely.
 
 Drives run_ms_pdf_watch with a fake connector so no network is touched:
   * unchanged sha256 → status=unchanged, no reprocess/activation;
-  * fixtures 802 + cierre 800 → changed_invalid, slate stays blocked;
+  * fixtures 802 + cierre 800 → proposal gets bounded provisional close;
+  * existing slate + cierre 800 → slate reopens with provisional close;
   * fixtures 802 + cierre 802 future → changed_valid, slate activated + pre-close
     prediction generated;
   * cierre already past → no activation, no retroactive prediction;
@@ -86,12 +87,15 @@ def _seed_ms_802(db, *, closes_at):
     return slate
 
 
-def test_stale_invalid_keeps_blocked(db):
+def test_stale_invalid_without_existing_slate_sets_provisional_proposal_close(db):
     conn = _FakeMsConnector(sha="aaa", closes_at=None, accepted=False, rejected_block="800")
     res = run_ms_pdf_watch(db, proposal_service=_svc(db, conn), generate_prediction=False)
     assert res["last_ms_pdf_status"] == "changed_invalid"
     assert res["activated"] is False
-    assert "800" in res["reason"]
+    assert "auto-promote" in res["reason"]
+    proposal = db.query(ProgolSlateProposalModel).filter_by(draw_code="802", week_type="midweek").one()
+    assert proposal.registration_closes_at is not None
+    assert "provisional_ms_pdf_window" in proposal.payload_json
 
 
 def test_unchanged_sha_not_reprocessed(db):
@@ -101,6 +105,24 @@ def test_unchanged_sha_not_reprocessed(db):
     res = run_ms_pdf_watch(db, proposal_service=_svc(db, conn), generate_prediction=False)
     assert res["last_ms_pdf_status"] == "unchanged"
     assert res["activated"] is False
+
+
+def test_stale_invalid_activates_existing_slate_with_provisional_close(db):
+    slate = _seed_ms_802(db, closes_at=_past())
+    conn = _FakeMsConnector(sha="aaa", closes_at=None, accepted=False, rejected_block="800")
+
+    res = run_ms_pdf_watch(db, proposal_service=_svc(db, conn), generate_prediction=False)
+
+    assert res["last_ms_pdf_status"] == "changed_invalid"
+    assert res["activated"] is True
+    assert res["registration_close_source"] == "provisional_ms_pdf_window"
+    db.refresh(slate)
+    assert slate.is_archived is False
+    assert slate.registration_closes_at is not None
+    closes = slate.registration_closes_at
+    if closes.tzinfo is None:
+        closes = closes.replace(tzinfo=timezone.utc)
+    assert closes > datetime.now(timezone.utc)
 
 
 def test_corrected_valid_activates_existing_slate(db):

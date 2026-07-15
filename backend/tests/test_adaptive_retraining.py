@@ -28,8 +28,10 @@ from app.models.tables import (
     ModelTrainingRunModel,
     PredictionModel,
     ProgolJornadaScoreModel,
+    ProgolSlateProposalModel,
     SourceModel,
 )
+from app.domain.entities import MatchResultStatus
 from app.repositories.jornada_score_repository import JornadaScoreRepository
 from app.repositories.slate_repository import SlateRepository
 from app.schemas.adaptive_retraining import RetrainingThresholds
@@ -37,6 +39,7 @@ from app.schemas.common import CompetitionPayload, MatchReferencePayload, TeamPa
 from app.schemas.slate import ProgolSlateCreate
 from app.services.adaptive_retraining_service import AdaptiveRetrainingService
 from app.services.jornada_scoring_service import JornadaScoringService
+from app.services.live_result_service import LiveResultService
 
 
 # ---------------------------------------------------------------------------
@@ -78,6 +81,20 @@ def _source(session: Session, name: str = "retrain-src", priority: int = 50) -> 
     session.add(src)
     session.flush()
     return src
+
+
+def _make_official(session: Session, slate: Any) -> None:
+    session.add(
+        ProgolSlateProposalModel(
+            draw_code=slate.draw_code,
+            week_type=slate.week_type,
+            source_name="LN Progol Guía",
+            source_url="https://www.loterianacional.gob.mx/Progol/Guia.pdf",
+            status="promoted",
+            promoted_slate_id=slate.id,
+        )
+    )
+    session.flush()
 
 
 def _make_slate(session: Session, draw_code: str = "PG-RT-1", n: int = 3) -> Any:
@@ -210,6 +227,41 @@ class TestReadinessGates:
         assert report.recommended_action == "skip"
         assert report.trainable_rows == 0
         assert any(not c.passed for c in report.checks)
+
+    def test_sign_only_rows_do_not_trigger_xgboost_retraining(self, db: Session):
+        """Classification-only rows are not scoreline rows for XGBoost."""
+        slate = _make_slate(db, "PG-RT-SIGN", n=2)
+        _make_official(db, slate)
+        src = _source(db, "rt-sign-only", priority=10)
+        for sm in slate.matches:
+            LiveResultService(db).record_observation(
+                match_id=sm.match_id,
+                source_id=src.id,
+                status=MatchResultStatus.FULL_TIME,
+                result_code="1",
+                is_final=True,
+            )
+            _add_prediction(
+                db,
+                sm.match_id,
+                slate.id,
+                slate.composition_hash,
+                recommended_outcome="1",
+            )
+        _score_slate(db, slate)
+
+        thresholds = RetrainingThresholds(
+            min_trainable_rows=1,
+            min_complete_slates=1,
+            max_conflict_rate=0.05,
+            max_blocked_rate_for_full_retrain=0.60,
+            min_new_rows_since_last_train=0,
+        )
+        report = AdaptiveRetrainingService(db).evaluate_readiness(thresholds)
+
+        assert report.ready is False
+        assert report.recommended_action == "skip"
+        assert report.trainable_rows == 0
 
     def test_not_ready_below_min_trainable_rows(self, db: Session):
         """1 row but threshold=5 → not ready."""

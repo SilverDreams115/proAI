@@ -42,6 +42,7 @@ from app.repositories.ticket_repository import TicketRecommendationRepository
 from app.repositories.training_repository import TrainingRepository
 from app.services.active_slate_scope import build_active_slate_scope
 from app.services.feature_service import FeatureService
+from app.services.diagnostic_ttl_cache import cached_diagnostic_report
 from app.services.model_training_service import ModelTrainingService
 from app.services.money_mode_validation_service import validate_slate_for_money_mode
 from app.services.prediction_service import PredictionService
@@ -271,6 +272,20 @@ def _match_justification(pred: Any, mode_key: str, rec_by_match: dict[str, Any])
 
 def build_money_mode(session: Session, slate: ProgolSlateModel) -> dict[str, Any]:
     """Read-only Money Mode report for one slate."""
+    key = (
+        slate.id,
+        slate.composition_hash,
+        slate.slate_version,
+        len(slate.matches),
+    )
+    return cached_diagnostic_report(
+        "money_mode",
+        key,
+        lambda: _build_money_mode_uncached(session, slate),
+    )
+
+
+def _build_money_mode_uncached(session: Session, slate: ProgolSlateModel) -> dict[str, Any]:
     validation = validate_slate_for_money_mode(session, slate)
 
     training_service = ModelTrainingService(

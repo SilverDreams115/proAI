@@ -23,6 +23,25 @@ class MatchCanaryInfo(BaseModel):
     warnings: list[str] = Field(default_factory=list)
 
 
+class NeuralShadowInfo(BaseModel):
+    """Read-only neural-baseline shadow prediction.
+
+    Diagnostic only: never changes the production probabilities, pick,
+    ticket strategy or persisted PredictionModel audit row.
+    """
+
+    active: bool = False
+    status: str = "inactive"
+    run_id: str | None = None
+    probabilities: dict[str, float] | None = None
+    top_pick: str | None = None
+    baseline_top_pick: str | None = None
+    top_pick_changed: bool = False
+    probability_delta: dict[str, float] | None = None
+    max_abs_delta: float = 0.0
+    reason: str | None = None
+
+
 class PresentationGuardInfo(BaseModel):
     """R5.6-D read-only presentation contract.
 
@@ -151,6 +170,7 @@ class MatchPredictionResponse(BaseModel):
         default_factory=lambda: {"L": 0.0, "E": 0.0, "V": 0.0}
     )
     canary: MatchCanaryInfo | None = None
+    neural_shadow: NeuralShadowInfo | None = None
 
     # --- R5.6-D presentation guard (read-only, derived) ------------------
     presentation_guard: PresentationGuardInfo | None = None

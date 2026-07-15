@@ -192,19 +192,23 @@ class SchedulerWorker:
         documents = connector.fetch()
         if not documents:
             return
-        text = str(documents[0].payload.get("raw_text", ""))
-        if not text.strip():
-            return
         ingest = ResultsIngestionService(session)
         slate_service = SlateService(SlateRepository(session))
         recorded = 0
         for slate in slate_service.list_slates(include_closed=True):
             if not slate.composition_hash:
                 continue
-            report = ingest.ingest_for_slate(
-                slate, text, source_url=connector.base_url, observed_at=polled_at
-            )
-            recorded += int(report.get("recorded", 0))
+            for document in documents:
+                text = str(document.payload.get("raw_text", ""))
+                if not text.strip():
+                    continue
+                report = ingest.ingest_for_slate(
+                    slate, text, source_url=document.source_url, observed_at=polled_at
+                )
+                if report.get("error") == "draw_code_mismatch":
+                    continue
+                recorded += int(report.get("recorded", 0))
+                break
         if recorded:
             session.commit()
             logger.info(

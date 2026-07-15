@@ -368,6 +368,39 @@ async def test_tracking_endpoint_exposes_fields(client):
 
 
 @pytest.mark.anyio
+async def test_live_dashboard_comparison_and_tracking_counts_match(client):
+    from app.db.session import SessionLocal
+
+    with SessionLocal() as session:
+        slate = _seed_slate(session, draw_code="PG-T5-DASH", n=2, closes_at=_past(), outcomes=["1", "2"])
+        _make_official(session, slate)
+        src = _source(session, "ln")
+        ids = _match_ids(slate)
+        _final(session, ids[0], src, 2, 0)
+        _final(session, ids[1], src, 0, 1)
+        sid = slate.id
+        session.commit()
+
+    dash_resp = await client.get("/api/slates/live/dashboard")
+    comp_resp = await client.get(f"/api/slates/{sid}/result-comparison")
+    track_resp = await client.get(f"/api/slates/{sid}/tracking")
+
+    assert dash_resp.status_code == 200
+    assert comp_resp.status_code == 200
+    assert track_resp.status_code == 200
+
+    dash = next(e for e in dash_resp.json()["closed"] if e["slate_id"] == sid)
+    comp = comp_resp.json()
+    track = track_resp.json()
+
+    assert dash["match_count"] == comp["match_count"] == track["total_matches"] == 2
+    assert dash["completed_count"] == comp["completed_count"] == track["finished_matches"] == 2
+    assert dash["pending_count"] == comp["pending_count"] == track["pending_matches"] == 0
+    assert dash["simple_hits"] == comp["score"]["simple_hits"] == track["hits"] == 2
+    assert track["learning_rows_ready"] == 2
+
+
+@pytest.mark.anyio
 async def test_tracking_endpoint_404(client):
     resp = await client.get("/api/slates/nope/tracking")
     assert resp.status_code == 404
@@ -433,6 +466,56 @@ def test_invalidate_clears_both_prediction_caches(db):
     assert ps._cached_slate_predictions(slate.id) is None
 
 
+def test_operational_prediction_audit_blocks_placeholder_publication(db):
+    from app.services.operational_prediction_audit_service import (
+        OperationalPredictionAuditService,
+    )
+
+    slate = _seed_slate(db, draw_code="PG-OPA1", n=1, closes_at=_future(), outcomes=["1"])
+    _make_official(db, slate)
+    match = sorted(slate.matches, key=lambda sm: sm.position)[0].match
+    match.away_team.name = "G"
+    match.away_team.is_placeholder = True
+    pred = db.scalar(select(PredictionModel).where(PredictionModel.slate_id == slate.id))
+    assert pred is not None
+    pred.sanity_audit_json = json.dumps(
+        {
+            "decision_probabilities": {"L": 0.45, "E": 0.30, "V": 0.25},
+            "final_status": "BLOQUEADO",
+            "evidence_level": "low",
+            "sanity_flags": ["PLACEHOLDER_TEAM", "BLOCKED_INSUFFICIENT_DATA"],
+            "ticket_strategy": "DOBLE_RECOMENDADO",
+        }
+    )
+    db.flush()
+
+    payload = OperationalPredictionAuditService(db).build(slate_id=slate.id)
+
+    assert payload["mode"] == "operational_prediction_audit"
+    assert payload["publish_gate"]["allowed"] is False
+    assert payload["publish_gate"]["whatsapp_allowed"] is False
+    assert payload["publish_gate"]["blocked_count"] == 1
+    assert payload["placeholder_queue"]["count"] == 1
+    assert payload["confidence_explainer"]["matches"][0]["components"]["data_quality"]["level"] == "blocked"
+
+
+@pytest.mark.anyio
+async def test_operational_prediction_audit_endpoint(client):
+    from app.db.session import SessionLocal
+
+    with SessionLocal() as session:
+        slate = _seed_slate(session, draw_code="PG-OPA2", n=1, closes_at=_future(), outcomes=["1"])
+        sid = slate.id
+        session.commit()
+
+    resp = await client.get(f"/api/tracking/operational-prediction-audit?slate_id={sid}")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["mode"] == "operational_prediction_audit"
+    assert "publish_gate" in body
+    assert "freshness_monitor" in body
+
+
 @pytest.mark.anyio
 async def test_tracking_endpoint_writes_no_audit_rows(client):
     from app.db.session import SessionLocal
@@ -493,7 +576,7 @@ async def test_predictions_endpoint_is_read_only(client):
 
 
 # --------------------------------------------------------------------------
-# Sign-only official result: tracking shows hit/miss, but NOT learning-ready
+# Sign-only official result: tracking shows hit/miss and classification-ready
 # --------------------------------------------------------------------------
 
 def test_sign_only_result_is_not_learning_ready(db):
@@ -513,9 +596,9 @@ def test_sign_only_result_is_not_learning_ready(db):
     assert m["match_status"] == "finished"
     assert m["actual_result"] == "L"            # sign surfaces in tracking
     assert m["prediction_status"] == "hit"      # hit/miss still computed
-    assert m["learning_status"] == "sign_only"  # but NOT learning-ready
-    assert m["excluded_from_training"] is True
-    assert m["exclusion_reason"] == "sign_only_no_canonical_score"
+    assert m["learning_status"] == "classification_ready"
+    assert m["excluded_from_training"] is False
+    assert m["exclusion_reason"] is None
     assert payload["learning_rows_ready"] == 0
     assert payload["learning_rows_sign_only"] == 1
 

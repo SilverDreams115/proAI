@@ -46,6 +46,7 @@ class JornadaScoringService:
 
         predictions_by_match = self._latest_predictions(slate.id, slate.composition_hash, match_ids)
         results_by_match = self._canonical_results(match_ids)
+        sign_only_results = self._official_sign_only_results(slate, match_ids, results_by_match)
         snapshot = self._valid_snapshot(slate.id, slate.composition_hash)
         ticket_picks = self._parse_ticket_picks(snapshot)
         has_snapshot = snapshot is not None
@@ -63,7 +64,8 @@ class JornadaScoringService:
         for sm in slate_matches:
             match = sm.match
             pred = predictions_by_match.get(sm.match_id)
-            result = results_by_match.get(sm.match_id)
+            result = results_by_match.get(sm.match_id) or sign_only_results.get(sm.match_id)
+            result_is_canonical = sm.match_id in results_by_match
             t_picks = ticket_picks.get(sm.match_id)
 
             has_result = result is not None
@@ -126,6 +128,7 @@ class JornadaScoringService:
                     "result_code": result.result_code if result else None,
                     "home_goals": result.home_goals if result else None,
                     "away_goals": result.away_goals if result else None,
+                    "result_is_canonical": result_is_canonical,
                     "recommended_outcome": pred.recommended_outcome if pred else None,
                     "confidence_band": pred.confidence_band if pred else None,
                     # Visible/decision vector (what is scored + displayed).
@@ -256,6 +259,39 @@ class JornadaScoringService:
         from app.repositories.canonical_result_repository import CanonicalResultRepository
 
         return CanonicalResultRepository(self.session).get_canonical_for_matches(match_ids)
+
+    def _official_sign_only_results(
+        self,
+        slate: ProgolSlateModel,
+        match_ids: list[str],
+        canonical_results: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Return official final sign-only results usable for classification.
+
+        Progol's acta can publish only L/E/V without a scoreline. Those rows
+        are not canonical scored results and must never be promoted to
+        ``match_results``, but the classification target is valid for hit/Brier
+        evaluation when the slate has official LN lineage.
+        """
+        if not match_ids:
+            return {}
+        from app.services.live_result_service import LiveResultService
+        from app.services.slate_classification_service import classify_slate
+
+        if not classify_slate(self.session, slate).comparable_with_results:
+            return {}
+
+        live_results = LiveResultService(self.session).status_for_matches(match_ids)
+        out: dict[str, Any] = {}
+        for match_id, result in live_results.items():
+            if match_id in canonical_results:
+                continue
+            if not result.is_final or result.result_code not in {"1", "X", "2"}:
+                continue
+            if result.home_goals is not None or result.away_goals is not None:
+                continue
+            out[match_id] = result
+        return out
 
     def _valid_snapshot(
         self, slate_id: str, composition_hash: str

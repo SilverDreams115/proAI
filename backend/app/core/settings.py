@@ -69,6 +69,7 @@ class Settings(BaseModel):
     ms_pdf_watch_enabled: bool = Field(default=True)
     ms_pdf_watch_interval_minutes: int = Field(default=90)
     ms_pdf_watch_min_backoff_minutes: int = Field(default=30)
+    ms_pdf_provisional_active_days: float = Field(default=5.0)
     # Fase 3: auto-promote validated proposals when the active slate's
     # cierre is imminent (or no active slate exists). Threshold is in
     # hours; default 2 means "promote the next concurso once we're

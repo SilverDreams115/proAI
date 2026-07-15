@@ -33,8 +33,10 @@ from app.schemas.slate_discovery import SlateDiscoveryResponse
 from app.schemas.slate_refresh import SlateAutoRefreshRequest
 from app.schemas.slate_refresh import SlateAutoRefreshResponse
 from app.services.current_progol_service import CurrentProgolService
+from app.services.operational_prediction_audit_service import OperationalPredictionAuditService
 from app.services.slate_discovery_service import SlateDiscoveryService
 from app.services.slate_proposal_service import SlateProposalService
+from app.services.slate_readiness_report_service import build_slate_readiness_report
 from app.services.slate_refresh_service import SlateRefreshService
 from app.services.slate_service import SlateService
 
@@ -663,6 +665,29 @@ async def promote_proposed_slate(
         already_active=result.already_active,
         slate=_serialize_slate(result.slate, slate_service, session),
     )
+
+
+@router.get("/{slate_id}/readiness-report")
+async def get_slate_readiness_report(
+    slate_id: str,
+    session: Session = Depends(get_db_session),
+) -> dict:
+    slate = SlateRepository(session).get_slate(slate_id)
+    if slate is None:
+        raise HTTPException(status_code=404, detail="Slate not found.")
+    return build_slate_readiness_report(session, include_archived=True, slate_ids={slate_id})
+
+
+@router.get("/{slate_id}/publish-gate")
+async def get_slate_publish_gate(
+    slate_id: str,
+    session: Session = Depends(get_db_session),
+) -> dict:
+    slate = SlateRepository(session).get_slate(slate_id)
+    if slate is None:
+        raise HTTPException(status_code=404, detail="Slate not found.")
+    audit = OperationalPredictionAuditService(session).build(slate_id=slate_id)
+    return audit["publish_gate"]
 
 
 # Declared last so it doesn't shadow the more specific `/proposed`,

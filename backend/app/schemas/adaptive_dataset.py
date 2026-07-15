@@ -6,9 +6,10 @@ from pydantic import BaseModel
 class AdaptiveDatasetRow(BaseModel):
     """One training-ready row from a scored Progol jornada.
 
-    Every row has a canonical (non-conflicting) result and a linked
-    prediction from the slate's current composition_hash.  Rows without
-    a result or with conflicting sources are never included.
+    Every row has a linked prediction from the slate's current
+    composition_hash and either a canonical scored result or an official
+    Progol sign-only final usable for classification. Rows without a
+    result or with conflicting sources are never included.
     """
 
     slate_id: str
@@ -57,7 +58,10 @@ class AdaptiveDatasetSummary(BaseModel):
     total_slates_scored: int
     total_slates_complete: int
     total_rows: int
+    classification_trainable_rows: int = 0
+    xgboost_trainable_rows: int = 0
     rows_with_canonical_result: int
+    rows_with_sign_only_result: int = 0
     rows_with_conflict: int
     rows_with_ticket_info: int
     hit_rate: float | None

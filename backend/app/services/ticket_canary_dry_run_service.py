@@ -29,6 +29,7 @@ from app.repositories.ticket_repository import TicketRecommendationRepository
 from app.repositories.training_repository import TrainingRepository
 from app.schemas.prediction import MatchPredictionResponse
 from app.services.feature_service import FeatureService
+from app.services.diagnostic_ttl_cache import cached_diagnostic_report
 from app.services.model_training_service import ModelTrainingService
 from app.services.prediction_service import PredictionService
 from app.services.team_rating_canary_service import apply_canary_to_predictions
@@ -114,6 +115,22 @@ def _counts(pick_types: list[str]) -> dict[str, int]:
 
 def build_ticket_canary_dry_run(session: Session, slate: ProgolSlateModel) -> dict[str, Any]:
     """Build the read-only current-vs-canary ticket comparison for one slate."""
+    key = (
+        slate.id,
+        slate.composition_hash,
+        slate.slate_version,
+        len(slate.matches),
+    )
+    return cached_diagnostic_report(
+        "ticket_canary_dry_run",
+        key,
+        lambda: _build_ticket_canary_dry_run_uncached(session, slate),
+    )
+
+
+def _build_ticket_canary_dry_run_uncached(
+    session: Session, slate: ProgolSlateModel
+) -> dict[str, Any]:
     training_service = ModelTrainingService(
         TrainingRepository(session), EntityRepository(session), ResultRepository(session)
     )

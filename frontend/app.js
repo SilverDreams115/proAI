@@ -5,6 +5,7 @@
 // put — the rule is "if it's not in helpers.js, it needs the
 // browser to make sense."
 import {
+  escapeHtml,
   formatPercent,
   formatDate,
   formatRelativeAge,
@@ -44,14 +45,24 @@ import { renderOperationalMoneyModeStatusPanel } from "./operational-money-mode-
 import { renderExternalResultsPanel } from "./external-results.js";
 import { renderSlateOptionsPanel } from "./slate-options.js";
 import { renderTrackingResultsValidationPanel } from "./tracking-results-validation.js";
-import { renderLearningDashboard } from "./learning-dashboard.js";
+import { renderLearningDashboard, renderLearningSummary } from "./learning-dashboard.js";
 import { renderProductFlowPanel } from "./product-flow.js";
+import { renderSlateReadinessReportPanel } from "./slate-readiness-report.js";
+import { renderOperationalPredictionAuditPanel } from "./operational-prediction-audit.js";
+import {
+  deriveLnResultsObserverAlert,
+  renderLiveResultsObserverPanel,
+  snapshotLnResultsObserver,
+} from "./live-results-observer-panel.js";
+import { renderNeuralShadowPanel } from "./neural-shadow-panel.js";
 import {
   getCachedDiagnostics,
   setCachedDiagnostics,
   clearDiagnosticsCache,
 } from "./slate-panel-cache.js";
-import { resolveActiveSelection, resolveVisibleSelection, selectedSlateCountdownMs, slateBadges, suspectSlateDiagnostics, pdfSourceDiagnosticLines, msPdfWatchStatus } from "./slate-selection.js";
+import { buildPrintableTicketHtml } from "./printable-ticket.js";
+import { buildWhatsAppShareUrl, buildWhatsAppTicketText } from "./whatsapp-share.js";
+import { resolveActiveSelection, resolveVisibleSelection, selectedSlateCountdownMs, slateBadges, suspectSlateDiagnostics, pdfSourceDiagnosticLines, msPdfWatchStatus, blockedMidweekSlateDiagnostic } from "./slate-selection.js";
 // NOTE: live-tracking is loaded via a guarded dynamic import in the
 // bootstrap (not a static import), so a failure to load/link that module
 // can never abort app.js and blank out the main selector.
@@ -105,7 +116,7 @@ function renderNoSlateState() {
         <li>Última Weekend observada: <span>${wk}</span></li>
         <li>Última Media Semana observada: <span>${ms}</span></li>
         <li>Worker: <span>${escapeHtml(workerState)}</span></li>
-        <li>Acción: ejecutar Scheduler o revisar la fuente LN.</li>
+        <li>Acción: actualizar la vista o revisar la fuente LN.</li>
       </ul>
       ${watchBlock}
       ${suspectBlock}
@@ -841,9 +852,17 @@ function renderAsideSlates() {
   sections.push(`<div class="aside-week-group"><h3 class="aside-week-label">Fin de semana</h3>${wkContent}</div>`);
   // Midweek/MS — always shown, empty state when no active MS.
   const msSlates = grouped["midweek"] || [];
+  const blockedMs = blockedMidweekSlateDiagnostic({ discovery: state.discovery });
   const msContent = msSlates.length
     ? msSlates.map(renderSlateBtn).join("")
-    : `<p class="aside-empty-label">No hay Progol MS activo<br><span>Esperando guía de media semana</span></p>`;
+    : blockedMs
+      ? `<div class="aside-blocked-slate" data-suspect="${escapeHtml(blockedMs.draw_code)}">
+          <strong>${escapeHtml(blockedMs.draw_code)}</strong>
+          <span>Detectada, no jugable</span>
+          <small>${escapeHtml(pdfSourceDiagnosticLines(blockedMs)[0] || blockedMs.reason || "Fecha inválida")}</small>
+          <small>${escapeHtml(blockedMs.action)}</small>
+        </div>`
+      : `<p class="aside-empty-label">No hay Progol MS activo<br><span>Esperando guía de media semana</span></p>`;
   sections.push(`<div class="aside-week-group"><h3 class="aside-week-label">Media semana</h3>${msContent}</div>`);
   // Revancha — only when present.
   const revSlates = grouped["revancha"] || [];
@@ -964,7 +983,65 @@ function renderValidationSummary() {
       </div>
     </div>
     ${reviewStrip}
+    ${renderExportStatusLine()}
   `;
+}
+
+const EXPORT_STATUS_KEY = "proai.ticketExportStatus";
+
+function readExportStatusMap() {
+  try {
+    return JSON.parse(localStorage.getItem(EXPORT_STATUS_KEY) || "{}");
+  } catch (_e) {
+    return {};
+  }
+}
+
+function writeExportStatusMap(map) {
+  try {
+    localStorage.setItem(EXPORT_STATUS_KEY, JSON.stringify(map || {}));
+  } catch (_e) {
+    /* storage unavailable — export status is cosmetic */
+  }
+}
+
+function loadExportStatusFromStorage() {
+  state.exportStatusBySlate = readExportStatusMap();
+}
+
+function exportTypeLabel(type) {
+  return {
+    copy: "jugada copiada",
+    txt: "TXT descargado",
+    whatsapp: "WhatsApp abierto",
+    pdf: "boleta PDF",
+  }[type] || "exportación";
+}
+
+function recordTicketExport(type) {
+  const slate = currentSlate();
+  if (!slate?.id) return;
+  const next = {
+    ...(state.exportStatusBySlate || {}),
+    [slate.id]: {
+      type,
+      at: new Date().toISOString(),
+      draw_code: slate.draw_code || "",
+      mode: state.ticketMode,
+    },
+  };
+  state.exportStatusBySlate = next;
+  writeExportStatusMap(next);
+  const validationSummaryNode = getById("validation-summary");
+  if (validationSummaryNode) validationSummaryNode.innerHTML = renderValidationSummary();
+}
+
+function renderExportStatusLine() {
+  const entry = state.exportStatusBySlate?.[state.activeSlateId];
+  if (!entry) return "";
+  const dateLabel = entry.at ? formatDate(entry.at) : "sin fecha";
+  const draw = entry.draw_code ? `${entry.draw_code} · ` : "";
+  return `<div class="export-status-line">Última exportación: ${escapeHtml(draw)}${escapeHtml(exportTypeLabel(entry.type))} · ${escapeHtml(dateLabel)}</div>`;
 }
 
 function renderQualityFilterOptions() {
@@ -998,6 +1075,76 @@ function buildTicketText() {
     });
   }
   return lines.join("\n");
+}
+
+function buildWhatsAppText() {
+  const modeLabel = ticketModes.find((item) => item.key === state.ticketMode)?.label || state.ticketMode;
+  const rows = buildSelectedTicketRows();
+  return buildWhatsAppTicketText({
+    slate: currentSlate(),
+    modeLabel,
+    rows,
+    warnings: auditTicketRows(rows),
+  });
+}
+
+function buildSelectedTicketRows() {
+  return state.matches.map((match) => {
+    const decision = effectiveDecision(match);
+    return {
+      position: match.position,
+      home_team_name: match.prediction.home_team_name,
+      away_team_name: match.prediction.away_team_name,
+      picks: decision.picks,
+      pick: displayPicks(decision.picks),
+    };
+  });
+}
+
+function buildPrintableTicket() {
+  const modeLabel = ticketModes.find((item) => item.key === state.ticketMode)?.label || state.ticketMode;
+  const rows = buildSelectedTicketRows();
+  return buildPrintableTicketHtml({
+    slate: currentSlate(),
+    modeLabel,
+    rows,
+    generatedAt: new Date().toISOString(),
+    moneyMode: moneyModeForActiveSlate(),
+    slateOptions: slateOptionsForActiveSlate(),
+    nameWarnings: auditTicketRows(rows),
+  });
+}
+
+function reportBelongsToActiveSlate(report) {
+  if (!report || Array.isArray(report)) return false;
+  const slateId = report.slate_id || report.slate?.slate_id || report.slate?.id;
+  if (slateId && state.activeSlateId) return slateId === state.activeSlateId;
+  const drawCode = report.draw_code || report.slate?.draw_code;
+  return Boolean(drawCode && drawCode === currentSlate()?.draw_code);
+}
+
+function moneyModeForActiveSlate() {
+  return reportBelongsToActiveSlate(state.moneyMode) ? state.moneyMode : null;
+}
+
+function slateOptionsForActiveSlate() {
+  return reportBelongsToActiveSlate(state.slateOptions) ? state.slateOptions : null;
+}
+
+function suspiciousTeamName(name) {
+  const value = String(name || "").trim();
+  if (!value) return true;
+  if (value.length < 2) return true;
+  return /^(tbd|por definir|pendiente|placeholder|equipo\s*[ab]?)$/i.test(value);
+}
+
+function auditTicketRows(rows) {
+  return (rows || [])
+    .filter((row) => suspiciousTeamName(row.home_team_name) || suspiciousTeamName(row.away_team_name))
+    .map((row) => ({
+      position: row.position,
+      message: "nombre de equipo incompleto o provisional",
+    }));
 }
 
 function renderEvidenceFallback(featurePayload, evidenceCount) {
@@ -1524,8 +1671,44 @@ function renderProductFlow() {
   _diagBody("product-flow-body", renderProductFlowPanel, state.productFlow);
 }
 
+function renderOperationalPredictionAudit() {
+  _diagBody("operational-prediction-audit-body", renderOperationalPredictionAuditPanel, state.operationalPredictionAudit);
+}
+
+function renderSlateReadinessReport() {
+  const node = getById("slate-readiness-report-body");
+  if (!node) return;
+  if (state.diagnosticsLoading && !state.slateReadinessReport) {
+    node.innerHTML = `<div class="panel-skeleton"><div class="skeleton-block"></div><div class="skeleton-block short"></div></div>`;
+    return;
+  }
+  node.innerHTML = renderSlateReadinessReportPanel(
+    state.slateReadinessReport,
+    state.slateReadinessFilter || "all",
+  );
+}
+
 function renderExternalResults() {
   _diagBody("external-results-body", renderExternalResultsPanel, state.externalResults);
+}
+
+function renderLiveResultsObserver() {
+  const node = getById("ln-results-observer-body");
+  if (!node) return;
+  if (state.diagnosticsLoading && !state.liveResultsObserver) {
+    node.innerHTML = `<div class="panel-skeleton"><div class="skeleton-block"></div><div class="skeleton-block short"></div></div>`;
+    return;
+  }
+  node.innerHTML = renderLiveResultsObserverPanel(
+    state.liveResultsObserver,
+    state.liveResultsObserverAlert,
+  );
+}
+
+function renderNeuralShadow() {
+  const node = getById("neural-shadow-body");
+  if (!node) return;
+  node.innerHTML = renderNeuralShadowPanel(state.matches);
 }
 
 function renderSlateOptions() {
@@ -1549,11 +1732,15 @@ function renderTeamRatingReadiness() {
 function renderDiagnosticsPanels() {
   renderOperationalMoneyModeStatus();
   renderProductFlow();
+  renderOperationalPredictionAudit();
+  renderSlateReadinessReport();
   renderMoneyMode();
   renderSlateOptions();
   renderTrackingResultsValidation();
   renderTicketCanaryDryRun();
   renderExternalResults();
+  renderLiveResultsObserver();
+  renderNeuralShadow();
   renderTeamRatingShadow();
   renderTeamRatingDryRun();
   renderTeamRatingReadiness();
@@ -1723,6 +1910,14 @@ async function _handleDelegatedClick(event) {
   const target = event.target instanceof Element ? event.target : null;
   if (!target) return;
 
+  const readinessFilterNode = target.closest("[data-readiness-filter]");
+  if (readinessFilterNode) {
+    const filter = readinessFilterNode.getAttribute("data-readiness-filter") || "all";
+    state.slateReadinessFilter = filter;
+    renderSlateReadinessReport();
+    return;
+  }
+
   // Per-option pick has highest priority: it lives inside a match
   // card and we must stopPropagation before the card handler fires.
   const optionPick = target.closest("[data-option-pick]");
@@ -1882,21 +2077,30 @@ function setupMainTabs() {
 }
 
 let learningDashboardLoaded = false;
+let learningDashboardLoadPromise = null;
 async function loadLearningDashboard() {
   if (learningDashboardLoaded) return;
-  learningDashboardLoaded = true;
+  if (learningDashboardLoadPromise) return learningDashboardLoadPromise;
   const body = getById("learning-dashboard-body");
   if (!body) return;
-  try {
-    const [inventory, readiness] = await Promise.all([
-      safeFetch("/learning/completed-slates/inventory", { optional: true }),
-      safeFetch("/learning/dataset-readiness", { optional: true }),
-    ]);
-    if (!inventory) return; // keep the honest "cargando…" placeholder on any non-OK response
-    body.innerHTML = renderLearningDashboard(inventory, readiness || null);
-  } catch (_err) {
-    // Leave the placeholder; the learning dashboard is best-effort and read-only.
-  }
+  learningDashboardLoadPromise = (async () => {
+    const readinessPromise = safeFetch("/learning/dataset-readiness", { optional: true }).catch(() => null);
+    try {
+      const inventory = await safeFetch("/learning/completed-slates/inventory", { optional: true });
+      if (!inventory) return; // keep the honest "cargando…" placeholder on any non-OK response
+      learningDashboardLoaded = true;
+      body.innerHTML = renderLearningDashboard(inventory, null);
+      const readiness = await readinessPromise;
+      if (readiness) {
+        body.innerHTML = renderLearningDashboard(inventory, readiness);
+      }
+    } catch (_err) {
+      // Leave the placeholder; the learning dashboard is best-effort and read-only.
+    } finally {
+      learningDashboardLoadPromise = null;
+    }
+  })();
+  return learningDashboardLoadPromise;
 }
 
 let learningSummaryLoaded = false;
@@ -1908,20 +2112,7 @@ async function loadLearningSummary() {
   try {
     const summary = await safeFetch("/adaptive-dataset/summary", { optional: true });
     if (!summary) return; // keep the honest placeholder on any non-OK response
-    const rows = Number(summary.total_rows || 0);
-    if (rows <= 0) {
-      body.innerHTML = `<p class="meta-copy">Disponible cuando haya learning rows suficientes. Los resultados oficiales de Progol son solo-signo (sin marcador) y no aportan filas de entrenamiento; el aprendizaje necesita marcadores de una fuente deportiva. (${escapeHtml(summary.total_slates_scored || 0)} jornadas scoreadas, ${escapeHtml(summary.total_slates_complete || 0)} completas.)</p>`;
-      return;
-    }
-    const hitRate = summary.hit_rate == null ? "—" : `${Math.round(Number(summary.hit_rate) * 100)}%`;
-    body.innerHTML = `
-      <div class="learn-summary">
-        <div class="ls-cell"><strong>${escapeHtml(rows)}</strong><span>learning rows</span></div>
-        <div class="ls-cell"><strong>${escapeHtml(summary.rows_with_canonical_result || 0)}</strong><span>con resultado canónico</span></div>
-        <div class="ls-cell"><strong>${escapeHtml(summary.rows_with_conflict || 0)}</strong><span>en conflicto (excluidas)</span></div>
-        <div class="ls-cell"><strong>${hitRate}</strong><span>hit rate</span></div>
-      </div>
-      <p class="meta-copy subtle">Solo lectura. No se entrena ni se promueve ningún modelo desde esta vista.</p>`;
+    body.innerHTML = renderLearningSummary(summary);
   } catch (err) {
     // Best-effort: leave the honest placeholder in place.
   }
@@ -1966,18 +2157,6 @@ function attachStaticEvents() {
     }
   });
 
-  getById("run-worker")?.addEventListener("click", async () => {
-    await safePost("/worker/scheduler/run-once");
-    await boot();
-  });
-
-  getById("reset-picks")?.addEventListener("click", () => {
-    resetManualSelections();
-    renderSidebar();
-    renderBoard();
-    attachEvents();
-  });
-
   getById("quality-filter")?.addEventListener("change", (event) => {
     state.qualityFilter = event.target.value;
     const visible = filteredMatches();
@@ -1994,6 +2173,7 @@ function attachStaticEvents() {
     try {
       await navigator.clipboard.writeText(text);
       state.authStatusMessage = "Jugada copiada al portapapeles.";
+      recordTicketExport("copy");
     } catch {
       state.authStatusMessage = "No se pudo copiar automáticamente; descarga el TXT.";
     }
@@ -2010,6 +2190,41 @@ function attachStaticEvents() {
     link.download = `${slate?.draw_code || "proai-ticket"}-${state.ticketMode}.txt`;
     link.click();
     URL.revokeObjectURL(url);
+    recordTicketExport("txt");
+    updateAuthControls();
+    renderProductionStatus();
+  });
+
+  getById("share-whatsapp")?.addEventListener("click", () => {
+    const url = buildWhatsAppShareUrl(buildWhatsAppText());
+    const opened = window.open(url, "_blank", "noopener,noreferrer");
+    if (!opened) {
+      state.authStatusMessage = "WhatsApp fue bloqueado por el navegador; permite popups para abrirlo en otra pestaña.";
+      updateAuthControls();
+      renderProductionStatus();
+      return;
+    }
+    state.authStatusMessage = "WhatsApp abierto en una pestaña nueva.";
+    recordTicketExport("whatsapp");
+    updateAuthControls();
+    renderProductionStatus();
+  });
+
+  getById("print-ticket")?.addEventListener("click", () => {
+    const win = window.open("", "_blank");
+    if (!win) {
+      state.authStatusMessage = "La boleta PDF fue bloqueada por el navegador; permite popups para abrirla en otra pestaña.";
+      updateAuthControls();
+      renderProductionStatus();
+      return;
+    }
+    win.document.open();
+    win.document.write(buildPrintableTicket());
+    win.document.close();
+    state.authStatusMessage = "Boleta PDF abierta en una pestaña nueva.";
+    recordTicketExport("pdf");
+    updateAuthControls();
+    renderProductionStatus();
   });
 
   updateAuthControls();
@@ -2021,10 +2236,10 @@ function updateAuthControls() {
   const passwordInput = getById("auth-password");
   const refreshButton = getById("refresh");
   const demoButton = getById("load-demo");
-  const workerButton = getById("run-worker");
   const copyButton = getById("copy-ticket");
   const downloadButton = getById("download-ticket");
-  const resetButton = getById("reset-picks");
+  const shareWhatsAppButton = getById("share-whatsapp");
+  const printTicketButton = getById("print-ticket");
   const filterNode = getById("quality-filter");
   const feedbackNode = getById("auth-feedback");
   const secretField = passwordInput?.closest(".secret-field");
@@ -2045,10 +2260,17 @@ function updateAuthControls() {
     demoButton.hidden = isProduction;
     demoButton.disabled = !state.authenticated || state.isLoading;
   }
-  if (workerButton) workerButton.disabled = !state.authenticated || !state.worker || state.isLoading;
   if (copyButton) copyButton.disabled = !state.authenticated || !state.matches.length || state.isLoading;
   if (downloadButton) downloadButton.disabled = !state.authenticated || !state.matches.length || state.isLoading;
-  if (resetButton) resetButton.disabled = !state.authenticated || readOnly || !Object.keys(state.manualSelections).length;
+  const publishGate = state.operationalPredictionAudit?.publish_gate || null;
+  const whatsappBlockedByGate = publishGate && publishGate.whatsapp_allowed === false;
+  if (shareWhatsAppButton) {
+    shareWhatsAppButton.disabled = !state.authenticated || !state.matches.length || state.isLoading || whatsappBlockedByGate;
+    shareWhatsAppButton.title = whatsappBlockedByGate
+      ? "Bloqueado por diagnóstico: resuelve placeholders/evidencia antes de enviar."
+      : "";
+  }
+  if (printTicketButton) printTicketButton.disabled = !state.authenticated || !state.matches.length || state.isLoading;
   if (filterNode) filterNode.disabled = !state.authenticated || !state.matches.length || state.isLoading;
   if (feedbackNode) {
     feedbackNode.textContent = state.authStatusMessage || "";
@@ -2080,6 +2302,11 @@ async function loadSlateDetails(slateId) {
   // Switching slate resets the deferred-diagnostic state so panels show a
   // skeleton, not the previous slate's data. The cache makes a re-open instant.
   state.diagnosticsSlateId = null;
+  state.moneyMode = null;
+  state.moneyModeOpsStatus = null;
+  state.productFlow = null;
+  state.slateOptions = null;
+  state.operationalPredictionAudit = null;
   const [predictions, features, ticketPlan, quality, evidenceBySlate, availabilityBySlate, resultsBySlate] = await Promise.all([
     safeFetch(`/predictions/slates/${slateId}`),
     safeFetch(`/predictions/slates/${slateId}/features`),
@@ -2134,12 +2361,33 @@ async function loadSlateDetails(slateId) {
   state.modelTripleMatchIds = fullCoverage.tripleMatchIds;
   state.selectedMatchId = state.matches[0]?.match_id || null;
   state.manualSelections = {};
+  preheatSlateDiagnostics(slateId);
 }
 
 let diagnosticsRequestSeq = 0;
+let diagnosticsPreheatRequestSeq = 0;
+let liveTrackingStarted = false;
+
+const LN_RESULTS_SNAPSHOT_KEY = "proai.lnResultsObserverSnapshot";
+
+function readLnResultsSnapshot() {
+  try {
+    return JSON.parse(localStorage.getItem(LN_RESULTS_SNAPSHOT_KEY) || "[]");
+  } catch (_e) {
+    return [];
+  }
+}
+
+function writeLnResultsSnapshot(report) {
+  try {
+    localStorage.setItem(LN_RESULTS_SNAPSHOT_KEY, JSON.stringify(snapshotLnResultsObserver(report)));
+  } catch (_e) {
+    /* storage unavailable — alert remains best-effort */
+  }
+}
 
 function _applyDiagnostics(payload) {
-  const [shadow, dryRun, readiness, canary, ticketCanaryDryRun, moneyMode, opsStatus, productFlow, externalResults, slateOptions, resultsValidation] = payload;
+  const [shadow, dryRun, readiness, canary, ticketCanaryDryRun, moneyMode, opsStatus, productFlow, operationalPredictionAudit, slateReadinessReport, externalResults, slateOptions, resultsValidation, liveResultsObserver] = payload;
   state.teamRatingShadow = (shadow && !Array.isArray(shadow)) ? shadow : null;
   state.teamRatingDryRun = (dryRun && !Array.isArray(dryRun)) ? dryRun : null;
   state.teamRatingReadiness = (readiness && !Array.isArray(readiness)) ? readiness : null;
@@ -2148,9 +2396,42 @@ function _applyDiagnostics(payload) {
   state.moneyMode = (moneyMode && !Array.isArray(moneyMode)) ? moneyMode : null;
   state.moneyModeOpsStatus = (opsStatus && !Array.isArray(opsStatus)) ? opsStatus : null;
   state.productFlow = (productFlow && !Array.isArray(productFlow)) ? productFlow : null;
+  state.operationalPredictionAudit = (operationalPredictionAudit && !Array.isArray(operationalPredictionAudit)) ? operationalPredictionAudit : null;
+  state.slateReadinessReport = (slateReadinessReport && !Array.isArray(slateReadinessReport)) ? slateReadinessReport : null;
   state.externalResults = (externalResults && !Array.isArray(externalResults)) ? externalResults : null;
   state.slateOptions = (slateOptions && !Array.isArray(slateOptions)) ? slateOptions : null;
   state.resultsValidation = (resultsValidation && !Array.isArray(resultsValidation)) ? resultsValidation : null;
+  state.liveResultsObserver = (liveResultsObserver && !Array.isArray(liveResultsObserver)) ? liveResultsObserver : null;
+  if (state.liveResultsObserver) {
+    state.liveResultsObserverAlert = deriveLnResultsObserverAlert(
+      state.liveResultsObserver,
+      readLnResultsSnapshot(),
+    );
+    writeLnResultsSnapshot(state.liveResultsObserver);
+  } else {
+    state.liveResultsObserverAlert = null;
+  }
+  updateAuthControls();
+}
+
+async function preheatSlateDiagnostics(slateId) {
+  if (!slateId || !state.authenticated) return;
+  if (state.diagnosticsPreheatedSlateId === slateId) return;
+  if (getCachedDiagnostics(slateId)) return;
+  state.diagnosticsPreheatedSlateId = slateId;
+  const seq = ++diagnosticsPreheatRequestSeq;
+  const [moneyMode, opsStatus, productFlow, slateOptions] = await Promise.all([
+    safeFetch(`/predictions/slates/${slateId}/money-mode`, {optional: true}),
+    safeFetch(`/operations/money-mode/status`, {optional: true}),
+    safeFetch(`/operations/product-flow?slate_id=${encodeURIComponent(slateId)}`, {optional: true}),
+    safeFetch(`/predictions/slates/${slateId}/options`, {optional: true}),
+  ]);
+  if (seq !== diagnosticsPreheatRequestSeq || state.activeSlateId !== slateId) return;
+  state.moneyMode = (moneyMode && !Array.isArray(moneyMode)) ? moneyMode : state.moneyMode;
+  state.moneyModeOpsStatus = (opsStatus && !Array.isArray(opsStatus)) ? opsStatus : state.moneyModeOpsStatus;
+  state.productFlow = (productFlow && !Array.isArray(productFlow)) ? productFlow : state.productFlow;
+  state.slateOptions = (slateOptions && !Array.isArray(slateOptions)) ? slateOptions : state.slateOptions;
+  if (_isDiagnosticoActive()) renderDiagnosticsPanels();
 }
 
 // R6.3: deferred, cached, cancellable load of the heavy Diagnóstico panels.
@@ -2170,20 +2451,43 @@ async function loadSlateDiagnostics(slateId) {
   state.diagnosticsLoading = true;
   state.diagnosticsSlateId = null;
   renderDiagnosticsPanels(); // immediate skeleton
-  const payload = await Promise.all([
-    safeFetch(`/predictions/slates/${slateId}/team-rating-shadow`, {optional: true}),
-    safeFetch(`/predictions/slates/${slateId}/team-rating-activation-dry-run`, {optional: true}),
-    safeFetch(`/predictions/slates/${slateId}/team-rating-activation-readiness`, {optional: true}),
-    safeFetch(`/predictions/slates/${slateId}/team-rating-canary-status`, {optional: true}),
-    safeFetch(`/predictions/slates/${slateId}/ticket-canary-dry-run`, {optional: true}),
-    safeFetch(`/predictions/slates/${slateId}/money-mode`, {optional: true}),
-    safeFetch(`/operations/money-mode/status`, {optional: true}),
-    safeFetch(`/operations/product-flow?slate_id=${encodeURIComponent(slateId)}`, {optional: true}),
-    safeFetch(`/results/slates/${slateId}/provider-dry-run`, {optional: true}),
+  const payload = Array(14).fill(null);
+  const requests = [
+    { path: `/predictions/slates/${slateId}/team-rating-shadow` },
+    { path: `/predictions/slates/${slateId}/team-rating-activation-dry-run` },
+    { path: `/predictions/slates/${slateId}/team-rating-activation-readiness` },
+    { path: `/predictions/slates/${slateId}/team-rating-canary-status` },
+    { path: `/predictions/slates/${slateId}/ticket-canary-dry-run` },
+    { path: `/predictions/slates/${slateId}/money-mode` },
+    { path: `/operations/money-mode/status`, deferred: true },
+    { path: `/operations/product-flow?slate_id=${encodeURIComponent(slateId)}`, deferred: true },
+    { path: `/tracking/operational-prediction-audit?slate_id=${encodeURIComponent(slateId)}`, deferred: true },
+    { path: `/slates/${slateId}/readiness-report`, deferred: true },
+    { path: `/results/slates/${slateId}/provider-dry-run` },
     // R6.4: always-present ticket options + completed-slate result validation.
-    safeFetch(`/predictions/slates/${slateId}/options`, {optional: true}),
-    safeFetch(`/tracking/completed-slates/results-validation`, {optional: true}),
-  ]);
+    { path: `/predictions/slates/${slateId}/options` },
+    { path: `/tracking/completed-slates/results-validation` },
+    { path: `/slates/live/results-observer-status` },
+  ];
+  const loadDiagnostic = (request, index) =>
+    safeFetch(request.path, {optional: true})
+        .then((data) => {
+          if (seq !== diagnosticsRequestSeq) return;
+          payload[index] = data || null;
+          _applyDiagnostics(payload);
+          renderDiagnosticsPanels();
+        })
+        .catch(() => null);
+  await Promise.all(
+    requests.map((request, index) =>
+      request.deferred ? Promise.resolve() : loadDiagnostic(request, index),
+    ),
+  );
+  await Promise.all(
+    requests.map((request, index) =>
+      request.deferred ? loadDiagnostic(request, index) : Promise.resolve(),
+    ),
+  );
   // A newer slate switch / diagnostics load superseded this one — drop it.
   if (seq !== diagnosticsRequestSeq) return;
   setCachedDiagnostics(slateId, payload);
@@ -2195,6 +2499,7 @@ async function loadSlateDiagnostics(slateId) {
 
 async function boot() {
   state.isLoading = true;
+  loadExportStatusFromStorage();
   updateAuthControls();
   renderProductionStatus();
   const [health, ready] = await Promise.all([
@@ -2232,13 +2537,6 @@ async function boot() {
 
   state.providers = Array.isArray(providers) ? providers : [];
   state.worker = worker && !Array.isArray(worker) ? worker : null;
-  const workerButton = getById("run-worker");
-  if (workerButton) {
-    workerButton.disabled = !state.worker;
-    workerButton.title = state.worker
-      ? "Ejecuta una iteración del scheduler"
-      : "Las rutas HTTP del worker están cerradas en modo producción";
-  }
 
   // Resolve the visible set (open + recent fallback). If /slates/visible is
   // unavailable (older backend), degrade gracefully to /slates (open-only).
@@ -2291,6 +2589,24 @@ async function boot() {
   renderTransitionBanner();
   renderProductionStatus();
   attachEvents();
+  ensureLiveTrackingStarted();
+}
+
+function ensureLiveTrackingStarted() {
+  if (liveTrackingStarted || !state.authenticated) return;
+  liveTrackingStarted = true;
+  import("./live-tracking.js")
+    .then(({ initLiveTracking }) => {
+      initLiveTracking({
+        container: document.getElementById("live-tracking-panel"),
+        detailContainer: document.getElementById("live-tracking-detail"),
+        fetchJson: (path) => safeFetch(path, { optional: true }),
+      });
+    })
+    .catch((error) => {
+      liveTrackingStarted = false;
+      console.error("live-tracking module failed to load", error);
+    });
 }
 
 async function pollActiveSlate() {
@@ -2495,17 +2811,7 @@ checkSession().then(() => {
     pollProposals();
     // Live tracking is best-effort and fully isolated: a load/link error
     // or a failing dashboard fetch must never break the main selector.
-    import("./live-tracking.js")
-      .then(({ initLiveTracking }) => {
-        initLiveTracking({
-          container: document.getElementById("live-tracking-panel"),
-          detailContainer: document.getElementById("live-tracking-detail"),
-          fetchJson: (path) => safeFetch(path, { optional: true }),
-        });
-      })
-      .catch((error) => {
-        console.error("live-tracking module failed to load", error);
-      });
+    ensureLiveTrackingStarted();
   }).catch((error) => {
     // Last-resort guard: boot() should never leave the UI stuck on the
     // static "Cargando…" placeholder. Clear loading and render whatever

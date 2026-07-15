@@ -22,10 +22,12 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.domain.entities import MatchResultStatus
 from app.models.tables import (
     MatchResultModel,
     PredictionModel,
     ProgolJornadaScoreModel,
+    ProgolSlateProposalModel,
     SourceModel,
     TicketRecommendationSnapshotModel,
 )
@@ -35,6 +37,7 @@ from app.schemas.common import CompetitionPayload, MatchReferencePayload, TeamPa
 from app.schemas.slate import ProgolSlateCreate
 from app.services.adaptive_dataset_service import AdaptiveDatasetService
 from app.services.jornada_scoring_service import JornadaScoringService
+from app.services.live_result_service import LiveResultService
 
 
 # ---------------------------------------------------------------------------
@@ -102,6 +105,20 @@ def _source(session: Session, name: str = "src-a", priority: int = 50) -> Source
     session.add(src)
     session.flush()
     return src
+
+
+def _make_official(session: Session, slate: Any) -> None:
+    session.add(
+        ProgolSlateProposalModel(
+            draw_code=slate.draw_code,
+            week_type=slate.week_type,
+            source_name="LN Progol Guía",
+            source_url="https://www.loterianacional.gob.mx/Progol/Guia.pdf",
+            status="promoted",
+            promoted_slate_id=slate.id,
+        )
+    )
+    session.flush()
 
 
 def _add_prediction(
@@ -432,6 +449,74 @@ class TestPG2336WithoutResults:
         assert summary.total_rows == 0
         assert summary.hit_rate is None
         assert summary.brier_score_avg is None
+
+
+class TestSignOnlyOfficialResults:
+    """Official Progol sign-only finals are classification-ready rows."""
+
+    def test_official_sign_only_final_produces_classification_row(self, db: Session):
+        slate = _make_slate(db, "PG-SIGN-1", n=1)
+        _make_official(db, slate)
+        match_id = slate.matches[0].match_id
+        src = _source(db, "ln-sign-only", priority=10)
+        LiveResultService(db).record_observation(
+            match_id=match_id,
+            source_id=src.id,
+            status=MatchResultStatus.FULL_TIME,
+            result_code="X",
+            is_final=True,
+        )
+        _add_prediction(
+            db,
+            match_id,
+            slate.id,
+            slate.composition_hash,
+            recommended_outcome="X",
+            home_p=0.2,
+            draw_p=0.6,
+            away_p=0.2,
+        )
+
+        score = _score_slate(db, slate)
+        assert score.is_complete is True
+        assert score.matches_with_results == 1
+
+        details = json.loads(score.details_json)
+        assert details[0]["result_code"] == "X"
+        assert details[0]["home_goals"] is None
+        assert details[0]["away_goals"] is None
+        assert details[0]["result_is_canonical"] is False
+
+        rows = AdaptiveDatasetService(db).build_rows_for_slate(slate.id)
+        assert len(rows) == 1
+        assert rows[0].actual_result == "X"
+        assert rows[0].home_goals is None
+        assert rows[0].away_goals is None
+        assert rows[0].hit is True
+        assert rows[0].brier_score is not None
+        assert rows[0].result_is_canonical is False
+
+        summary = AdaptiveDatasetService(db).build_summary()
+        assert summary.total_rows == 1
+        assert summary.rows_with_canonical_result == 0
+        assert summary.rows_with_sign_only_result == 1
+
+    def test_unverified_sign_only_final_stays_out_of_dataset(self, db: Session):
+        slate = _make_slate(db, "PG-SIGN-DEMO", n=1)
+        match_id = slate.matches[0].match_id
+        src = _source(db, "demo-sign-only", priority=10)
+        LiveResultService(db).record_observation(
+            match_id=match_id,
+            source_id=src.id,
+            status=MatchResultStatus.FULL_TIME,
+            result_code="1",
+            is_final=True,
+        )
+        _add_prediction(db, match_id, slate.id, slate.composition_hash)
+
+        score = _score_slate(db, slate)
+        assert score.is_complete is False
+        assert AdaptiveDatasetService(db).build_rows_for_slate(slate.id) == []
 
 
 class TestCompleteJornada:

@@ -1,6 +1,5 @@
 import json
 import logging
-import time
 from dataclasses import asdict
 from datetime import datetime, timezone
 from typing import Any
@@ -16,6 +15,7 @@ from app.services.draw_calibration import DrawPrior, calibrate_draw, compute_dra
 from app.services.draw_calibration_service import build_draw_priors, prior_for_week_type
 from app.services.feature_service import FeatureService
 from app.services.model_training_service import ModelTrainingService
+from app.services.prediction_cache import SlatePredictionCache
 from app.services.sanity_service import (
     SANITY_POLICY_VERSION,
     EvidenceLevel,
@@ -34,54 +34,21 @@ logger = logging.getLogger(__name__)
 # three in parallel on every page load, so a short cache cuts the
 # wall-clock load from ~2.5s to ~0.8s without changing inputs/outputs.
 _SLATE_PREDICTION_TTL_SECONDS = 30.0
-_slate_prediction_cache: dict[str, tuple[float, list[MatchPredictionResponse]]] = {}
-# Separate cache for read-only (persist_audit=False) computes. The three slate
-# GET endpoints (/predictions/slates/{id}, /ticket, /quality) all recompute the
-# same 14-match pipeline read-only on every page load; without a shared cache
-# each pays the full ~2s recompute. This cache is kept distinct from the
-# persisting cache so a read-only hit can never let a later persist_audit=True
-# call skip its audit write.
-_readonly_slate_prediction_cache: dict[str, tuple[float, list[MatchPredictionResponse]]] = {}
-
-
-def _read_cache(
-    cache: dict[str, tuple[float, list[MatchPredictionResponse]]], slate_id: str
-) -> list[MatchPredictionResponse] | None:
-    entry = cache.get(slate_id)
-    if entry is None:
-        return None
-    cached_at, value = entry
-    if time.monotonic() - cached_at > _SLATE_PREDICTION_TTL_SECONDS:
-        cache.pop(slate_id, None)
-        return None
-    return value
-
-
-def _cached_slate_predictions(slate_id: str) -> list[MatchPredictionResponse] | None:
-    return _read_cache(_slate_prediction_cache, slate_id)
-
-
-def _cached_readonly_slate_predictions(slate_id: str) -> list[MatchPredictionResponse] | None:
-    return _read_cache(_readonly_slate_prediction_cache, slate_id)
-
-
-def _store_slate_predictions(slate_id: str, predictions: list[MatchPredictionResponse]) -> None:
-    _slate_prediction_cache[slate_id] = (time.monotonic(), predictions)
-
-
-def _store_readonly_slate_predictions(
-    slate_id: str, predictions: list[MatchPredictionResponse]
-) -> None:
-    _readonly_slate_prediction_cache[slate_id] = (time.monotonic(), predictions)
+_slate_prediction_cache: SlatePredictionCache[list[MatchPredictionResponse]] = SlatePredictionCache(
+    _SLATE_PREDICTION_TTL_SECONDS
+)
 
 
 def invalidate_slate_prediction_cache(slate_id: str | None = None) -> None:
-    if slate_id is None:
-        _slate_prediction_cache.clear()
-        _readonly_slate_prediction_cache.clear()
-    else:
-        _slate_prediction_cache.pop(slate_id, None)
-        _readonly_slate_prediction_cache.pop(slate_id, None)
+    _slate_prediction_cache.invalidate(slate_id)
+
+
+def _cached_slate_predictions(slate_id: str) -> list[MatchPredictionResponse] | None:
+    return _slate_prediction_cache.get(slate_id, persist_audit=True)
+
+
+def _cached_readonly_slate_predictions(slate_id: str) -> list[MatchPredictionResponse] | None:
+    return _slate_prediction_cache.get(slate_id, persist_audit=False)
 
 
 class PredictionService:
@@ -142,13 +109,23 @@ class PredictionService:
         without populating the shared cache, so a later ``persist_audit=True``
         call still recomputes and writes its audit.
         """
-        cached = (
-            _cached_slate_predictions(slate.id)
-            if persist_audit
-            else _cached_readonly_slate_predictions(slate.id)
-        )
+        cached = _slate_prediction_cache.get(slate.id, persist_audit=persist_audit)
         if cached is not None:
             return cached
+
+        build_lock = _slate_prediction_cache.lock_for(slate.id, persist_audit=persist_audit)
+        with build_lock:
+            cached = _slate_prediction_cache.get(slate.id, persist_audit=persist_audit)
+            if cached is not None:
+                return cached
+            return self._build_slate_predictions_uncached(
+                slate,
+                persist_audit=persist_audit,
+            )
+
+    def _build_slate_predictions_uncached(
+        self, slate: ProgolSlateModel, *, persist_audit: bool
+    ) -> list[MatchPredictionResponse]:
         responses: list[MatchPredictionResponse] = []
 
         # Stable id of the artifact scoring this slate (same for every
@@ -436,10 +413,7 @@ class PredictionService:
         # recompute can never make a later production call skip its audit write
         # via a cache hit, while the three read-only slate GET endpoints still
         # share a single recompute per TTL window.
-        if persist_audit:
-            _store_slate_predictions(slate.id, responses)
-        else:
-            _store_readonly_slate_predictions(slate.id, responses)
+        _slate_prediction_cache.set(slate.id, responses, persist_audit=persist_audit)
         return responses
 
     # Fallback bounds used when the training service is missing (unit

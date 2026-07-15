@@ -48,8 +48,13 @@ async def get_slate_predictions(
     # R5.6-B: additive controlled-canary post-processing. No-op when the canary
     # flag is OFF; never writes the DB and never touches the ticket optimizer.
     from app.services.team_rating_canary_service import apply_canary_to_predictions
+    from app.services.neural_baseline_service import NeuralShadowService
 
     apply_canary_to_predictions(session, slate, predictions)
+    NeuralShadowService(TrainingRepository(session)).apply_to_predictions(
+        predictions,
+        week_type=slate.week_type,
+    )
     return predictions
 
 
@@ -87,7 +92,14 @@ async def refresh_slate_predictions(
     IngestionService._competition_tolerance_cache.clear()  # type: ignore[attr-defined]
 
     prediction_service = PredictionService(training_service)
-    return prediction_service.build_slate_predictions(slate)
+    predictions = prediction_service.build_slate_predictions(slate)
+    from app.services.neural_baseline_service import NeuralShadowService
+
+    NeuralShadowService(TrainingRepository(session)).apply_to_predictions(
+        predictions,
+        week_type=slate.week_type,
+    )
+    return predictions
 
 
 @router.get("/slates/{slate_id}/features", response_model=list[MatchFeatureResponse])

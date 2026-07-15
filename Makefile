@@ -4,7 +4,7 @@ PYTEST_FAST_ARGS ?= backend/tests -q -m "not integration and not slow"
 PYTEST_INTEGRATION_ARGS ?= backend/tests -q -m "integration and not slow"
 PYTEST_SLOW_ARGS ?= backend/tests -q -m "slow"
 
-.PHONY: lint typecheck test test-fast test-integration test-slow test-all frontend-test frontend-smoke load-smoke check release-check up down restart rebuild logs health ready docker-up docker-build update-current-context refresh-current ensure-current-job evaluate calibration production-check bootstrap-local-prod
+.PHONY: lint typecheck test test-fast test-integration test-slow test-all frontend-test frontend-smoke load-smoke check release-check up down restart rebuild logs health ready docker-up docker-build update-current-context update-current-context-from-db audit-current refresh-current ensure-current-job evaluate calibration production-check bootstrap-local-prod confidence-report confidence-report-docker
 
 lint:
 	$(PYTHON) -m ruff check backend frontend
@@ -75,6 +75,12 @@ docker-build:
 update-current-context:
 	$(PYTHON) backend/scripts/update_current_context.py
 
+update-current-context-from-db:
+	docker compose run --rm --user root -e PYTHONPATH=/app/backend -v ./data/progol_context:/tmp/progol_context proai sh -c 'cd /app/backend && python scripts/update_current_context.py --from-db --path /tmp/progol_context/current.json'
+
+audit-current:
+	docker compose exec proai sh -c 'cd /app/backend && PYTHONPATH=/app/backend python scripts/audit_current_slates.py'
+
 refresh-current:
 	docker compose exec proai sh -c 'cd /app/backend && python -m app.cli refresh-current'
 
@@ -92,6 +98,9 @@ publish-backtest:
 
 confidence-report:
 	.venv/bin/python backend/scripts/current_progol_confidence_report.py
+
+confidence-report-docker:
+	docker compose run --rm --user root -e PYTHONPATH=/app/backend -v ./reports:/app/reports proai sh -c 'cd /app/backend && python scripts/current_progol_confidence_report.py --base-url http://proai:8000 --output /app/reports/current_progol_confidence.md'
 
 production-check:
 	docker compose exec proai sh -c 'cd /app/backend && python -m app.cli production-check'

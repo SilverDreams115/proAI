@@ -50,6 +50,35 @@ def test_find_team_by_alias_prefers_real_row_over_placeholder(tmp_path) -> None:
         session.close()
 
 
+def test_find_team_by_alias_prefers_canonical_alias_over_short_exact_row(tmp_path) -> None:
+    from app.models.tables import TeamModel, TeamAliasModel
+    from app.repositories.entity_repository import EntityRepository
+
+    session = _make_session(tmp_path)
+    try:
+        short = TeamModel(name="Vancouver", country=None, is_placeholder=False)
+        canonical = TeamModel(name="Vancouver Whitecaps", country=None, is_placeholder=False)
+        session.add_all([short, canonical])
+        session.flush()
+        session.add(TeamAliasModel(team=short, alias="Vancouver", normalized_alias="vancouver"))
+        session.add(
+            TeamAliasModel(
+                team=canonical,
+                alias="Vancouver Whitecaps",
+                normalized_alias="vancouver-whitecaps",
+            )
+        )
+        session.flush()
+
+        repo = EntityRepository(session)
+        result = repo.find_team_by_alias("Vancouver", "vancouver-whitecaps")
+
+        assert result is not None
+        assert result.id == canonical.id
+    finally:
+        session.close()
+
+
 def test_resolve_team_upgrades_placeholder_when_real_ingest_arrives(tmp_path) -> None:
     from app.models.tables import TeamModel, TeamAliasModel
     from app.repositories.entity_repository import EntityRepository
@@ -82,6 +111,25 @@ def test_resolve_team_upgrades_placeholder_when_real_ingest_arrives(tmp_path) ->
         assert team.is_placeholder is False, "Real ingest must clear the placeholder flag"
         rows = session.query(TeamModel).filter(TeamModel.name == "Brommapojkarna").all()
         assert len(rows) == 1, "No duplicate row should be created"
+    finally:
+        session.close()
+
+
+def test_resolve_team_marks_single_letter_names_as_placeholder(tmp_path) -> None:
+    from app.models.tables import TeamModel
+    from app.repositories.entity_repository import EntityRepository
+    from app.services.entity_resolution_service import EntityResolutionService
+
+    session = _make_session(tmp_path)
+    try:
+        resolver = EntityResolutionService(EntityRepository(session))
+        team = resolver.resolve_team("G", country=None)
+        session.flush()
+
+        assert team.is_placeholder is True
+        rows = session.query(TeamModel).filter(TeamModel.name == "G").all()
+        assert len(rows) == 1
+        assert rows[0].is_placeholder is True
     finally:
         session.close()
 

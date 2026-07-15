@@ -30,6 +30,18 @@ class TrainingRepository:
         statement = (
             select(ModelTrainingRunModel)
             .where(ModelTrainingRunModel.model_name == model_name)
-            .order_by(ModelTrainingRunModel.trained_at.desc())
+            .order_by(ModelTrainingRunModel.trained_at.desc(), ModelTrainingRunModel.id.desc())
         )
         return self.session.scalar(statement)
+
+    def get_run(self, run_id: str) -> ModelTrainingRunModel | None:
+        return self.session.get(ModelTrainingRunModel, run_id)
+
+    def list_runs(self, model_name: str, *, limit: int = 20) -> list[ModelTrainingRunModel]:
+        statement = (
+            select(ModelTrainingRunModel)
+            .where(ModelTrainingRunModel.model_name == model_name)
+            .order_by(ModelTrainingRunModel.trained_at.desc(), ModelTrainingRunModel.id.desc())
+            .limit(limit)
+        )
+        return list(self.session.scalars(statement))

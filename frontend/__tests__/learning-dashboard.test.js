@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { JSDOM } from "jsdom";
-import { renderLearningDashboard } from "../learning-dashboard.js";
+import { renderLearningDashboard, renderLearningSummary } from "../learning-dashboard.js";
 
 function dom(html) {
   return new JSDOM(`<!doctype html><body>${html}</body>`).window.document;
@@ -96,5 +96,25 @@ describe("renderLearningDashboard", () => {
     const doc = dom(renderLearningDashboard(inventory([COMPARABLE]), { training_ready: false, reason: "blocked" }));
     expect(doc.body.textContent).toContain("training ready:");
     expect(doc.body.textContent).toContain("blocked");
+  });
+
+  it("renders the dashboard immediately without readiness", () => {
+    const doc = dom(renderLearningDashboard(inventory([COMPARABLE]), null));
+    expect(doc.body.textContent).toContain("PG-DONE");
+    expect(doc.body.textContent).toContain("training ready:");
+  });
+
+  it("renders the adaptive learning summary as a pure helper", () => {
+    const doc = dom(
+      renderLearningSummary({
+        total_rows: 12,
+        rows_with_canonical_result: 9,
+        rows_with_conflict: 1,
+        hit_rate: 0.666,
+      }),
+    );
+    expect(doc.body.textContent).toContain("12");
+    expect(doc.body.textContent).toContain("con resultado canónico");
+    expect(doc.body.textContent).toContain("67%");
   });
 });

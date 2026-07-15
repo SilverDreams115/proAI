@@ -27,12 +27,18 @@ from app.schemas.adaptive_dataset import AdaptiveDatasetRow
 from app.services.neural_baseline_service import (
     FEATURE_NAMES,
     INPUT_DIM,
+    NEURAL_ACTIVE_MODEL_NAME,
+    NEURAL_CANDIDATE_MODEL_NAME,
     RESULT_TO_IDX,
     NeuralBaselineConfig,
+    NeuralBaselineRegistryService,
+    NeuralShadowService,
     NeuralBaselineService,
     NeuralDatasetBuilder,
     _NumpyMLP,
 )
+from app.domain.entities import Outcome
+from app.schemas.prediction import MatchPredictionResponse
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -156,6 +162,10 @@ class TestReadiness:
         assert report["is_production"] is False
         assert report["model_type"] == "neural_baseline_experimental"
 
+    def test_feature_set_is_pre_match_safe(self):
+        assert "brier_normalized" not in FEATURE_NAMES
+        assert "ticket_hit_simple" not in FEATURE_NAMES
+
 
 # ---------------------------------------------------------------------------
 # 3. Confidence band encoding
@@ -169,31 +179,31 @@ class TestConfidenceBandEncoding:
 
     def test_high_band_one_hot(self):
         feats = self._encode_single("high")
-        assert feats[4] == 1.0  # band_high
+        assert feats[3] == 1.0  # band_high
+        assert feats[4] == 0.0
         assert feats[5] == 0.0
         assert feats[6] == 0.0
-        assert feats[7] == 0.0
 
     def test_medium_band_one_hot(self):
         feats = self._encode_single("medium")
-        assert feats[4] == 0.0
-        assert feats[5] == 1.0  # band_medium
+        assert feats[3] == 0.0
+        assert feats[4] == 1.0  # band_medium
+        assert feats[5] == 0.0
         assert feats[6] == 0.0
-        assert feats[7] == 0.0
 
     def test_low_band_one_hot(self):
         feats = self._encode_single("low")
+        assert feats[3] == 0.0
         assert feats[4] == 0.0
-        assert feats[5] == 0.0
-        assert feats[6] == 1.0  # band_low
-        assert feats[7] == 0.0
+        assert feats[5] == 1.0  # band_low
+        assert feats[6] == 0.0
 
     def test_blocked_band_one_hot(self):
         feats = self._encode_single("blocked")
+        assert feats[3] == 0.0
         assert feats[4] == 0.0
         assert feats[5] == 0.0
-        assert feats[6] == 0.0
-        assert feats[7] == 1.0  # band_blocked
+        assert feats[6] == 1.0  # band_blocked
 
     def test_feature_vector_length(self):
         feats = self._encode_single("high")
@@ -266,8 +276,11 @@ class TestOfflineTraining:
         assert result["trained"] is True
         assert result["saved"] is False
         assert "metrics" in result
+        assert "comparison" in result
         assert result["metrics"]["accuracy"] >= 0.0
         assert result["metrics"]["brier_score"] >= 0.0
+        assert result["comparison"]["status"] == "ok"
+        assert result["comparison"]["evaluated_rows"] == result["encoded_rows"]
 
     def test_train_offline_returns_artifact(self):
         svc = NeuralBaselineService(rows=_synthetic_rows(10), config=_LOW_CONFIG)
@@ -425,30 +438,154 @@ class TestDBIsolation:
         assert refreshed[0].home_probability == 0.6
 
 
+class TestNeuralRegistry:
+    def _registry(self, db, rows=None) -> NeuralBaselineRegistryService:
+        from app.repositories.training_repository import TrainingRepository
+
+        return NeuralBaselineRegistryService(
+            rows=rows or _synthetic_rows(10),
+            training_repository=TrainingRepository(db),
+            config=_LOW_CONFIG,
+        )
+
+    def test_train_candidate_saves_non_production_run(self, db):
+        from app.models.tables import ModelTrainingRunModel
+
+        result = self._registry(db).train_candidate()
+        db.commit()
+
+        assert result["saved"] is True
+        assert result["model_name"] == NEURAL_CANDIDATE_MODEL_NAME
+        runs = db.scalars(select(ModelTrainingRunModel)).all()
+        assert len(runs) == 1
+        assert runs[0].model_name == NEURAL_CANDIDATE_MODEL_NAME
+        assert '"is_production": false' in runs[0].artifact_json
+
+    def test_promote_candidate_creates_active_run(self, db):
+        registry = self._registry(db)
+        candidate = registry.train_candidate()
+        promoted = registry.promote_candidate(candidate_run_id=candidate["candidate_run_id"], force=True)
+        db.commit()
+
+        assert promoted["promoted"] is True
+        active = registry.active()
+        assert active["available"] is True
+        assert active["model_name"] == NEURAL_ACTIVE_MODEL_NAME
+        assert active["source_candidate_run_id"] == candidate["candidate_run_id"]
+        with_artifact = registry.active(include_artifact=True)
+        assert with_artifact["artifact"]["source_candidate_run_id"] == candidate["candidate_run_id"]
+
+    def test_rollback_restores_previous_active_by_appending_run(self, db):
+        registry = self._registry(db)
+        c1 = registry.train_candidate()
+        p1 = registry.promote_candidate(candidate_run_id=c1["candidate_run_id"], force=True)
+        c2 = registry.train_candidate()
+        p2 = registry.promote_candidate(candidate_run_id=c2["candidate_run_id"], force=True)
+
+        rollback = registry.rollback_active()
+        db.commit()
+
+        assert p1["active_run_id"] != p2["active_run_id"]
+        assert rollback["rolled_back"] is True
+        assert rollback["rollback_from_run_id"] == p2["active_run_id"]
+        assert rollback["rollback_source_run_id"] == p1["active_run_id"]
+        active = registry.active()
+        assert active["run_id"] == rollback["active_run_id"]
+        active_with_artifact = registry.active(include_artifact=True)
+        assert active_with_artifact["artifact"]["rollback_source_run_id"] == p1["active_run_id"]
+
+
+class TestNeuralShadow:
+    def test_apply_to_predictions_adds_read_only_shadow(self, db):
+        from app.repositories.training_repository import TrainingRepository
+
+        registry = NeuralBaselineRegistryService(
+            rows=_synthetic_rows(10),
+            training_repository=TrainingRepository(db),
+            config=_LOW_CONFIG,
+        )
+        candidate = registry.train_candidate()
+        registry.promote_candidate(candidate_run_id=candidate["candidate_run_id"], force=True)
+        db.commit()
+
+        pred = MatchPredictionResponse(
+            slate_id="slate-1",
+            position=1,
+            match_id=str(uuid4()),
+            competition_name="Liga Test",
+            home_team_name="Home",
+            away_team_name="Away",
+            generated_at=datetime.now(timezone.utc),
+            home_probability=0.6,
+            draw_probability=0.25,
+            away_probability=0.15,
+            recommended_outcome=Outcome.HOME,
+            competition_readiness="ready",
+            live_pick_allowed=True,
+            policy_reason="test",
+            confidence_band="high",
+            rationale=[],
+            probabilities={"L": 0.6, "E": 0.25, "V": 0.15},
+            display_probabilities={"L": 0.6, "E": 0.25, "V": 0.15},
+            decision_probabilities={"L": 0.6, "E": 0.25, "V": 0.15},
+        )
+
+        NeuralShadowService(TrainingRepository(db)).apply_to_predictions([pred], week_type="weekend")
+
+        assert pred.neural_shadow is not None
+        assert pred.neural_shadow.active is True
+        assert pred.neural_shadow.status == "ok"
+        assert pred.neural_shadow.probabilities is not None
+        assert pred.decision_probabilities == {"L": 0.6, "E": 0.25, "V": 0.15}
+
+
 # ---------------------------------------------------------------------------
 # 11. NumpyMLP internal sanity
 # ---------------------------------------------------------------------------
 
 class TestNumpyMLP:
     def test_forward_output_sums_to_one(self):
-        mlp = _NumpyMLP(input_dim=15, hidden_dims=[8, 4], output_dim=3, seed=0)
-        X = np.random.default_rng(0).standard_normal((10, 15)).astype(np.float32)
+        mlp = _NumpyMLP(input_dim=INPUT_DIM, hidden_dims=[8, 4], output_dim=3, seed=0)
+        X = np.random.default_rng(0).standard_normal((10, INPUT_DIM)).astype(np.float32)
         probs = mlp.predict_proba(X)
         np.testing.assert_allclose(probs.sum(axis=1), np.ones(10), atol=1e-5)
 
     def test_fit_reduces_loss(self):
         rng = np.random.default_rng(42)
-        X = rng.standard_normal((40, 15)).astype(np.float32)
+        X = rng.standard_normal((40, INPUT_DIM)).astype(np.float32)
         y = rng.integers(0, 3, size=40)
-        mlp = _NumpyMLP(input_dim=15, hidden_dims=[8, 4], output_dim=3, seed=42)
+        mlp = _NumpyMLP(input_dim=INPUT_DIM, hidden_dims=[8, 4], output_dim=3, seed=42)
         history = mlp.fit(X, y, epochs=50, lr=0.05, batch_size=20, seed=42)
         assert history[-1] <= history[0] + 0.1, "loss should not increase substantially"
 
     def test_to_dict_from_dict_roundtrip(self):
-        mlp = _NumpyMLP(input_dim=15, hidden_dims=[8, 4], output_dim=3, seed=1)
-        X = np.ones((5, 15), dtype=np.float32)
+        mlp = _NumpyMLP(input_dim=INPUT_DIM, hidden_dims=[8, 4], output_dim=3, seed=1)
+        X = np.ones((5, INPUT_DIM), dtype=np.float32)
         before = mlp.predict_proba(X)
         d = mlp.to_dict()
-        restored = _NumpyMLP.from_dict(d, input_dim=15, hidden_dims=[8, 4], output_dim=3)
+        restored = _NumpyMLP.from_dict(d, input_dim=INPUT_DIM, hidden_dims=[8, 4], output_dim=3)
         after = restored.predict_proba(X)
         np.testing.assert_allclose(before, after, atol=1e-6)
+
+
+@pytest.mark.anyio
+async def test_neural_promote_endpoint_blocks_when_learning_gate_not_ready(client, monkeypatch):
+    from app.services import learning_dataset_readiness_service
+
+    monkeypatch.setattr(
+        learning_dataset_readiness_service,
+        "build_dataset_readiness",
+        lambda session: {
+            "training_ready": False,
+            "reason": "insufficient clean comparable evidence",
+            "minimum_missing": ["need comparable slates"],
+            "recommended_next_data_action": "accumulate more finished slates",
+        },
+    )
+
+    response = await client.post("/api/training/neural/promote", json={"force": True})
+
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert "learning dataset gate is not ready" in detail["message"]
+    assert detail["minimum_missing"] == ["need comparable slates"]

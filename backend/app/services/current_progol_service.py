@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+from time import perf_counter
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -15,8 +16,12 @@ from app.models.tables import EvidenceItemModel
 from app.models.tables import SourceModel
 from app.repositories.ingestion_repository import IngestionRepository
 from app.repositories.evidence_repository import EvidenceRepository
+from app.repositories.entity_repository import EntityRepository
+from app.repositories.feature_repository import FeatureRepository
+from app.repositories.result_repository import ResultRepository
 from app.repositories.slate_repository import SlateRepository
 from app.repositories.source_repository import SourceRepository
+from app.repositories.training_repository import TrainingRepository
 from app.services.evidence_service import EvidenceService
 from app.schemas.common import CompetitionPayload
 from app.schemas.common import MatchReferencePayload
@@ -24,8 +29,13 @@ from app.schemas.common import TeamPayload
 from app.schemas.slate import ProgolSlateCreate
 from app.schemas.slate_refresh import CurrentProgolRefreshResponse
 from app.services.ingestion_service import IngestionService
+from app.services.feature_service import FeatureService
+from app.services.model_training_service import ModelTrainingService
 from app.services.normalization_service import NormalizationService
+from app.services.prediction_service import PredictionService
+from app.services.prediction_service import invalidate_slate_prediction_cache
 from app.services.slate_service import SlateService
+from app.services.team_name_quality_service import is_suspicious_team_name
 
 
 class CurrentProgolService:
@@ -43,23 +53,35 @@ class CurrentProgolService:
         self.slate_repository = slate_repository
 
     def refresh_current(self, source_name: str | None = None, local_path: str | None = None) -> CurrentProgolRefreshResponse:
+        step_durations_ms: dict[str, float] = {}
+
+        def timed_step(name: str, callback):
+            started = perf_counter()
+            try:
+                return callback()
+            finally:
+                step_durations_ms[name] = round((perf_counter() - started) * 1000, 2)
+
         source_name = source_name or self.DEFAULT_SOURCE_NAME
-        resolved_path = self._resolve_context_path(local_path)
-        source = self.ensure_context_source(source_name, resolved_path)
-        slate_payload = self._build_current_slate_payload(resolved_path)
-        slate = SlateService(self.slate_repository).create_slate(slate_payload)
-        run = IngestionService(self.ingestion_repository).run_for_source(source.id)
-        self._upsert_local_context_evidence(slate.id, source.id, resolved_path)
-        self._link_current_context_to_slate(slate.id)
-        archived_ids = self._archive_non_current_slates(slate.id)
+        resolved_path = timed_step("resolve_context_path", lambda: self._resolve_context_path(local_path))
+        source = timed_step("ensure_context_source", lambda: self.ensure_context_source(source_name, resolved_path))
+        slate_payload = timed_step("build_slate_payload", lambda: self._build_current_slate_payload(resolved_path))
+        slate = timed_step("upsert_slate", lambda: SlateService(self.slate_repository).create_slate(slate_payload))
+        run = timed_step("ingest_context_document", lambda: IngestionService(self.ingestion_repository).run_for_source_documents_only(source.id))
+        timed_step("upsert_local_context_evidence", lambda: self._upsert_local_context_evidence(slate.id, source.id, resolved_path))
+        timed_step("link_current_context_to_slate", lambda: self._link_current_context_to_slate(slate.id))
+        prediction_count = timed_step("refresh_slate_predictions", lambda: self._refresh_slate_predictions(slate.id))
+        archived_ids = timed_step("archive_closed_slates", lambda: self._archive_non_current_slates(slate.id))
         return CurrentProgolRefreshResponse(
             slate_id=slate.id,
             draw_code=slate.draw_code,
             label=slate.label,
             match_count=len(slate.matches),
+            prediction_count=prediction_count,
             archived_slate_ids=archived_ids,
             ingestion_run_id=run.id,
             ingestion_status=run.status,
+            step_durations_ms=step_durations_ms,
         )
 
     def _resolve_context_path(self, local_path: str | None) -> Path:
@@ -156,7 +178,25 @@ class CurrentProgolService:
         # contest selectable across `progol`, `progol_media_semana`, and
         # `progol_revancha` types regardless of historical draw numbers.
         now = datetime.now(timezone.utc)
-        return max(candidates, key=lambda item: self._candidate_sort_key(item, now))
+        active_candidates = [item for item in candidates if self._candidate_is_active_or_future(item, now)]
+        if not active_candidates:
+            raise ValueError("No active or future Progol item found in local context.")
+        return max(active_candidates, key=lambda item: self._candidate_sort_key(item, now))
+
+    def _candidate_is_active_or_future(self, item: dict[str, Any], now: datetime) -> bool:
+        metadata = item.get("catalog_metadata", {})
+        if isinstance(metadata, dict):
+            closes_at = self._parse_datetime(metadata.get("registration_closes_at"))
+            if closes_at is not None and closes_at >= now:
+                return True
+        fixtures = item.get("fixture_candidates") or item.get("fixtures") or []
+        for fixture in fixtures:
+            if not isinstance(fixture, dict):
+                continue
+            kickoff_at = self._parse_datetime(fixture.get("kickoff_at"))
+            if kickoff_at is not None and kickoff_at >= now:
+                return True
+        return False
 
     def _candidate_sort_key(self, item: dict[str, Any], now: datetime) -> tuple[int, float, int]:
         metadata = item.get("catalog_metadata", {})
@@ -182,20 +222,25 @@ class CurrentProgolService:
         kickoff_at = self._parse_datetime(fixture.get("kickoff_at"))
         if kickoff_at is None:
             raise ValueError("Fixture is missing kickoff_at.")
+        home_name = str(fixture.get("home_team") or "")
+        away_name = str(fixture.get("away_team") or "")
         return MatchReferencePayload(
             position=int(fixture.get("position") or index),
             competition=CompetitionPayload(
                 name=str(fixture.get("competition") or "Progol"),
                 country=str(fixture.get("country") or "") or None,
                 season=str(fixture.get("season") or "") or None,
+                is_placeholder=bool(fixture.get("competition_is_placeholder")),
             ),
             home_team=TeamPayload(
-                name=str(fixture.get("home_team") or ""),
+                name=home_name,
                 country=str(fixture.get("home_country") or fixture.get("country") or "") or None,
+                is_placeholder=bool(fixture.get("home_is_placeholder")) or is_suspicious_team_name(home_name),
             ),
             away_team=TeamPayload(
-                name=str(fixture.get("away_team") or ""),
+                name=away_name,
                 country=str(fixture.get("away_country") or fixture.get("country") or "") or None,
+                is_placeholder=bool(fixture.get("away_is_placeholder")) or is_suspicious_team_name(away_name),
             ),
             kickoff_at=kickoff_at,
             venue=str(fixture.get("venue") or "") or None,
@@ -241,6 +286,31 @@ class CurrentProgolService:
             return
         matches = [link.match for link in slate.matches]
         EvidenceService(EvidenceRepository(self.slate_repository.session)).auto_link_unmatched_documents(matches)
+
+    def _refresh_slate_predictions(self, slate_id: str) -> int:
+        """Persist a prediction snapshot for the refreshed slate.
+
+        The current-context refresh is what promotes/updates future slates, so
+        it must leave the slate operationally usable without requiring a manual
+        POST to /predictions/slates/{id}/refresh. This reuses the production
+        prediction service and writes only prediction audit rows.
+        """
+        slate = self.slate_repository.get_slate(slate_id)
+        if slate is None:
+            return 0
+        session = self.slate_repository.session
+        training_service = ModelTrainingService(
+            TrainingRepository(session),
+            EntityRepository(session),
+            ResultRepository(session),
+        )
+        feature_service = FeatureService(FeatureRepository(session), ResultRepository(session))
+        invalidate_slate_prediction_cache(slate_id)
+        feature_service.invalidate_competition_gap_cache()
+        training_service.reset_xgboost_verdict_cache()
+        IngestionService._competition_tolerance_cache.clear()  # type: ignore[attr-defined]
+        predictions = PredictionService(training_service).build_slate_predictions(slate)
+        return len(predictions)
 
     def _upsert_local_context_evidence(self, slate_id: str, source_id: str, path: Path) -> None:
         slate = self.slate_repository.get_slate(slate_id)

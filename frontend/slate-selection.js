@@ -119,6 +119,14 @@ export function suspectSlateDiagnostics(visible) {
   }));
 }
 
+export function blockedMidweekSlateDiagnostic(visible) {
+  const d = (visible && visible.discovery) || {};
+  const currentCode = d.current_ms_candidate?.draw_code || null;
+  const suspects = suspectSlateDiagnostics(visible).filter((s) => s.week_type === "midweek");
+  if (!suspects.length) return null;
+  return suspects.find((s) => s.draw_code === currentCode) || suspects[0];
+}
+
 // MS PDF watcher status line for diagnostics. Returns null when no watcher
 // data is present yet.
 export function msPdfWatchStatus(visible) {

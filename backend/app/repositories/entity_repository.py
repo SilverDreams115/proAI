@@ -1,3 +1,4 @@
+from sqlalchemy import case
 from sqlalchemy import func
 from sqlalchemy import or_
 from sqlalchemy import select
@@ -28,7 +29,11 @@ class EntityRepository:
             select(TeamModel)
             .outerjoin(TeamAliasModel, TeamAliasModel.team_id == TeamModel.id)
             .where(or_(TeamModel.name == alias, TeamAliasModel.normalized_alias == normalized_alias))
-            .order_by(TeamModel.is_placeholder.asc())
+            .order_by(
+                TeamModel.is_placeholder.asc(),
+                case((TeamAliasModel.normalized_alias == normalized_alias, 0), else_=1),
+                TeamModel.name.asc(),
+            )
         )
         return self.session.scalar(statement)
 

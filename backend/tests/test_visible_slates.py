@@ -129,6 +129,35 @@ def test_date_suspect_slate_is_held_back_and_diagnosed(db):
     assert entry["date_status"] in {"stale_source", "date_suspect", "needs_operator_confirmation"}
 
 
+def test_provisional_ms_pdf_window_is_visible_as_open(db):
+    slate = _seed_slate(db, draw_code="PGM-804", week_type="midweek", n=9, closes_at=_future())
+    _make_official(db, slate)
+    db.add(
+        ProgolSlateProposalModel(
+            draw_code="804",
+            week_type="midweek",
+            source_name="progol-guia-ln-ms",
+            source_url="https://www.loterianacional.gob.mx/Documentos/guiamedia.pdf",
+            status="promoted",
+            promoted_slate_id=slate.id,
+            registration_closes_at=slate.registration_closes_at,
+            payload_json=(
+                '{"registration_close_source":"provisional_ms_pdf_window",'
+                '"extraction_confidence":"provisional",'
+                '"fixtures":[{"position":1}],'
+                '"block_diagnostics":{"rejected_close_block_draw_code":"800"}}'
+            ),
+        )
+    )
+    db.flush()
+
+    res = _visible(db)
+
+    assert res.reason == "open_slate"
+    assert [s.draw_code for s in res.open_slates] == ["PGM-804"]
+    assert not res.discovery.suspect_slates
+
+
 def test_date_override_is_traced_and_updates_status(db):
     import asyncio
 

@@ -66,6 +66,7 @@ def _proposal_meta(session: Session, slate: ProgolSlateModel) -> dict[str, objec
     except (ValueError, TypeError):
         return meta
     meta["extraction_confidence"] = payload.get("extraction_confidence")
+    meta["registration_close_source"] = payload.get("registration_close_source")
     block = payload.get("block_diagnostics") or {}
     meta["rejected_close_block"] = bool(block.get("rejected_close_block_draw_code"))
     fixtures = payload.get("fixtures") or []
@@ -83,6 +84,7 @@ def slate_date_status(session: Session, slate: ProgolSlateModel) -> tuple[DateSt
         observed_at=meta.get("observed_at"),  # type: ignore[arg-type]
         prev_same_type_closes_at=_prev_same_type_closes_at(session, slate),
         extraction_confidence=meta.get("extraction_confidence"),  # type: ignore[arg-type]
+        registration_close_source=meta.get("registration_close_source"),  # type: ignore[arg-type]
         fixtures_present=bool(meta.get("fixtures_present")),
         rejected_close_block=bool(meta.get("rejected_close_block")),
     )

@@ -115,14 +115,17 @@ class TrackingService:
                 exclusion_reason = "missing_prediction"
             elif mid not in canonical_ids:
                 # Final result exists (sign known, tracking shows hit/miss) but
-                # there is no canonical SCORED result, so the adaptive dataset
-                # cannot use it. Distinct from a hard exclusion or pending.
-                learning_status = "sign_only"
-                exclusion_reason = "sign_only_no_canonical_score"
+                # there is no canonical SCORED result. It can feed the
+                # classification dataset, but not scoreline-based features.
+                learning_status = "classification_ready"
             else:
                 learning_status = "ready"
-            # Anything not "ready"/"waiting_result" cannot feed training.
-            excluded_from_training = learning_status not in {"ready", "waiting_result"}
+            # Anything not classification-ready/ready/waiting cannot feed training.
+            excluded_from_training = learning_status not in {
+                "ready",
+                "classification_ready",
+                "waiting_result",
+            }
 
             if is_final and m["predicted_outcome"] is not None:
                 scored += 1
@@ -134,7 +137,7 @@ class TrackingService:
                 ready += 1
             elif learning_status == "waiting_result":
                 waiting += 1
-            elif learning_status == "sign_only":
+            elif learning_status == "classification_ready":
                 sign_only += 1
             else:
                 excluded += 1
@@ -173,6 +176,7 @@ class TrackingService:
             matches.append(
                 {
                     "position": m["position"],
+                    "match_id": mid,
                     "home": m["home_team_name"],
                     "away": m["away_team_name"],
                     "competition": m["competition_name"],

@@ -19,8 +19,10 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.settings import Settings
 from app.domain.entities import MatchResultStatus
 from app.models.tables import (
     PredictionModel,
@@ -32,9 +34,18 @@ from app.repositories.slate_repository import SlateRepository
 from app.schemas.common import CompetitionPayload, MatchReferencePayload, TeamPayload
 from app.schemas.slate import ProgolSlateCreate
 from app.services.live_result_service import LiveResultService, compute_result_code
+from app.services.live_results_observer_status_service import (
+    LiveResultsObserverStatusService,
+)
 from app.services.live_results_service import (
     LiveResultsService,
     finalize_complete_closed_slates,
+)
+from app.services.results_ingestion_service import (
+    RESULTS_SOURCE_BASE_URL,
+    RESULTS_SOURCE_KIND,
+    RESULTS_SOURCE_NAME,
+    RESULTS_SOURCE_PRIORITY,
 )
 
 
@@ -362,12 +373,100 @@ def test_finalize_persists_only_complete_closed(db):
     assert saved is not None and saved.is_complete is True
 
 
+def test_finalize_persists_complete_official_sign_only_closed(db):
+    from app.repositories.jornada_score_repository import JornadaScoreRepository
+
+    closed = _seed_slate(db, draw_code="PG-SIGN-FINAL", n=2, closes_at=_past(), outcomes=["1", "X"])
+    _make_official(db, closed)
+    src = _source(db, "ln-sign-final")
+    for mid, code in zip(_match_ids(closed), ["1", "X"], strict=True):
+        LiveResultService(db).record_observation(
+            match_id=mid,
+            source_id=src.id,
+            status=MatchResultStatus.FULL_TIME,
+            result_code=code,
+            is_final=True,
+        )
+
+    summary = finalize_complete_closed_slates(db, now=datetime.now(timezone.utc))
+
+    assert "PG-SIGN-FINAL" in summary["finalized"]
+    saved = JornadaScoreRepository(db).get_latest_for_slate(closed.id)
+    assert saved is not None and saved.is_complete is True
+    details = json.loads(saved.details_json)
+    assert len(details) == 2
+    assert all(d["result_is_canonical"] is False for d in details)
+    assert all(d["home_goals"] is None and d["away_goals"] is None for d in details)
+
+
 def test_finalize_skips_incomplete_closed(db):
     closed = _seed_slate(db, draw_code="PG-PART", n=3, closes_at=_past(), outcomes=["1", "1", "1"])
     src = _source(db, "src")
     LiveResultService(db).record_observation(match_id=_match_ids(closed)[0], source_id=src.id, status=MatchResultStatus.FULL_TIME, home_goals=1, away_goals=0, is_final=True)
     summary = finalize_complete_closed_slates(db, now=datetime.now(timezone.utc))
     assert "PG-PART" not in summary["finalized"]
+
+
+def test_results_observer_status_reports_existing_marked_source(db):
+    slate = _seed_slate(db, draw_code="PG-LIVE-OBS", n=2, closes_at=_future(), outcomes=["1", "1"])
+    source = SourceModel(
+        name=RESULTS_SOURCE_NAME,
+        base_url=RESULTS_SOURCE_BASE_URL,
+        kind=RESULTS_SOURCE_KIND,
+        parser_profile="generic",
+        result_source_priority=RESULTS_SOURCE_PRIORITY,
+        is_active=True,
+    )
+    db.add(source)
+    db.flush()
+    LiveResultService(db).record_observation(
+        match_id=_match_ids(slate)[0],
+        source_id=source.id,
+        status=MatchResultStatus.FULL_TIME,
+        home_goals=1,
+        away_goals=0,
+        is_final=True,
+    )
+    before_sources = len(db.scalars(select(SourceModel)).all())
+
+    status = LiveResultsObserverStatusService(
+        db,
+        Settings(
+            live_results_fetch_enabled=True,
+            live_results_source_url=RESULTS_SOURCE_BASE_URL,
+        ),
+    ).build_status()
+
+    after_sources = len(db.scalars(select(SourceModel)).all())
+    assert after_sources == before_sources
+    assert status["pull_ready"] is True
+    assert status["uses_existing_sources_only"] is True
+    observed = next(s for s in status["active_slates"] if s["draw_code"] == "PG-LIVE-OBS")
+    assert observed["has_any_result"] is True
+    assert observed["has_scorelines"] is True
+    assert observed["results_with_source_count"] == 1
+    assert observed["sources"] == [RESULTS_SOURCE_NAME]
+    assert status["latest_ingestion"] is not None
+    assert status["latest_ingestion"]["result_rows"] == 1
+    assert status["latest_ingestion"]["draws"][0]["draw_code"] == "PG-LIVE-OBS"
+
+
+def test_results_observer_status_does_not_create_missing_source(db):
+    _seed_slate(db, draw_code="PG-LIVE-MISSING-SOURCE", n=2, closes_at=_future())
+    before_sources = len(db.scalars(select(SourceModel)).all())
+
+    status = LiveResultsObserverStatusService(
+        db,
+        Settings(
+            live_results_fetch_enabled=True,
+            live_results_source_url=RESULTS_SOURCE_BASE_URL,
+        ),
+    ).build_status()
+
+    after_sources = len(db.scalars(select(SourceModel)).all())
+    assert after_sources == before_sources
+    assert status["pull_ready"] is False
+    assert "existing_results_source_missing" in status["warnings"]
 
 
 def _future() -> datetime:

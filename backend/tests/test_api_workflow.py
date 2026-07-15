@@ -281,13 +281,76 @@ async def test_refresh_current_progol_from_local_context(client, tmp_path, monke
     payload = response.json()
     assert payload["draw_code"] == "PG-2999"
     assert payload["match_count"] == 1
+    assert payload["prediction_count"] == 1
     assert payload["ingestion_status"] == "completed"
+    assert payload["step_durations_ms"]["ingest_context_document"] >= 0
 
     slate_response = await client.get("/api/slates")
     assert slate_response.status_code == 200
     slates = slate_response.json()
     assert slates[0]["draw_code"] == "PG-2999"
     assert slates[0]["matches"][0]["home_team_name"] == "R. Sociedad"
+
+    readiness_response = await client.get(f"/api/slates/{payload['slate_id']}/readiness-report")
+    assert readiness_response.status_code == 200
+    readiness_payload = readiness_response.json()
+    assert readiness_payload["mode"] == "slate_readiness_report"
+    assert readiness_payload["slates"][0]["draw_code"] == "PG-2999"
+    assert readiness_payload["slates"][0]["matches"][0]["flags"]
+    assert "actionable_blockers" in readiness_payload["slates"][0]["matches"][0]
+
+
+def test_current_progol_rejects_stale_local_context() -> None:
+    from datetime import datetime, timedelta, timezone
+
+    from app.services.current_progol_service import CurrentProgolService
+
+    now = datetime.now(timezone.utc)
+    stale = {
+        "catalog_metadata": {
+            "contest_type": "progol_media_semana",
+            "draw_number": 797,
+            "registration_closes_at": (now - timedelta(days=5)).isoformat(),
+        },
+        "fixture_candidates": [
+            {
+                "position": 1,
+                "competition": "Liga MX",
+                "home_team": "A",
+                "away_team": "B",
+                "kickoff_at": (now - timedelta(days=4)).isoformat(),
+            }
+        ],
+    }
+    service = CurrentProgolService.__new__(CurrentProgolService)
+
+    with pytest.raises(ValueError, match="No active or future Progol item"):
+        service._select_current_progol_item([stale])
+
+
+def test_current_progol_fixture_preserves_placeholder_flags() -> None:
+    from datetime import datetime, timedelta, timezone
+
+    from app.services.current_progol_service import CurrentProgolService
+
+    service = CurrentProgolService.__new__(CurrentProgolService)
+    match = service._fixture_to_match(
+        1,
+        {
+            "position": 1,
+            "competition": "Progol Concurso 9999",
+            "competition_is_placeholder": True,
+            "home_team": "Placeholder FC",
+            "home_is_placeholder": True,
+            "away_team": "Canonical FC",
+            "away_is_placeholder": False,
+            "kickoff_at": (datetime.now(timezone.utc) + timedelta(days=1)).isoformat(),
+        },
+    )
+
+    assert match.competition.is_placeholder is True
+    assert match.home_team.is_placeholder is True
+    assert match.away_team.is_placeholder is False
 
 
 @pytest.mark.anyio

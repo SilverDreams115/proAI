@@ -18,7 +18,6 @@ class NormalizationService:
         "rayo vallec": "rayo-vallecano",
         "u catolica": "universidad-catolica",
         "universidad catolica": "universidad-catolica",
-        "vitoria bahia": "vitoria-ba",
         # National team aliases: Progol PDF uses Spanish names, TheSportsDB
         # uses English. Map both inputs to the same slug so the Progol
         # fixture resolver matches the friendlies ingested under
@@ -106,10 +105,28 @@ class NormalizationService:
         # Liga Expansión MX team aliases (PDF uses short names)
         "tampico": "tampico-madero",
         "tepatitlan": "tepatitlan-fc",
+        # Current Progol PDF abbreviations/truncations observed in active
+        # slates. Keep these only for unambiguous aliases; single-letter
+        # fragments such as "G" remain unresolved and must be surfaced for
+        # manual review.
+        "s laguna": "santos-laguna",
+        "vasco da ga": "vasco-da-gama",
+        "g argentina": "argentina",
+        "aguilas": "america",
+        "chicago": "chicago-fire",
+        "vancouver": "vancouver-whitecaps",
+        "vitoria ba": "vitoria",
+        "vitoria bahia": "vitoria",
+        "st louis": "st-louis-city",
+        "kansas city": "sporting-kansas-city",
+        "aucas": "sd-aucas",
         # Allsvenskan team aliases — PDF and TSDB sometimes use slightly
         # different stems for the long Swedish names.
         "brommapojkarna": "brommapojkarna",
         "degerfors": "degerfors-if",
+        "kalmar": "kalmar-ff",
+        "malmo": "malmo-ff",
+        "malmo ff": "malmo-ff",
         # Phase 9 — national-team canonicalization for the API-Football
         # sports-score audit. API-Football uses English forms (Czechia,
         # Switzerland, Bosnia & Herzegovina) while the Progol slate stores

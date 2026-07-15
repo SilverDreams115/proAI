@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_db_session
 from app.repositories.slate_repository import SlateRepository
+from app.services.operational_prediction_audit_service import OperationalPredictionAuditService
 
 router = APIRouter(prefix="/tracking", tags=["tracking"])
 
@@ -26,6 +27,18 @@ async def completed_slates_results_validation(
 
     with read_only_transaction(session):
         return build_completed_slates_validation(session)
+
+
+@router.get("/operational-prediction-audit")
+async def operational_prediction_audit(
+    slate_id: str | None = None,
+    session: Session = Depends(get_db_session),
+) -> dict:
+    """Read-only operational audit: prediction results, placeholders,
+    explainable confidence, publish gate and live-result freshness."""
+    if slate_id is not None and SlateRepository(session).get_slate(slate_id) is None:
+        raise HTTPException(status_code=404, detail="Slate not found.")
+    return OperationalPredictionAuditService(session).build(slate_id=slate_id)
 
 
 @router.get("/slates/{slate_id}/results-validation")

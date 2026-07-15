@@ -156,6 +156,7 @@ jobs:
             sleep 2
           done
           curl -fsS http://127.0.0.1/api/metrics -H 'X-API-Key: ci-auth-key-1234567890-abcdef' > /tmp/proai-metrics.txt
+          curl -fsS http://127.0.0.1/api/operations/publication-gate -H 'X-API-Key: ci-auth-key-1234567890-abcdef' > /tmp/proai-publication-gate.json
           PROAI_BASE_URL=http://127.0.0.1 python backend/scripts/frontend_smoke.py
           PROAI_BASE_URL=http://127.0.0.1 PROAI_AUTH_API_KEY=ci-auth-key-1234567890-abcdef PROAI_LOAD_REQUESTS=40 python backend/scripts/http_load_smoke.py
           docker inspect --format '{{json .State.Health}}' proai-backup

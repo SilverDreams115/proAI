@@ -33,6 +33,12 @@ describe("product flow panel", () => {
           hard_no_play: false,
           max_combinations: 48,
         },
+        publication_gate: {
+          status: "READY_TO_PLAY",
+          publish_allowed: true,
+          data_debt: { placeholder_count: 0, blocked_count: 0 },
+          ml_activation_gate: { activation_allowed: false },
+        },
         drift_audit: { status: "clear", signals: [] },
         active_slate_contract: { strict: true, active_count: 1, violations: [] },
       },
@@ -50,6 +56,8 @@ describe("product flow panel", () => {
     expect(html).toContain("Calidad de datos");
     expect(html).toContain("JUGAR");
     expect(html).toContain("Balanceado cubre riesgos.");
+    expect(html).toContain("Gate de publicación");
+    expect(html).toContain("READY_TO_PLAY");
     expect(html).toContain("Postmortem y aprendizaje");
     expect(html).toContain("6/9");
   });
