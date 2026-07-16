@@ -3,6 +3,10 @@ set -eu
 
 backup_dir="${PROAI_BACKUP_DIR:-/backups}"
 interval_seconds="${PROAI_BACKUP_INTERVAL_SECONDS:-86400}"
+# A failed dump must retry soon, not wait a full interval: sleeping 24h on
+# failure means every host restart where postgres is not up yet costs a
+# whole day of backups.
+retry_seconds="${PROAI_BACKUP_RETRY_SECONDS:-60}"
 retention_days="${PROAI_BACKUP_RETENTION_DAYS:-7}"
 mkdir -p "$backup_dir"
 
@@ -17,12 +21,12 @@ while true; do
     rm -f "$tmp_dump" "$tmp_backup"
     if ! pg_dump --clean --if-exists --no-owner --no-privileges > "$tmp_dump"; then
         rm -f "$tmp_dump" "$tmp_backup"
-        sleep "$interval_seconds"
+        sleep "$retry_seconds"
         continue
     fi
     if [ ! -s "$tmp_dump" ]; then
         rm -f "$tmp_dump" "$tmp_backup"
-        sleep "$interval_seconds"
+        sleep "$retry_seconds"
         continue
     fi
     gzip -9 < "$tmp_dump" > "$tmp_backup"
