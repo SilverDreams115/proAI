@@ -1,7 +1,9 @@
 from datetime import datetime, timezone
 
+from sqlalchemy import select
+
 from app.db.session import managed_transaction
-from app.models.tables import ProgolSlateModel
+from app.models.tables import MatchLiveResultModel, ProgolSlateMatchModel, ProgolSlateModel
 from app.repositories.slate_repository import SlateRepository
 from app.schemas.slate import ProgolSlateCreate
 
@@ -81,6 +83,8 @@ class SlateService:
             now = now.replace(tzinfo=timezone.utc)
         if slate.is_archived:
             return True
+        if self._has_observed_result(slate):
+            return True
         if slate.registration_closes_at is not None:
             closes_at = slate.registration_closes_at
             if closes_at.tzinfo is None:
@@ -88,6 +92,27 @@ class SlateService:
             return closes_at <= now
         kickoffs = self._normalized_kickoffs(slate)
         return bool(kickoffs and min(kickoffs) <= now)
+
+    def _has_observed_result(self, slate: ProgolSlateModel) -> bool:
+        """A slate with any observed result has effectively closed for play.
+
+        This protects Media Semana slates whose cierre came from a bounded
+        provisional PDF window: once a live/final marker exists, the contest has
+        started and must not be shown as an open/playable boleta even if the
+        provisional timestamp is still in the future.
+        """
+        if not slate.id or self.repository is None or self.repository.session is None:
+            return False
+        stmt = (
+            select(MatchLiveResultModel.id)
+            .join(
+                ProgolSlateMatchModel,
+                ProgolSlateMatchModel.match_id == MatchLiveResultModel.match_id,
+            )
+            .where(ProgolSlateMatchModel.slate_id == slate.id)
+            .limit(1)
+        )
+        return self.repository.session.scalar(stmt) is not None
 
     def _active_slate_sort_key(self, slate: ProgolSlateModel, now: datetime) -> tuple[int, float, int, float]:
         week_priority = {"weekend": 0, "midweek": 1, "revancha": 2}.get(slate.week_type, 3)

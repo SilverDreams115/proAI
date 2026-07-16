@@ -17,13 +17,16 @@ import pytest
 from sqlalchemy.orm import Session
 
 from app.api.routes.slates import visible_slates
+from app.domain.entities import MatchResultStatus
 from app.models.tables import ProgolSlateProposalModel
+from app.services.live_result_service import LiveResultService
 
 from tests.test_live_results import (  # noqa: E402
     _future,
     _make_official,
     _past,
     _seed_slate,
+    _source,
 )
 
 
@@ -156,6 +159,47 @@ def test_provisional_ms_pdf_window_is_visible_as_open(db):
     assert res.reason == "open_slate"
     assert [s.draw_code for s in res.open_slates] == ["PGM-804"]
     assert not res.discovery.suspect_slates
+
+
+def test_provisional_ms_pdf_window_with_result_is_not_open(db):
+    slate = _seed_slate(db, draw_code="PGM-804", week_type="midweek", n=9, closes_at=_future())
+    _make_official(db, slate)
+    db.add(
+        ProgolSlateProposalModel(
+            draw_code="804",
+            week_type="midweek",
+            source_name="progol-guia-ln-ms",
+            source_url="https://www.loterianacional.gob.mx/Documentos/guiamedia.pdf",
+            status="promoted",
+            promoted_slate_id=slate.id,
+            registration_closes_at=slate.registration_closes_at,
+            payload_json=(
+                '{"registration_close_source":"provisional_ms_pdf_window",'
+                '"extraction_confidence":"provisional",'
+                '"fixtures":[{"position":1}],'
+                '"block_diagnostics":{"rejected_close_block_draw_code":"800"}}'
+            ),
+        )
+    )
+    source = _source(db, "operator-result", priority=60)
+    first_match = sorted(slate.matches, key=lambda item: item.position)[0]
+    LiveResultService(db).record_observation(
+        match_id=first_match.match_id,
+        source_id=source.id,
+        status=MatchResultStatus.FULL_TIME,
+        home_goals=0,
+        away_goals=2,
+        is_final=True,
+        result_code="2",
+    )
+    db.flush()
+
+    res = _visible(db)
+
+    assert res.reason == "fallback_recent"
+    assert res.open_slates == []
+    assert [s.draw_code for s in res.recent_slates] == ["PGM-804"]
+    assert res.recent_slates[0].read_only is True
 
 
 def test_date_override_is_traced_and_updates_status(db):
