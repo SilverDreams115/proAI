@@ -590,30 +590,32 @@ class ModelTrainingArtifactsMixin:
         profile_away = self._team_profile_strength(team_profiles.get(away_name), is_home=False)
         profile_edge = max(min(profile_home - profile_away, 1.5), -1.5)
         profile_home_share = 1.0 / (1.0 + math.exp(-profile_edge * 1.35))
-        profile_away_share = 1.0 - profile_home_share
 
-        elo_away = 1.0 - elo_home
-        home_prob = (
+        # Elo and the team profile are HOME-vs-AWAY signals: they say nothing
+        # about the draw. Blending them as unconditional outcome masses and
+        # renormalizing diluted the Dixon-Coles draw systematically
+        # (E_final = pd / (1 + (1 - w_poisson) * pd), ~0.30 -> ~0.23 with the
+        # default weights), which showed up as a persistent underweight vs
+        # market draw prices. Instead: the DC grid owns the draw mass, and all
+        # three components vote only on the home-vs-away split of what's left.
+        decisive_poisson = poisson_home + poisson_away
+        poisson_home_share = poisson_home / decisive_poisson if decisive_poisson > 0 else 0.5
+        home_share = (
             float(weights["elo"]) * elo_home
-            + float(weights["poisson"]) * poisson_home
+            + float(weights["poisson"]) * poisson_home_share
             + float(weights.get("profile", 0.0)) * profile_home_share
         )
-        away_prob = (
-            float(weights["elo"]) * elo_away
-            + float(weights["poisson"]) * poisson_away
-            + float(weights.get("profile", 0.0)) * profile_away_share
-        )
+        home_share = min(max(home_share, 0.0), 1.0)
         # Draw probability comes from the Dixon-Coles grid (a real
         # probability, not a smoothing constant). The competition draw bias
         # only nudges it within a bounded range.
         draw_bias = float(competition_policy.get("draw_bias", 0.0))
         draw_prob = min(max(poisson_draw + draw_bias, 0.08), 0.42)
 
-        total = home_prob + away_prob + draw_prob
         heuristic = {
-            "home": round(home_prob / total, 3),
-            "draw": round(draw_prob / total, 3),
-            "away": round(away_prob / total, 3),
+            "home": round(home_share * (1.0 - draw_prob), 3),
+            "draw": round(draw_prob, 3),
+            "away": round((1.0 - home_share) * (1.0 - draw_prob), 3),
         }
         duration_seconds = perf_counter() - started
         metrics_store.record_prediction(

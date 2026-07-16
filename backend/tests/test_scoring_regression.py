@@ -154,17 +154,52 @@ def test_scoring_baseline_snapshot(baseline_scores: dict[str, float]) -> None:
     expected values committed together with the engine change. This is the
     safety net the audit identified as missing (Hallazgo A5).
 
-    Current baseline reflects the Dixon-Coles bivariate Poisson scoring
-    introduced in Fase 1.1. With Club A clearly stronger than Club B
-    (120 Elo edge + better profile), the engine now surfaces a sharper home
-    edge than the previous degenerate Poisson proxy."""
-    expected = {"home": 0.677, "draw": 0.143, "away": 0.179}
+    Current baseline reflects the conditional blend (draw-dilution fix): the
+    Dixon-Coles grid owns the draw mass and Elo/Poisson/profile vote only on
+    the home-vs-away split of the remainder. With Club A clearly stronger
+    than Club B (120 Elo edge + better profile) the home edge stays sharp and
+    the draw is the untouched DC grid draw instead of a renormalized one."""
+    expected = {"home": 0.671, "draw": 0.153, "away": 0.176}
     for label, expected_value in expected.items():
         actual = baseline_scores[label]
         assert math.isclose(actual, expected_value, abs_tol=0.02), (
             f"{label} drifted: expected ~{expected_value}, got {actual}. "
             f"If intentional, regenerate the snapshot."
         )
+
+
+def test_blend_does_not_dilute_the_dixon_coles_draw() -> None:
+    """Draw-dilution regression (market-comparison audit, 2026-07-16).
+
+    Elo and the team profile carry no draw signal; when their full mass was
+    blended into home/away and the vector renormalized, the DC draw shrank by
+    a structural factor (~0.30 -> ~0.23 with default weights) on every match.
+    For two identical teams the blended draw must now equal the DC grid draw
+    (plus the bounded competition bias), and home/away must split the rest."""
+    harness = _ScoringHarness()
+    artifact = _fixed_artifact()
+    # Perfectly symmetric opponents: same rating, same offense/defense, same
+    # profile — any home edge comes only from the competition home bonus.
+    artifact["ratings"] = {"Club A": 1500.0, "Club B": 1500.0}
+    artifact["offense"] = {"Club A": 1.2, "Club B": 1.2}
+    artifact["defense"] = {"Club A": 1.1, "Club B": 1.1}
+    artifact["team_profiles"]["Club B"] = dict(artifact["team_profiles"]["Club A"])
+    scored = harness._score_match_with_artifact(_make_match("league"), artifact)
+
+    profile = artifact["competition_profiles"]["league"]
+    home_lambda, away_lambda = harness._competition_lambda_priors(profile)
+    rho = harness._dixon_coles_rho_from_draw_rate(
+        max(min(float(artifact["league_draw_rate"]), 0.45), 0.18)
+    )
+    _, dc_draw, _ = harness._dixon_coles_outcome(
+        home_lambda * 1.2 * 1.1, away_lambda * 1.2 * 1.1, rho
+    )
+    expected_draw = min(max(dc_draw, 0.08), 0.42)
+    assert math.isclose(scored["draw"], expected_draw, abs_tol=0.005), (
+        f"blended draw {scored['draw']} must match the DC grid draw {expected_draw} "
+        f"(no renormalization dilution)"
+    )
+    assert math.isclose(sum(scored.values()), 1.0, abs_tol=0.01)
 
 
 def test_dixon_coles_outcome_is_a_valid_distribution() -> None:
