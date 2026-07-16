@@ -82,6 +82,28 @@ def test_injected_provider_data_yields_coverage(db, monkeypatch):  # noqa: F811
     assert report["coverage"]["matched"] >= 1
 
 
+def test_slate_window_covers_the_playing_week_despite_synthetic_kickoffs(db):  # noqa: F811
+    """Kickoffs can be synthetic placeholders clustered near the cierre (LN's
+    guide carries no times), so a ±1d window missed real fixtures — PGM-804's
+    World Cup semifinals fell outside it and coverage was zero. The window must
+    extend past max(kickoff, cierre) by a margin that covers the concurso's
+    actual playing week."""
+    from datetime import datetime, timezone
+
+    from app.services.results_provider_service import _slate_window
+
+    seed_canary_slate(db)
+    slate = _slate(db)
+    # Synthetic kickoffs are Jan 1-3; the (provisional) cierre lands Jan 5.
+    slate.registration_closes_at = datetime(2026, 1, 5, 3, 0, tzinfo=timezone.utc)
+    db.flush()
+    date_from, date_to = _slate_window(slate)
+    assert date_from == "2025-12-31"
+    # max(kickoff Jan 3, cierre Jan 5) + 3d margin => Jan 8: a real match played
+    # 2-3 days after the last synthetic kickoff still falls inside the window.
+    assert date_to == "2026-01-08"
+
+
 def test_matcher_normalizes_aliases():
     """5 — México/Mexico, E.U.A./USA, Chequia/Czech Republic all resolve."""
     pm_mx = [ProviderMatch("México", "Canadá", "finished", "2-1", None)]

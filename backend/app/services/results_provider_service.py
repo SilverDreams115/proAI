@@ -125,16 +125,31 @@ def match_slate(slate: ProgolSlateModel, provider_matches: list[ProviderMatch]) 
 
 
 def _slate_window(slate: ProgolSlateModel) -> tuple[str, str]:
+    """Provider query window for a slate's real-world fixtures.
+
+    Kickoffs can be SYNTHETIC (promotion assigns hourly placeholders near the
+    cierre when LN's guide carries no times), so a tight ±1d window around them
+    misses real matches — PGM-804's World Cup semifinals landed outside it and
+    the dry-run reported zero coverage. Anchor the upper bound on both the
+    latest kickoff and the registration cierre, plus a margin that covers a
+    concurso's actual playing week."""
+    def _utc(value: datetime) -> datetime:
+        return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value
+
     kickoffs = [
-        link.match.kickoff_at
+        _utc(link.match.kickoff_at)
         for link in slate.matches
         if getattr(link.match, "kickoff_at", None) is not None
     ]
     if not kickoffs:
         now = datetime.now(timezone.utc)
         return now.strftime("%Y-%m-%d"), (now + timedelta(days=3)).strftime("%Y-%m-%d")
+    anchors = list(kickoffs)
+    closes_at = getattr(slate, "registration_closes_at", None)
+    if closes_at is not None:
+        anchors.append(_utc(closes_at))
     lo = min(kickoffs) - timedelta(days=1)
-    hi = max(kickoffs) + timedelta(days=1)
+    hi = max(anchors) + timedelta(days=3)
     return lo.strftime("%Y-%m-%d"), hi.strftime("%Y-%m-%d")
 
 
