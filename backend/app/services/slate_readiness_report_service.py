@@ -33,6 +33,8 @@ _HARD_REVIEW_FLAGS = frozenset(
     }
 )
 
+_FALLBACK_ONLY_FLAG = "FALLBACK_ONLY_NO_RECENT_CONTEXT"
+
 
 def _json(value: str | None) -> dict[str, Any]:
     if not value:
@@ -103,6 +105,32 @@ def _actionable_blockers(
     return blockers
 
 
+def _apply_fallback_only_guardrail(
+    *,
+    status: str,
+    flags: list[str],
+    recent_results_count: int,
+    head_to_head_results_count: int,
+) -> tuple[str, list[str]]:
+    """Do not allow LISTO when the pick is fallback-only with no context.
+
+    This is a diagnostic/presentation guardrail. It does not change persisted
+    predictions or probabilities; it only makes readiness honest for publishing
+    and Money Mode gates.
+    """
+    if (
+        status == "LISTO"
+        and "FALLBACK_USED" in set(flags)
+        and recent_results_count == 0
+        and head_to_head_results_count == 0
+    ):
+        out = list(flags)
+        if _FALLBACK_ONLY_FLAG not in out:
+            out.append(_FALLBACK_ONLY_FLAG)
+        return "REVISAR", out
+    return status, flags
+
+
 def build_slate_readiness_report(
     session: Session,
     *,
@@ -154,6 +182,14 @@ def build_slate_readiness_report(
             )
             report_flags = flags + [flag for flag in data_flags if flag not in flags]
             suspicious = suspicious_team_names(match.home_team.name, match.away_team.name)
+            recent_results_count = int(feature_payload.get("recent_results_count") or 0)
+            head_to_head_results_count = int(float(feature_payload.get("head_to_head_results_count") or 0))
+            status, report_flags = _apply_fallback_only_guardrail(
+                status=status,
+                flags=report_flags,
+                recent_results_count=recent_results_count,
+                head_to_head_results_count=head_to_head_results_count,
+            )
             candidate = _safe_revisar_to_listo_candidate(status, evidence, report_flags)
             actionable_blockers = _actionable_blockers(
                 status=status,
@@ -182,8 +218,8 @@ def build_slate_readiness_report(
                     "sanity_flags": flags,
                     "data_flags": data_flags,
                     **pick,
-                    "recent_results_count": int(feature_payload.get("recent_results_count") or 0),
-                    "head_to_head_results_count": int(float(feature_payload.get("head_to_head_results_count") or 0)),
+                    "recent_results_count": recent_results_count,
+                    "head_to_head_results_count": head_to_head_results_count,
                     "suspicious_team_names": suspicious,
                     "actionable_blockers": actionable_blockers,
                     "safe_revisar_to_listo_candidate": candidate,
