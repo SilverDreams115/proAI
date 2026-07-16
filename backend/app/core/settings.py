@@ -101,6 +101,11 @@ class Settings(BaseModel):
     # the last successful prune. 0 disables the maintenance entirely.
     source_documents_prune_interval_hours: int = Field(default=24)
     source_documents_retention_days: int = Field(default=90)
+    # Periodic retrain of the production scoring artifact so team ratings,
+    # scoring lambdas and calibration curves never go stale (the May->July
+    # gap skewed confidence on fresh-form matches). Gated on the DB's latest
+    # run timestamp, so restarts never retrigger. 0 disables it.
+    model_retrain_interval_hours: int = Field(default=24)
     # Global API rate limit. window_seconds == 60 + max_requests == 120
     # gives 2 rps sustained per IP — comfortable for an internal tool
     # and tight enough to absorb a misbehaving script before it pages
@@ -320,6 +325,9 @@ def load_settings() -> Settings:
         ),
         source_documents_prune_interval_hours=int(
             os.getenv("PROAI_SOURCE_DOCUMENTS_PRUNE_INTERVAL_HOURS", "24")
+        ),
+        model_retrain_interval_hours=int(
+            os.getenv("PROAI_MODEL_RETRAIN_INTERVAL_HOURS", "24")
         ),
         source_documents_retention_days=int(
             os.getenv("PROAI_SOURCE_DOCUMENTS_RETENTION_DAYS", "90")

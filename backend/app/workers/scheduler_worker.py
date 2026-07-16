@@ -61,6 +61,7 @@ class WorkerState:
     last_live_results_finalized: int = 0
     last_ms_pdf_watched_at: datetime | None = None
     last_ms_pdf_status: str | None = None
+    last_model_retrained_at: datetime | None = None
 
 
 class SchedulerWorker:
@@ -103,6 +104,7 @@ class SchedulerWorker:
             self._maybe_observe_ms_proposal(session, polled_at)
             self._maybe_auto_promote_proposals(session, polled_at)
             self._maybe_observe_live_results(session, polled_at)
+            self._maybe_retrain_model(session, polled_at)
             self._maybe_run_maintenance(session, polled_at)
             runs = service.run_due_jobs()
             self._state.executed_runs += len(runs)
@@ -409,6 +411,56 @@ class SchedulerWorker:
                     "active_slate_present": active is not None,
                 },
             )
+
+    def _maybe_retrain_model(self, session, polled_at: datetime) -> None:
+        """Keep the scoring artifact fresh without operator intervention.
+
+        Team ratings, scoring lambdas and calibration curves decay as new
+        results arrive: the May->July gap surfaced as stale-form overconfidence
+        in the market comparison audit. Retrains when the DB's latest run for
+        the production model is older than the configured interval — the DB
+        timestamp is the gate (not worker memory), so restarts never retrigger
+        an expensive train and the cadence holds across deploys."""
+        from app.repositories.entity_repository import EntityRepository
+        from app.repositories.result_repository import ResultRepository
+        from app.repositories.training_repository import TrainingRepository
+        from app.services.model_training_service import ModelTrainingService
+
+        interval_hours = settings.model_retrain_interval_hours
+        if interval_hours <= 0:
+            return
+        service = ModelTrainingService(
+            TrainingRepository(session),
+            EntityRepository(session),
+            ResultRepository(session),
+        )
+        latest = service.training_repository.latest_run(service.MODEL_NAME)
+        trained_at = getattr(latest, "trained_at", None)
+        if trained_at is not None:
+            if trained_at.tzinfo is None:
+                trained_at = trained_at.replace(tzinfo=timezone.utc)
+            if polled_at - trained_at < timedelta(hours=interval_hours):
+                return
+        started = perf_counter()
+        try:
+            artifact = service.train()
+        except Exception:
+            logger.exception(
+                "scheduled model retrain failed",
+                extra={"event": "model_retrain_failed", "model_name": service.MODEL_NAME},
+            )
+            return
+        self._state.last_model_retrained_at = polled_at
+        logger.info(
+            "scoring model retrained on schedule",
+            extra={
+                "event": "model_retrained",
+                "model_name": service.MODEL_NAME,
+                "training_sample_size": int(artifact.get("training_sample_size", 0)),
+                "duration_ms": round((perf_counter() - started) * 1000, 2),
+                "previous_trained_at": trained_at.isoformat() if trained_at else None,
+            },
+        )
 
     def _maybe_run_maintenance(self, session, polled_at: datetime) -> None:
         """Periodically prune orphan source_documents from the worker
