@@ -19,7 +19,6 @@ const state = {
   authStatusMessage: "Ingresa el password para cargar la quiniela.",
   isLoading: false,
   ticketMode: "simple",
-  qualityFilter: "all",
   // Auto-transition support (Fase 1.3). `activeMeta` is the last
   // /slates/active response; `closesAtMs` is the unix-ms snapshot used by
   // the 1-second countdown ticker so it stays accurate between polls.
@@ -61,15 +60,6 @@ const state = {
   exportStatusBySlate: {},
   diagnosticsPreheatedSlateId: null,
 };
-
-const qualityFilters = [
-  {key: "all", label: "Todos"},
-  {key: "review", label: "Revisar"},
-  {key: "caution", label: "Cautela"},
-  {key: "thin", label: "Datos delgados"},
-  {key: "blocked", label: "Bloqueados"},
-  {key: "manual", label: "Manual"},
-];
 
 let demoLoadAttempted = false;
 

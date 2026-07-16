@@ -1,11 +1,11 @@
-// Selector visibility contract (never-empty UI) — pure, testable.
+// Selector visibility contract (current-prediction tab) — pure, testable.
 //
-// Pins the "UI sin boletas" fix:
-//   * open official slates drive the selector (reason=open_slate);
-//   * when none are open, fall back to recent read-only slates
-//     (reason=fallback_recent) with the "solo lectura" message;
-//   * a saved manual selection wins only if still visible;
-//   * empty input yields no_official_slates (the app then shows the useful
+// Pins the "solo activas en Predicción actual" rule:
+//   * ONLY open official slates drive the selector (reason=open_slate);
+//   * archived/closed boletas never appear here — recent_slates is ignored
+//     and any is_archived entry is dropped, for this slate and all future ones;
+//   * a saved manual selection wins only if still open;
+//   * no open slates yields no_official_slates (the app then shows the useful
 //     discovery empty state, not a blank screen);
 //   * badges map flags to Abierta/Cerrada/Completa/Sin resultados/Solo lectura.
 import { describe, it, expect } from "vitest";
@@ -50,39 +50,53 @@ const recentNoResults = {
 };
 
 describe("resolveVisibleSelection", () => {
-  it("selects an open slate first", () => {
+  it("selects an open slate and lists only open slates", () => {
     const r = resolveVisibleSelection({
       visible: { open_slates: [openSlate], recent_slates: [recentReal], reason: "open_slate", selected_default_slate_id: "open-1" },
     });
     expect(r.reason).toBe("open_slate");
     expect(r.selectedId).toBe("open-1");
     expect(r.readOnly).toBe(false);
-    expect(r.slates.map((s) => s.id)).toEqual(["open-1", "recent-1"]);
+    expect(r.slates.map((s) => s.id)).toEqual(["open-1"]);
     expect(r.isEmpty).toBe(false);
   });
 
-  it("falls back to recent read-only when no open slate", () => {
+  it("never lists recent/archived slates, even when no open slate exists", () => {
     const r = resolveVisibleSelection({
       visible: { open_slates: [], recent_slates: [recentReal, recentNoResults], reason: "fallback_recent", selected_default_slate_id: "recent-1" },
     });
-    expect(r.reason).toBe("fallback_recent");
-    expect(r.selectedId).toBe("recent-1");
-    expect(r.readOnly).toBe(true);
-    expect(r.message).toContain("solo lectura");
+    expect(r.reason).toBe("no_official_slates");
+    expect(r.selectedId).toBe(null);
+    expect(r.slates).toEqual([]);
+    expect(r.isEmpty).toBe(true);
   });
 
-  it("honors a saved selection when still visible", () => {
+  it("drops an is_archived entry even if the backend listed it as open", () => {
+    const r = resolveVisibleSelection({
+      visible: { open_slates: [openSlate, recentReal], recent_slates: [], selected_default_slate_id: "open-1" },
+    });
+    expect(r.slates.map((s) => s.id)).toEqual(["open-1"]);
+  });
+
+  it("honors a saved selection only when it is still open", () => {
     const r = resolveVisibleSelection({
       visible: { open_slates: [openSlate], recent_slates: [recentReal], selected_default_slate_id: "open-1" },
       savedId: "recent-1",
     });
-    expect(r.selectedId).toBe("recent-1");
+    expect(r.selectedId).toBe("open-1");
   });
 
   it("ignores a saved selection that disappeared", () => {
     const r = resolveVisibleSelection({
       visible: { open_slates: [openSlate], recent_slates: [], selected_default_slate_id: "open-1" },
       savedId: "ghost",
+    });
+    expect(r.selectedId).toBe("open-1");
+  });
+
+  it("ignores a default selection that is not open (stale fallback id)", () => {
+    const r = resolveVisibleSelection({
+      visible: { open_slates: [openSlate], recent_slates: [recentReal], selected_default_slate_id: "recent-1" },
     });
     expect(r.selectedId).toBe("open-1");
   });
@@ -97,14 +111,11 @@ describe("resolveVisibleSelection", () => {
   it("only ever surfaces the slates the backend returned (no demos injected)", () => {
     const r = resolveVisibleSelection({ visible: { open_slates: [openSlate], recent_slates: [recentReal] } });
     // Demos are filtered server-side; the selector never adds anything.
-    expect(r.slates).toHaveLength(2);
+    expect(r.slates).toHaveLength(1);
   });
 });
 
 describe("visibleSelectionMessage", () => {
-  it("messages the read-only fallback", () => {
-    expect(visibleSelectionMessage("fallback_recent")).toContain("solo lectura");
-  });
   it("messages no official slates", () => {
     expect(visibleSelectionMessage("no_official_slates")).toContain("No hay boletas oficiales");
   });
@@ -216,12 +227,12 @@ describe("suspectSlateDiagnostics", () => {
 
   it("a date-suspect slate is not in open_slates (gate held it back server-side)", () => {
     // The backend never puts a suspect slate in open_slates; the selector
-    // simply reflects that — open stays empty, fallback recent is selected.
+    // simply reflects that — the tab stays empty (recents are never shown).
     const r = resolveVisibleSelection({
       visible: { open_slates: [], recent_slates: [recentReal], reason: "fallback_recent", selected_default_slate_id: "recent-1" },
     });
-    expect(r.open_slates ?? r.slates.filter((s) => !s.read_only)).toEqual([]);
-    expect(r.reason).toBe("fallback_recent");
+    expect(r.slates).toEqual([]);
+    expect(r.reason).toBe("no_official_slates");
   });
 });
 

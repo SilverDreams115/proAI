@@ -35,21 +35,22 @@ export function selectedSlateCountdownMs(slates, selectedId) {
   return null;
 }
 
-// Selector source of truth from GET /api/slates/visible. Open official slates
-// drive the list; when none are open we fall back to the recent (read-only)
-// ones so the UI is never empty. A saved manual selection wins only if it is
-// still in the visible set. Pure + testable: no DOM, no fetch.
+// Selector source of truth from GET /api/slates/visible. The current-
+// prediction tab lists OPEN official slates only: archived/closed boletas
+// belong to Seguimiento and must never appear here, for this slate or any
+// future one. A saved manual selection wins only if it is still open.
+// Pure + testable: no DOM, no fetch.
 export function resolveVisibleSelection({ visible, savedId } = {}) {
   const v = visible || {};
-  const open = Array.isArray(v.open_slates) ? v.open_slates : [];
-  const recent = Array.isArray(v.recent_slates) ? v.recent_slates : [];
-  const slates = [...open, ...recent];
-  const reason = v.reason
-    || (open.length ? "open_slate" : recent.length ? "fallback_recent" : "no_official_slates");
+  const slates = (Array.isArray(v.open_slates) ? v.open_slates : []).filter(
+    (s) => s && !s.is_archived,
+  );
+  const reason = slates.length ? "open_slate" : "no_official_slates";
   const savedStillVisible = Boolean(savedId) && slates.some((s) => s && s.id === savedId);
+  const defaultInOpen = slates.some((s) => s && s.id === v.selected_default_slate_id);
   const selectedId = savedStillVisible
     ? savedId
-    : (v.selected_default_slate_id || slates[0]?.id || null);
+    : (defaultInOpen ? v.selected_default_slate_id : slates[0]?.id || null);
   const selected = slates.find((s) => s && s.id === selectedId) || null;
   return {
     slates,
@@ -62,9 +63,6 @@ export function resolveVisibleSelection({ visible, savedId } = {}) {
 }
 
 export function visibleSelectionMessage(reason) {
-  if (reason === "fallback_recent") {
-    return "No hay boleta abierta. Mostrando la más reciente en solo lectura.";
-  }
   if (reason === "no_official_slates") {
     return "No hay boletas oficiales cargadas.";
   }

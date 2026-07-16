@@ -540,20 +540,6 @@ function qualityIssueProfile(match) {
   };
 }
 
-function filteredMatches() {
-  if (state.qualityFilter === "all") return state.matches;
-  return state.matches.filter((match) => {
-    const issue = qualityIssueProfile(match);
-    const decision = effectiveDecision(match);
-    if (state.qualityFilter === "review") return issue.review;
-    if (state.qualityFilter === "caution") return issue.caution;
-    if (state.qualityFilter === "thin") return issue.thin;
-    if (state.qualityFilter === "blocked") return issue.blocked;
-    if (state.qualityFilter === "manual") return decision.source === "manual";
-    return true;
-  });
-}
-
 function effectiveDecision(match) {
   const manual = state.manualSelections[match.match_id];
   if (!manual || !manual.length) return modelDecision(match.prediction, match.match_id);
@@ -1042,14 +1028,6 @@ function renderExportStatusLine() {
   const dateLabel = entry.at ? formatDate(entry.at) : "sin fecha";
   const draw = entry.draw_code ? `${entry.draw_code} · ` : "";
   return `<div class="export-status-line">Última exportación: ${escapeHtml(draw)}${escapeHtml(exportTypeLabel(entry.type))} · ${escapeHtml(dateLabel)}</div>`;
-}
-
-function renderQualityFilterOptions() {
-  return qualityFilters.map((filter) => `
-    <option value="${escapeHtml(filter.key)}" ${state.qualityFilter === filter.key ? "selected" : ""}>
-      ${escapeHtml(filter.label)}
-    </option>
-  `).join("");
 }
 
 function buildTicketText() {
@@ -1616,13 +1594,12 @@ function renderSidebar() {
     `;
     return;
   }
-  const visibleMatches = filteredMatches();
+  const visibleMatches = state.matches;
   menuNode.innerHTML = visibleMatches.length
     ? visibleMatches.map(buildMatchMenuItem).join("")
     : `
       <div class="empty-state">
-        <p>No hay partidos para este filtro.</p>
-        <p class="mini-copy">Cambia el filtro de calidad para ver más partidos.</p>
+        <p>No hay partidos disponibles.</p>
         ${state.health?.environment !== "production" ? `<button id="empty-load-demo" class="ghost-button">Cargar demo</button>` : ""}
       </div>
     `;
@@ -1756,11 +1733,9 @@ function renderBoard() {
   const gridNode = getById("ticket-grid");
   const analysisNode = getById("analysis");
   const validationSummaryNode = getById("validation-summary");
-  const qualityFilterNode = getById("quality-filter");
   const activeSlate = currentSlate();
   renderProductionStatus();
   renderDiagnosticsPanels();
-  if (qualityFilterNode) qualityFilterNode.innerHTML = renderQualityFilterOptions();
 
   if (!state.authenticated) {
     if (labelNode) labelNode.textContent = "Acceso requerido";
@@ -1864,13 +1839,13 @@ function renderBoard() {
   }
 
   if (gridNode) {
-    const visibleMatches = filteredMatches();
+    const visibleMatches = state.matches;
     gridNode.innerHTML = visibleMatches.length
       ? visibleMatches.map(buildMatchCard).join("")
-      : renderEmpty("No hay partidos que coincidan con el filtro activo.");
+      : renderEmpty("No hay partidos disponibles.");
   }
 
-  const visibleMatches = filteredMatches();
+  const visibleMatches = state.matches;
   const selected =
     visibleMatches.find((item) => item.match_id === state.selectedMatchId) ||
     visibleMatches[0] ||
@@ -2161,17 +2136,6 @@ function attachStaticEvents() {
     }
   });
 
-  getById("quality-filter")?.addEventListener("change", (event) => {
-    state.qualityFilter = event.target.value;
-    const visible = filteredMatches();
-    if (visible.length && !visible.some((match) => match.match_id === state.selectedMatchId)) {
-      state.selectedMatchId = visible[0].match_id;
-    }
-    renderSidebar();
-    renderBoard();
-    attachEvents();
-  });
-
   getById("copy-ticket")?.addEventListener("click", async () => {
     const text = buildTicketText();
     try {
@@ -2179,22 +2143,8 @@ function attachStaticEvents() {
       state.authStatusMessage = "Jugada copiada al portapapeles.";
       recordTicketExport("copy");
     } catch {
-      state.authStatusMessage = "No se pudo copiar automáticamente; descarga el TXT.";
+      state.authStatusMessage = "No se pudo copiar automáticamente; usa la Boleta PDF.";
     }
-    updateAuthControls();
-    renderProductionStatus();
-  });
-
-  getById("download-ticket")?.addEventListener("click", () => {
-    const slate = currentSlate();
-    const blob = new Blob([buildTicketText()], {type: "text/plain;charset=utf-8"});
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `${slate?.draw_code || "proai-ticket"}-${state.ticketMode}.txt`;
-    link.click();
-    URL.revokeObjectURL(url);
-    recordTicketExport("txt");
     updateAuthControls();
     renderProductionStatus();
   });
@@ -2241,10 +2191,8 @@ function updateAuthControls() {
   const refreshButton = getById("refresh");
   const demoButton = getById("load-demo");
   const copyButton = getById("copy-ticket");
-  const downloadButton = getById("download-ticket");
   const shareWhatsAppButton = getById("share-whatsapp");
   const printTicketButton = getById("print-ticket");
-  const filterNode = getById("quality-filter");
   const feedbackNode = getById("auth-feedback");
   const secretField = passwordInput?.closest(".secret-field");
   if (loginButton) {
@@ -2265,7 +2213,6 @@ function updateAuthControls() {
     demoButton.disabled = !state.authenticated || state.isLoading;
   }
   if (copyButton) copyButton.disabled = !state.authenticated || !state.matches.length || state.isLoading;
-  if (downloadButton) downloadButton.disabled = !state.authenticated || !state.matches.length || state.isLoading;
   const publishGate = state.operationalPredictionAudit?.publish_gate || null;
   const whatsappBlockedByGate = publishGate && publishGate.whatsapp_allowed === false;
   if (shareWhatsAppButton) {
@@ -2275,7 +2222,6 @@ function updateAuthControls() {
       : "";
   }
   if (printTicketButton) printTicketButton.disabled = !state.authenticated || !state.matches.length || state.isLoading;
-  if (filterNode) filterNode.disabled = !state.authenticated || !state.matches.length || state.isLoading;
   if (feedbackNode) {
     feedbackNode.textContent = state.authStatusMessage || "";
     feedbackNode.className = `auth-feedback ${state.authenticated ? "ok" : "warn"}`;
@@ -2531,9 +2477,9 @@ async function boot() {
   }
 
   const [visible, providers, worker] = await Promise.all([
-    // Selector source of truth: open official slates first, else the most
-    // recent official slates in read-only mode, so the UI is never empty
-    // when there is no open boleta. Demo/unverified are excluded server-side.
+    // Selector source of truth: open official slates only — the current-
+    // prediction tab never lists archived/closed boletas (those live in
+    // Seguimiento). Demo/unverified are excluded server-side.
     safeFetch("/slates/visible", {optional: true}),
     safeFetch("/sources/providers"),
     safeFetch("/worker/scheduler/status", {optional: true}),
@@ -2542,8 +2488,9 @@ async function boot() {
   state.providers = Array.isArray(providers) ? providers : [];
   state.worker = worker && !Array.isArray(worker) ? worker : null;
 
-  // Resolve the visible set (open + recent fallback). If /slates/visible is
-  // unavailable (older backend), degrade gracefully to /slates (open-only).
+  // Resolve the visible set (open slates only — archived/closed live in
+  // Seguimiento). If /slates/visible is unavailable (older backend), degrade
+  // gracefully to /slates (also open-only).
   const savedSlateId = readSavedSlateId();
   if (visible && !Array.isArray(visible)) {
     const decision = resolveVisibleSelection({ visible, savedId: savedSlateId });
@@ -2579,11 +2526,6 @@ async function boot() {
     state.modelTripleMatchIds = new Set();
     state.selectedMatchId = null;
   }
-
-  // Persistent notice when the selector fell back to a recent read-only slate.
-  state.transitionBanner = state.visibleReason === "fallback_recent"
-    ? state.visibleMessage
-    : state.transitionBanner;
 
   state.authStatusMessage = "Conectado";
   state.isLoading = false;

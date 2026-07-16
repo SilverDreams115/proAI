@@ -1276,32 +1276,6 @@ details.ops-details[open] .ops-summary::after {
   gap: 8px;
 }
 
-.filter-field {
-  display: grid;
-  gap: 5px;
-  min-width: 150px;
-  color: var(--muted);
-  font-size: 0.74rem;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-}
-
-.filter-field select {
-  appearance: none;
-  min-height: 42px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 0 34px 0 12px;
-  color: var(--ink);
-  background:
-    linear-gradient(45deg, transparent 50%, var(--line-strong) 50%) right 14px center / 7px 7px no-repeat,
-    linear-gradient(135deg, var(--line-strong) 50%, transparent 50%) right 9px center / 7px 7px no-repeat,
-    rgba(18, 17, 24, 0.94);
-  font: inherit;
-  text-transform: none;
-  letter-spacing: 0;
-}
-
 .validation-summary {
   margin-top: 14px;
 }
@@ -2266,8 +2240,7 @@ details.analysis-block summary h4 {
   }
 
   .ticket-actions,
-  .ticket-actions button,
-  .filter-field {
+  .ticket-actions button {
     width: 100%;
   }
 
