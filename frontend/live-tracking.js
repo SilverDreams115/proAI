@@ -216,7 +216,15 @@ export function renderLiveSlateDetail(data) {
 export function renderComparisonRow(match) {
   const tone = liveMatchTone(match);
   const realChip = (() => {
-    if (match.is_pending) return '<span class="status-pill status-pending">Pendiente</span>';
+    if (match.is_pending) {
+      // Read-only overlay: a finished score seen by the external provider
+      // (football-data.org dry-run) before LN publishes the official acta.
+      // Clearly labeled as non-official; never feeds scoring or learning.
+      if (match.external_score) {
+        return `<span class="status-pill status-external" title="Fuente externa (football-data.org) — no oficial. El resultado canónico sigue viniendo de LN/operador.">Ext. ${escapeHtml(match.external_score)}</span>`;
+      }
+      return '<span class="status-pill status-pending">Pendiente</span>';
+    }
     if (match.is_live) {
       const min = match.minute != null ? ` ${match.minute}'` : "";
       return `<span class="status-pill status-live">En vivo${min}</span>`;
@@ -236,6 +244,27 @@ export function renderComparisonRow(match) {
       <td>${diagnosisBadge(match.diagnosis)}</td>
       <td>${learningBadge(match.learning_status)}</td>
     </tr>`;
+}
+
+// Overlay read-only external provider scores (the football-data.org dry-run)
+// onto positions that still have no official result. Display-only by design:
+// the canonical result keeps coming from LN/operator, and this never feeds
+// scoring or learning. Pure + testable: no DOM, no fetch.
+export function decorateWithExternalResults(data, external) {
+  if (!data || !Array.isArray(data.matches)) return data;
+  const rows = external && Array.isArray(external.matches) ? external.matches : [];
+  const finished = new Map(
+    rows
+      .filter((r) => r && r.confidence === "high" && r.status === "finished" && r.score)
+      .map((r) => [r.position, r]),
+  );
+  if (!finished.size) return data;
+  data.matches = data.matches.map((m) => {
+    const ext = finished.get(m.position);
+    return ext && m.is_pending ? { ...m, external_score: ext.score } : m;
+  });
+  data.external_results_count = data.matches.filter((m) => m.external_score).length;
+  return data;
 }
 
 export function renderComparisonDetail(data) {
@@ -266,7 +295,11 @@ export function renderComparisonDetail(data) {
       </div>`;
   }
 
-  if (!data.results_ingested) {
+  // With zero official results the comparison table still renders when the
+  // external provider already sees finished matches — that is exactly the
+  // "see completed matches automatically" case (e.g. PGM-804's semifinals
+  // before LN publishes the acta).
+  if (!data.results_ingested && !(data.external_results_count > 0)) {
     return `
       <div class="cmp-detail">
         <div class="cmp-head">
@@ -286,28 +319,37 @@ export function renderComparisonDetail(data) {
   const learningLine = classificationRows > 0
     ? `<p class="meta-copy subtle learning-note"><strong>${classificationRows}</strong> filas listas para clasificación · sin marcador canónico</p>`
     : "";
+  const externalLine = data.external_results_count > 0
+    ? `<p class="meta-copy subtle external-note">${data.external_results_count} marcador(es) externo(s) no oficial(es) visibles automáticamente · fuente football-data.org</p>`
+    : "";
   const rows = (data.matches || []).map(renderComparisonRow).join("");
   return `
     <div class="cmp-detail">
       <div class="cmp-head">
-        <h3>${escapeHtml(data.draw_code)} · ${typeLabel}</h3>
+        <div class="cmp-head-row">
+          <h3>${escapeHtml(data.draw_code)} · ${typeLabel}</h3>
+          <button type="button" class="ghost-button cmp-minimize" aria-expanded="true">Minimizar</button>
+        </div>
         <p class="meta-copy">${counts}${data.is_complete ? " · Completa" : ""} · ${drawLine}</p>
         <p class="meta-copy subtle">${snapLine}</p>
+        ${externalLine}
         ${learningLine}
       </div>
-      <div class="cmp-scoreline">
-        <span><strong>${s.simple_hits ?? 0}</strong> simple</span>
-        <span><strong>${s.doubles_hits ?? 0}</strong> dobles</span>
-        <span><strong>${s.full_hits ?? 0}</strong> full</span>
-        <span><strong>${s.max_possible_hits ?? 0}</strong> máx posible</span>
+      <div class="cmp-body">
+        <div class="cmp-scoreline">
+          <span><strong>${s.simple_hits ?? 0}</strong> simple</span>
+          <span><strong>${s.doubles_hits ?? 0}</strong> dobles</span>
+          <span><strong>${s.full_hits ?? 0}</strong> full</span>
+          <span><strong>${s.max_possible_hits ?? 0}</strong> máx posible</span>
+        </div>
+        <table class="cmp-table">
+          <thead><tr>
+            <th>#</th><th>Partido</th><th>Predicción</th><th title="Probabilidad visible (calibrada)">Prob. visible</th><th>Resultado</th>
+            <th title="Simple">S</th><th title="Dobles">D</th><th title="Full">F</th><th>Diagnóstico</th><th>Learning</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
       </div>
-      <table class="cmp-table">
-        <thead><tr>
-          <th>#</th><th>Partido</th><th>Predicción</th><th title="Probabilidad visible (calibrada)">Prob. visible</th><th>Resultado</th>
-          <th title="Simple">S</th><th title="Dobles">D</th><th title="Full">F</th><th>Diagnóstico</th><th>Learning</th>
-        </tr></thead>
-        <tbody>${rows}</tbody>
-      </table>
     </div>`;
 }
 
@@ -427,20 +469,17 @@ export function renderLiveDashboard(data) {
   // No slate has any real/live result yet → show the explicit empty state
   // alongside the (still useful) slate list, not an error.
   const noResults = all.length > 0 && all.every((e) => (e.completed_count || 0) + (e.live_count || 0) === 0);
+  // Only real official concursos are tracked. Demo/synthetic slates never
+  // render here — they carried no actionable signal and only added noise.
   const real = all.filter((e) => e.comparable === true);
-  const demo = all.filter((e) => e.comparable !== true);
-  const group = (title, entries, demoGroup) => `
-    <div class="track-group ${demoGroup ? "track-group-demo" : ""}">
-      <h3>${title}</h3>
-      <div class="track-grid">${(entries || []).map(renderDashboardEntry).join("") || '<p class="meta-copy">Sin quinielas.</p>'}</div>
-    </div>`;
   return `
     <div class="live-tracking">
       <div class="lt-header"><h2>Seguimiento de quinielas</h2></div>
       ${renderSummaryBar(data)}
       ${noResults ? renderNoComparableResults() : ""}
-      ${group("Quinielas reales", real, false)}
-      ${group("Demo / no comparable", demo, true)}
+      <div class="track-group">
+        <div class="track-grid">${real.map(renderDashboardEntry).join("") || '<p class="meta-copy">Sin quinielas.</p>'}</div>
+      </div>
     </div>`;
 }
 
@@ -470,14 +509,17 @@ export function initLiveTracking({ container, detailContainer, fetchJson }) {
   async function showDetail(slateId) {
     if (!detailContainer) return;
     try {
-      // Postmortem comparison + the tracking view (for learning_status). The
-      // tracking call is best-effort: if it fails the comparison still
-      // renders, just without the Learning column populated.
-      const [data, tracking] = await Promise.all([
+      // Postmortem comparison + the tracking view (for learning_status) + the
+      // read-only external provider dry-run. Tracking and external are
+      // best-effort: if either fails the comparison still renders, just
+      // without that overlay.
+      const [data, tracking, external] = await Promise.all([
         fetchJson(`/slates/${slateId}/result-comparison`),
         fetchJson(`/slates/${slateId}/tracking`),
+        fetchJson(`/results/slates/${slateId}/provider-dry-run`).catch(() => null),
       ]);
       if (!data) throw new Error("empty");
+      decorateWithExternalResults(data, external && !Array.isArray(external) ? external : null);
       if (tracking && Array.isArray(tracking.matches) && Array.isArray(data.matches)) {
         data.learning_rows_ready = tracking.learning_rows_ready;
         data.learning_rows_pending = tracking.learning_rows_pending;
@@ -494,6 +536,16 @@ export function initLiveTracking({ container, detailContainer, fetchJson }) {
         });
       }
       detailContainer.innerHTML = renderComparisonDetail(data);
+      const toggle = detailContainer.querySelector(".cmp-minimize");
+      if (toggle) {
+        toggle.addEventListener("click", () => {
+          const detail = detailContainer.querySelector(".cmp-detail");
+          if (!detail) return;
+          const collapsed = detail.classList.toggle("is-collapsed");
+          toggle.textContent = collapsed ? "Expandir" : "Minimizar";
+          toggle.setAttribute("aria-expanded", String(!collapsed));
+        });
+      }
       detailContainer.scrollIntoView({ behavior: "smooth", block: "nearest" });
     } catch (err) {
       softNotice(detailContainer, "Detalle de seguimiento no disponible", () => showDetail(slateId));

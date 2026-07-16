@@ -10,6 +10,7 @@ import {
   renderLiveSlateDetail,
   renderDashboardEntry,
   renderLiveDashboard,
+  decorateWithExternalResults,
 } from "../live-tracking.js";
 
 const baseMatch = (over = {}) => ({
@@ -172,7 +173,7 @@ describe("renderLiveDashboard", () => {
     ...over,
   });
 
-  it("separates real concursos from demo and renders all four", () => {
+  it("renders only real concursos — demo/synthetic slates never appear", () => {
     const data = {
       closed: [
         entry({ draw_code: "PG-2336", classification: "official_real", comparable: true }),
@@ -185,16 +186,15 @@ describe("renderLiveDashboard", () => {
     };
     const html = renderLiveDashboard(data);
     expect(html).toContain("Seguimiento de quinielas");
-    expect(html).toContain("Quinielas reales");
-    expect(html).toContain("Demo / no comparable");
-    for (const code of ["PG-2336", "PGM-799", "PG-2337", "PGM-800"]) {
+    expect(html).not.toContain("Demo / no comparable");
+    for (const code of ["PG-2336", "PGM-800"]) {
       expect(html).toContain(code);
     }
-    expect((html.match(/track-card/g) || []).length).toBe(4);
-    expect((html.match(/Ver comparación/g) || []).length).toBe(4);
-    // Demo cards carry the "Demo — no comparable" badge.
-    expect((html.match(/Demo — no comparable/g) || []).length).toBe(2);
-    expect(html).toContain("is-demo");
+    for (const code of ["PGM-799", "PG-2337"]) {
+      expect(html).not.toContain(code);
+    }
+    expect((html.match(/track-card/g) || []).length).toBe(2);
+    expect((html.match(/Ver comparación/g) || []).length).toBe(2);
   });
 
   it("shows empty copy when a group has no slates", () => {
@@ -381,6 +381,65 @@ describe("renderComparisonDetail", () => {
     expect(html).toContain("Fuente revisada");
     expect(html).toContain("ingest-results");
     expect(html).not.toContain("cmp-row");
+  });
+
+  it("includes a minimize toggle wrapping the collapsible body", () => {
+    const html = renderComparisonDetail(base());
+    expect(html).toContain("cmp-minimize");
+    expect(html).toContain("Minimizar");
+    expect(html).toContain("cmp-body");
+  });
+
+  it("still renders the table when only external (non-official) scores exist", () => {
+    const data = base({
+      results_ingested: false,
+      completed_count: 0,
+      external_results_count: 1,
+      matches: [cmpMatch({ position: 1, external_score: "0-2" })],
+    });
+    const html = renderComparisonDetail(data);
+    expect(html).not.toContain("Sin resultados ingeridos");
+    expect(html).toContain("marcador(es) externo(s)");
+    expect(html).toContain("Ext. 0-2");
+  });
+});
+
+describe("decorateWithExternalResults", () => {
+  const pendingMatch = (position) => cmpMatch({ position, is_pending: true, is_final: false, status: null });
+
+  it("overlays finished high-confidence provider scores on pending positions only", () => {
+    const data = { matches: [pendingMatch(1), cmpMatch({ position: 2, is_pending: false, result_code: "1" })] };
+    const external = {
+      matches: [
+        { position: 1, status: "finished", score: "0-2", confidence: "high" },
+        { position: 2, status: "finished", score: "9-9", confidence: "high" },
+      ],
+    };
+    decorateWithExternalResults(data, external);
+    expect(data.matches[0].external_score).toBe("0-2");
+    // A position with an official result is never overwritten.
+    expect(data.matches[1].external_score).toBeUndefined();
+    expect(data.external_results_count).toBe(1);
+  });
+
+  it("ignores low-confidence, unfinished, or scoreless provider rows", () => {
+    const data = { matches: [pendingMatch(1), pendingMatch(2), pendingMatch(3)] };
+    const external = {
+      matches: [
+        { position: 1, status: "finished", score: "1-0", confidence: "low" },
+        { position: 2, status: "in_play", score: "1-0", confidence: "high" },
+        { position: 3, status: "finished", score: null, confidence: "high" },
+      ],
+    };
+    decorateWithExternalResults(data, external);
+    expect(data.matches.every((m) => m.external_score === undefined)).toBe(true);
+    expect(data.external_results_count).toBeUndefined();
+  });
+
+  it("tolerates a null/absent external payload", () => {
+    const data = { matches: [pendingMatch(1)] };
+    expect(() => decorateWithExternalResults(data, null)).not.toThrow();
+    expect(data.matches[0].external_score).toBeUndefined();
   });
 });
 
