@@ -29,6 +29,25 @@ def test_scoring_compares_prediction_vs_result(learn_db):  # noqa: F811
     assert by_pos[2]["hit"] is False
 
 
+def test_scoring_never_rebuilds_money_mode_for_closed_slates(learn_db, monkeypatch):  # noqa: F811
+    """Latency + honesty regression (tabs audit 2026-07-16): scoring an
+    archived slate rebuilt the full Money Mode pipeline (~3s each, fanned over
+    every slate on /learning/completed-slates/scores) and reported TODAY'S
+    verdict as if it had governed the played jornada. Closed slates must skip
+    the rebuild and report the flag as unknown (None)."""
+    import app.services.money_mode_service as money_mode
+
+    def _boom(*args, **kwargs):
+        raise AssertionError("money mode must not be rebuilt for a closed slate")
+
+    monkeypatch.setattr(money_mode, "build_money_mode", _boom)
+    slate = seed_official_slate(learn_db, draw="PG-MMCLOSED", n=4, archived=True)
+    report = LearningSlateScoringService(learn_db).score_slate(slate)
+    assert report["money_mode_blocked"] is None
+    by_pos = {p["position"]: p for p in report["by_position"]}
+    assert by_pos[1]["was_money_mode_blocked"] is None
+
+
 def test_scoring_counts_hits(learn_db):  # noqa: F811
     """8 — odd positions hit (home), even miss (away) -> 2/4 hits."""
     slate = seed_official_slate(learn_db, draw="PG-HITS", n=4)

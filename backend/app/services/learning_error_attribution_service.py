@@ -59,7 +59,7 @@ def classify_position(
     effective_probs: dict[str, float] | None = None,
     final_status: str | None = None,
     evidence_level: str | None = None,
-    money_blocked: bool = False,
+    money_blocked: bool | None = False,
     has_prediction: bool = True,
     has_result: bool = True,
     result_conflict: bool = False,

@@ -247,8 +247,23 @@ class LearningSlateScoringService:
             latest.setdefault(pred.match_id, pred)
         return latest
 
-    def _money_mode_blocked(self, slate: ProgolSlateModel) -> bool:
+    def _money_mode_blocked(self, slate: ProgolSlateModel) -> bool | None:
+        """Money-mode context for the learning score.
+
+        Only meaningful — and only computed — for a slate that is still open:
+        Money Mode rebuilds the full prediction pipeline, so calling it for
+        every archived slate made the learning endpoints take ~3s per slate,
+        and worse, it reported TODAY'S verdict (current model, refreshed
+        ratings) as if it were the verdict that governed a jornada already
+        played. For closed/archived slates the honest value is unknown (None):
+        no snapshot of the historical decision is persisted.
+        """
         try:
+            from app.repositories.slate_repository import SlateRepository
+            from app.services.slate_service import SlateService
+
+            if SlateService(SlateRepository(self.session)).is_closed(slate):
+                return None
             from app.services.money_mode_service import build_money_mode
 
             report = build_money_mode(self.session, slate)

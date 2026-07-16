@@ -67,9 +67,32 @@ def _provider_sign(score: str | None, status: str | None) -> str | None:
     return "E"
 
 
-def build_completed_slate_validation(session: Session, slate: ProgolSlateModel) -> dict[str, Any]:
-    """Read-only result-validation dry-run for one (completed) slate."""
-    provider = build_slate_results_dry_run(slate)
+def build_completed_slate_validation(
+    session: Session, slate: ProgolSlateModel, *, consult_provider: bool = True
+) -> dict[str, Any]:
+    """Read-only result-validation dry-run for one (completed) slate.
+
+    The external provider is a GAP-FILLER: even when ``consult_provider`` is
+    True it is only reached when at least one position lacks a local canonical
+    result — a slate with full local coverage has nothing to apply. List
+    endpoints that fan out over every slate (the learning inventory) pass
+    ``consult_provider=False`` so they stay pure-DB no matter how much slate
+    history accumulates; the per-slate validation panel keeps the provider
+    cross-check. Fanned-out HTTP here is what made the tabs take tens of
+    seconds (one ~1.5s call per slate against a 10-req/min budget).
+    """
+    ordered_links = sorted(slate.matches, key=lambda item: item.position)
+    local_by_match = {
+        link.match_id: _local_result_sign(session, link.match_id) for link in ordered_links
+    }
+    has_local_gaps = any(sign is None for sign in local_by_match.values())
+    needs_provider = consult_provider and has_local_gaps
+    if needs_provider:
+        provider = build_slate_results_dry_run(slate)
+    elif has_local_gaps:
+        provider = {"status": "not_consulted", "matches": []}
+    else:
+        provider = {"status": "skipped_local_complete", "matches": []}
     provider_by_pos = {m["position"]: m for m in provider.get("matches", [])}
 
     rows: list[dict[str, Any]] = []
@@ -79,12 +102,12 @@ def build_completed_slate_validation(session: Session, slate: ProgolSlateModel) 
     conflicts = 0
     covered = 0
 
-    for link in sorted(slate.matches, key=lambda item: item.position):
+    for link in ordered_links:
         match = link.match
         home = getattr(match.home_team, "name", None)
         away = getattr(match.away_team, "name", None)
         prediction = _latest_prediction_sign(session, slate.id, match.id)
-        local = _local_result_sign(session, match.id)
+        local = local_by_match.get(link.match_id)
         pv = provider_by_pos.get(link.position, {})
         provider_sign = _provider_sign(pv.get("score"), pv.get("status"))
 
@@ -124,7 +147,7 @@ def build_completed_slate_validation(session: Session, slate: ProgolSlateModel) 
     coverage = round(covered / total, 4) if total else 0.0
 
     blockers: list[str] = []
-    if provider_results_count == 0:
+    if provider_results_count == 0 and needs_provider:
         blockers.append("missing_provider_results")
     if local_results_count == 0:
         blockers.append("missing_local_results")
@@ -165,7 +188,12 @@ def build_completed_slate_validation(session: Session, slate: ProgolSlateModel) 
 
 
 def build_completed_slates_validation(session: Session) -> dict[str, Any]:
-    """Validate every completed (archived) slate that has predictions."""
+    """Validate every completed (archived) slate that has predictions.
+
+    Pure-DB (``consult_provider=False``): this fans out over every archived
+    slate, so one provider call per gap-slate is unbounded latency. The
+    provider cross-check lives in the per-slate panel and the apply CLI.
+    """
     from app.repositories.slate_repository import SlateRepository
     from app.services.slate_service import SlateService
 
@@ -177,7 +205,7 @@ def build_completed_slates_validation(session: Session) -> dict[str, Any]:
             continue
         if not slate.matches:
             continue
-        out.append(build_completed_slate_validation(session, slate))
+        out.append(build_completed_slate_validation(session, slate, consult_provider=False))
     return {
         "mode": "completed_slate_results_validation_all",
         "slate_count": len(out),

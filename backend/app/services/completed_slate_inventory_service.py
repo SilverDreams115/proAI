@@ -112,7 +112,10 @@ def build_slate_inventory_item(
     session: Session, slate: ProgolSlateModel
 ) -> dict[str, Any]:
     """Read-only learning-inventory record for one slate."""
-    validation = build_completed_slate_validation(session, slate)
+    # Inventory is a list endpoint: local-only validation keeps it pure-DB
+    # regardless of how many slates accumulate. The provider cross-check
+    # lives in the per-slate validation panel, not here.
+    validation = build_completed_slate_validation(session, slate, consult_provider=False)
     reality = classify_slate(session, slate)
     canonical_count, conflicts = _canonical_counts(session, slate)
     prediction_count = _prediction_match_count(session, slate)

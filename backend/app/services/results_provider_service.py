@@ -169,18 +169,36 @@ def _parse_football_data(payload: dict[str, Any]) -> list[ProviderMatch]:
     return out
 
 
+# The free tier allows ~10 requests/min and its scores are already delayed, so
+# a short shared cache per date-window both respects the rate limit and keeps
+# fan-out callers (inventory/validation over many slates, the Seguimiento
+# overlay) from paying one HTTP round-trip each. 5 minutes matches the
+# provider's own freshness.
+_FETCH_CACHE_TTL_SECONDS = 300.0
+
+
 def _fetch_football_data(date_from: str, date_to: str, *, settings=global_settings) -> list[ProviderMatch]:
-    base = settings.football_data_base_url.rstrip("/")
-    if not base.endswith("/v4"):
-        base = base + "/v4"
-    query = urlencode({"dateFrom": date_from, "dateTo": date_to})
-    url = f"{base}/matches?{query}"
-    request = Request(
-        url, headers={"X-Auth-Token": settings.football_data_api_key or "", "User-Agent": "proAI/0.1"}
+    from app.services.diagnostic_ttl_cache import cached_diagnostic_report
+
+    def _fetch() -> list[ProviderMatch]:
+        base = settings.football_data_base_url.rstrip("/")
+        if not base.endswith("/v4"):
+            base = base + "/v4"
+        query = urlencode({"dateFrom": date_from, "dateTo": date_to})
+        url = f"{base}/matches?{query}"
+        request = Request(
+            url, headers={"X-Auth-Token": settings.football_data_api_key or "", "User-Agent": "proAI/0.1"}
+        )
+        with safe_urlopen(request, timeout=20) as response:
+            payload = json.loads(response.read().decode("utf-8", errors="replace"))
+        return _parse_football_data(payload)
+
+    return cached_diagnostic_report(
+        "football_data_fetch",
+        (date_from, date_to),
+        _fetch,
+        ttl_seconds=_FETCH_CACHE_TTL_SECONDS,
     )
-    with safe_urlopen(request, timeout=20) as response:
-        payload = json.loads(response.read().decode("utf-8", errors="replace"))
-    return _parse_football_data(payload)
 
 
 def provider_configured(provider: str, *, settings=global_settings) -> bool:

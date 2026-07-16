@@ -90,6 +90,85 @@ def test_validation_compares_hits_when_results_present(db):  # noqa: F811
     # local-only coverage still needs provider confirmation to be apply-ready.
     assert report["ready_to_apply"] is False
     assert all(m["status"] in ("resolved", "conflict") for m in report["matches"])
+    # Full local coverage => the external provider is never consulted (it is a
+    # gap-filler, not a per-slate tax) and its absence is not a blocker.
+    assert report["provider_status"] == "skipped_local_complete"
+    assert "missing_provider_results" not in report["blockers"]
+
+
+def test_validation_skips_provider_network_when_local_coverage_full(db, monkeypatch):  # noqa: F811
+    """Latency regression (tabs audit 2026-07-16): the inventory/validation
+    list endpoints fanned one provider HTTP call out per archived slate
+    (~1.5s each, 10-req/min budget). With full local results the provider
+    must not be reached at all."""
+    import app.services.completed_slate_results_validation_service as mod
+
+    seed_canary_slate(db)
+    slate = _slate(db)
+    source = SourceModel(name="test-results-2", base_url="http://x", kind="manual")
+    db.add(source)
+    db.flush()
+    for link in slate.matches:
+        db.add(
+            MatchResultModel(
+                match_id=link.match_id,
+                source_id=source.id,
+                played_at=datetime(2026, 1, 10, tzinfo=timezone.utc),
+                home_goals=1,
+                away_goals=0,
+                result_code="1",
+            )
+        )
+    db.commit()
+
+    def _boom(*args, **kwargs):
+        raise AssertionError("provider must not be consulted with full local coverage")
+
+    monkeypatch.setattr(mod, "build_slate_results_dry_run", _boom)
+    report = build_completed_slate_validation(db, _slate(db))
+    assert report["provider_status"] == "skipped_local_complete"
+    assert report["coverage"] == 1.0
+
+
+def test_validation_all_slates_endpoint_is_pure_db(db, monkeypatch):  # noqa: F811
+    """The R6.4 list endpoint fans out over every archived slate, so it must
+    never consult the provider — the cross-check lives in the per-slate panel
+    and the apply CLI."""
+    import app.services.completed_slate_results_validation_service as mod
+    from app.services.completed_slate_results_validation_service import (
+        build_completed_slates_validation,
+    )
+
+    seed_canary_slate(db)
+    slate = _slate(db)
+    slate.is_archived = True
+    db.commit()
+
+    def _boom(*args, **kwargs):
+        raise AssertionError("list endpoint must never consult the provider")
+
+    monkeypatch.setattr(mod, "build_slate_results_dry_run", _boom)
+    report = build_completed_slates_validation(db)
+    assert report["slate_count"] >= 1
+    assert all(s["provider_status"] == "not_consulted" for s in report["slates"])
+
+
+def test_validation_list_mode_never_reaches_the_provider(db, monkeypatch):  # noqa: F811
+    """consult_provider=False (the inventory path) is pure-DB even when local
+    results are missing — list endpoints must not fan out HTTP per slate."""
+    import app.services.completed_slate_results_validation_service as mod
+
+    seed_canary_slate(db)
+
+    def _boom(*args, **kwargs):
+        raise AssertionError("list mode must never consult the provider")
+
+    monkeypatch.setattr(mod, "build_slate_results_dry_run", _boom)
+    report = build_completed_slate_validation(db, _slate(db), consult_provider=False)
+    assert report["provider_status"] == "not_consulted"
+    assert report["local_results_count"] == 0
+    # Not consulting is not a blocker — the panel with cross-check is elsewhere.
+    assert "missing_provider_results" not in report["blockers"]
 
 
 # --- R7.0: manual official results (load / validate / guarded apply) ---------
