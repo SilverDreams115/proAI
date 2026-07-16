@@ -32,3 +32,6 @@ backups/
 
 # Experimental ML artifacts (boosters / metrics) — not productive, not in VCS
 artifacts/
+
+# Timestamped local snapshots of the progol context export
+data/progol_context/*.bak

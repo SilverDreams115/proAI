@@ -1,5 +1,5 @@
 PYTHON ?= .venv/bin/python
-PYTEST_ARGS ?= -q
+PYTEST_ARGS ?= backend/tests -q
 PYTEST_FAST_ARGS ?= backend/tests -q -m "not integration and not slow"
 PYTEST_INTEGRATION_ARGS ?= backend/tests -q -m "integration and not slow"
 PYTEST_SLOW_ARGS ?= backend/tests -q -m "slow"
