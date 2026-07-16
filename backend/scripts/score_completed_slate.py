@@ -34,6 +34,27 @@ def _print_score(report: dict[str, Any]) -> None:
           f"money_mode_blocked={report['money_mode_blocked']}")
     print(f"  hits={s['hits']}/{s['total']} hit_rate={s['hit_rate']} "
           f"top1={s['top1_hits']} top2_cov={s['top2_covered']} brier={s['brier']} logloss={s['logloss']}")
+    economics = report.get("economic_shadow") or {}
+    strategies = economics.get("strategies") or {}
+    for name in ("model_top1", "model_top2", "full_cover"):
+        item = strategies.get(name)
+        if not item:
+            continue
+        print(
+            f"  economics[{name}] covered={item['covered_positions']}/{item['positions']} "
+            f"perfect={item['perfect_covered']} combinations={item['combinations']} "
+            f"cost_units={item['cost_units']} break_even={item['break_even_payout_units']} "
+            f"roi={item['simulated_roi']}"
+        )
+    backtest = report.get("ticket_strategy_backtest") or {}
+    best = backtest.get("best_strategy") or {}
+    if best:
+        print(
+            f"  best_ticket_strategy={best['key']} covered={best['covered_positions']}/{best['positions']} "
+            f"perfect={best['perfect_covered']} doubles={best['double_count']} "
+            f"combinations={best['combinations']} cost_units={best['cost_units']} "
+            f"roi={best['simulated_roi']}"
+        )
     for p in report["by_position"]:
         print(f"    pos{p['position']:>2} pred={p['prediction'] or '-'} actual={p['actual'] or '-'} "
               f"hit={p['hit']} p_actual={p['probability_assigned_to_actual']} "

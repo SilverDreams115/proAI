@@ -98,6 +98,44 @@ describe("renderLearningDashboard", () => {
     expect(doc.body.textContent).toContain("blocked");
   });
 
+  it("shows economic shadow when comparable scores are available", () => {
+    const scores = {
+      economic_shadow_summary: {
+        strategies: {
+          model_top1: {
+            perfect_count: 1,
+            complete_count: 2,
+            total_cost_units: 2,
+            simulated_roi: null,
+          },
+        },
+      },
+      ticket_strategy_backtest_summary: {
+        best_strategy: {
+          strategy: "4 dobles por incertidumbre",
+          perfect_count: 1,
+          complete_count: 2,
+          total_cost_units: 32,
+        },
+        strategies: {
+          uncertainty_4_doubles: {
+            strategy: "4 dobles por incertidumbre",
+            perfect_count: 1,
+            complete_count: 2,
+            coverage_rate: 0.9,
+            total_cost_units: 32,
+          },
+        },
+      },
+    };
+    const doc = dom(renderLearningDashboard(inventory([COMPARABLE]), null, scores));
+    expect(doc.body.textContent).toContain("model_top1");
+    expect(doc.body.textContent).toContain("Costo unidades");
+    expect(doc.body.textContent).toContain("ROI solo aparece");
+    expect(doc.body.textContent).toContain("Mejor estrategia histórica");
+    expect(doc.body.textContent).toContain("4 dobles por incertidumbre");
+  });
+
   it("renders the dashboard immediately without readiness", () => {
     const doc = dom(renderLearningDashboard(inventory([COMPARABLE]), null));
     expect(doc.body.textContent).toContain("PG-DONE");

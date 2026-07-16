@@ -2085,14 +2085,18 @@ async function loadLearningDashboard() {
   if (!body) return;
   learningDashboardLoadPromise = (async () => {
     const readinessPromise = safeFetch("/learning/dataset-readiness", { optional: true }).catch(() => null);
+    const scoresPromise = safeFetch("/learning/completed-slates/scores", { optional: true }).catch(() => null);
     try {
       const inventory = await safeFetch("/learning/completed-slates/inventory", { optional: true });
       if (!inventory) return; // keep the honest "cargando…" placeholder on any non-OK response
       learningDashboardLoaded = true;
       body.innerHTML = renderLearningDashboard(inventory, null);
       const readiness = await readinessPromise;
+      const scores = await scoresPromise;
       if (readiness) {
-        body.innerHTML = renderLearningDashboard(inventory, readiness);
+        body.innerHTML = renderLearningDashboard(inventory, readiness, scores);
+      } else if (scores) {
+        body.innerHTML = renderLearningDashboard(inventory, null, scores);
       }
     } catch (_err) {
       // Leave the placeholder; the learning dashboard is best-effort and read-only.

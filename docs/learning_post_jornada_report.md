@@ -134,3 +134,22 @@ python -m scripts.audit_learning_dataset_readiness
 Endpoints read-only equivalentes bajo `/api/learning/…`:
 `completed-slates/inventory`, `completed-slates/scores`, `slates/{id}/score`,
 `slates/{id}/attribution`, `calibration`, `dataset-readiness`.
+
+## Economic Shadow
+
+`score_completed_slate` and `/api/learning/completed-slates/scores` now include
+`economic_shadow`: a read-only cost/break-even layer over completed slates. It
+does not invent prize money. By default it reports combinations, cost units,
+perfect coverage and break-even payout. ROI remains `null` until
+`PROAI_ECONOMIC_SHADOW_PAYOUT_UNITS` is configured with an external payout
+assumption.
+
+## Ticket Strategy Backtest
+
+`score_completed_slate` and `/api/learning/completed-slates/scores` also include
+`ticket_strategy_backtest`: a fixed catalog of practical boleto rules such as
+top-1 only, top-2 all, 4/6 uncertainty doubles, guardrail-first doubles, and
+budget-capped 32/128-combination tickets. Each strategy reports covered
+positions, perfect coverage, combinations, cost units, break-even payout and
+optional simulated ROI. This is the ranking surface for future slates: improve
+coverage without drifting into full-cover costs.

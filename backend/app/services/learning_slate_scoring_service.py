@@ -20,8 +20,17 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.tables import PredictionModel, ProgolSlateModel
+from app.core.settings import settings
 from app.repositories.canonical_result_repository import CanonicalResultRepository
+from app.services.learning_economics_service import (
+    build_economic_shadow,
+    summarize_economic_shadow,
+)
 from app.services.learning_error_attribution_service import classify_position, guardrail_status
+from app.services.learning_ticket_strategy_backtest_service import (
+    build_ticket_strategy_backtest,
+    summarize_ticket_strategy_backtests,
+)
 from app.services.slate_classification_service import classify_slate
 
 _SIGN_FROM_CODE = {"1": "L", "X": "E", "2": "V"}
@@ -192,6 +201,16 @@ class LearningSlateScoringService:
             "canonical_results": canonical_full,
             "money_mode_blocked": money_blocked,
             "score": score,
+            "economic_shadow": build_economic_shadow(
+                by_position,
+                unit_cost=settings.economic_shadow_unit_cost,
+                payout_units=settings.economic_shadow_payout_units,
+            ),
+            "ticket_strategy_backtest": build_ticket_strategy_backtest(
+                by_position,
+                unit_cost=settings.economic_shadow_unit_cost,
+                payout_units=settings.economic_shadow_payout_units,
+            ),
             "by_position": by_position,
             "write_safety": {"writes_performed": False, "snapshots_created": False},
         }
@@ -264,6 +283,8 @@ def score_comparable_slates(session: Session) -> dict[str, Any]:
         "slate_count": len(out),
         "comparable_count": len(comparable),
         "comparable_slates": [r["draw_code"] for r in comparable],
+        "economic_shadow_summary": summarize_economic_shadow(comparable),
+        "ticket_strategy_backtest_summary": summarize_ticket_strategy_backtests(comparable),
         "slates": out,
         "write_safety": {"writes_performed": False, "snapshots_created": False},
     }

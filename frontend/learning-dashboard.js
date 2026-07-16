@@ -64,7 +64,71 @@ function slateCard(slate) {
     </div>`;
 }
 
-export function renderLearningDashboard(inventory, readiness) {
+function renderEconomicShadow(scores) {
+  const summary = scores?.economic_shadow_summary?.strategies || {};
+  const rows = ["model_top1", "model_top2", "full_cover"]
+    .map((key) => {
+      const item = summary[key];
+      if (!item) return "";
+      const roi = item.simulated_roi == null ? "—" : `${Math.round(Number(item.simulated_roi) * 100)}%`;
+      return `
+        <tr>
+          <td>${escapeHtml(key)}</td>
+          <td>${escapeHtml(item.perfect_count || 0)}/${escapeHtml(item.complete_count || 0)}</td>
+          <td>${escapeHtml(item.total_cost_units || 0)}</td>
+          <td>${escapeHtml(roi)}</td>
+        </tr>`;
+    })
+    .join("");
+  if (!rows) {
+    return `<p class="meta-copy">Economía shadow disponible cuando haya slates comparables scoreadas.</p>`;
+  }
+  return `
+    <div class="shadow-table-wrap">
+      <table class="shadow-table">
+        <thead><tr><th>Estrategia</th><th>Perfectas</th><th>Costo unidades</th><th>ROI simulado</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+    <p class="meta-copy subtle">ROI solo aparece si hay payout configurado; sin payout real, esto mide costo y break-even.</p>`;
+}
+
+function renderTicketStrategyBacktest(scores) {
+  const best = scores?.ticket_strategy_backtest_summary?.best_strategy;
+  const strategies = scores?.ticket_strategy_backtest_summary?.strategies || {};
+  if (!best || !Object.keys(strategies).length) {
+    return `<p class="meta-copy">Backtest de estrategias disponible cuando haya slates comparables scoreadas.</p>`;
+  }
+  const rows = Object.entries(strategies)
+    .sort((a, b) => {
+      const av = a[1];
+      const bv = b[1];
+      return (
+        Number(bv.perfect_count || 0) - Number(av.perfect_count || 0) ||
+        Number(bv.coverage_rate || 0) - Number(av.coverage_rate || 0) ||
+        Number(av.total_cost_units || 0) - Number(bv.total_cost_units || 0)
+      );
+    })
+    .slice(0, 5)
+    .map(([key, item]) => `
+      <tr>
+        <td>${escapeHtml(item.strategy || key)}</td>
+        <td>${escapeHtml(item.perfect_count || 0)}/${escapeHtml(item.complete_count || 0)}</td>
+        <td>${escapeHtml(item.coverage_rate == null ? "—" : `${Math.round(Number(item.coverage_rate) * 100)}%`)}</td>
+        <td>${escapeHtml(item.total_cost_units || 0)}</td>
+      </tr>`)
+    .join("");
+  return `
+    <p class="meta-copy"><strong>Mejor estrategia histórica:</strong> ${escapeHtml(best.strategy)} · perfectas ${escapeHtml(best.perfect_count || 0)}/${escapeHtml(best.complete_count || 0)} · costo ${escapeHtml(best.total_cost_units || 0)} unidades.</p>
+    <div class="shadow-table-wrap">
+      <table class="shadow-table">
+        <thead><tr><th>Estrategia</th><th>Perfectas</th><th>Cobertura</th><th>Costo unidades</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
+}
+
+export function renderLearningDashboard(inventory, readiness, scores = null) {
   if (!inventory || !Array.isArray(inventory.slates)) {
     return `<div class="empty-state">Sin inventario de aprendizaje.</div>`;
   }
@@ -77,6 +141,8 @@ export function renderLearningDashboard(inventory, readiness) {
       <div class="shadow-toprow">${badge}</div>
       <p class="dryrun-lead">Slates: ${escapeHtml(inventory.slate_count)} · comparables: <strong>${escapeHtml(inventory.comparable_count)}</strong> · training ready: <strong>${escapeHtml(trainingReady)}</strong></p>
       <p class="meta-copy">Readiness: ${escapeHtml(reason)}</p>
+      ${renderEconomicShadow(scores)}
+      ${renderTicketStrategyBacktest(scores)}
       <div class="trv-grid">${cards}</div>
       <div class="shadow-alert">Aprendizaje de solo lectura · no entrena, no escribe predicciones ni resultados. Aplicar resultados oficiales requiere <span class="mono">--apply --confirm APPLY-COMPLETED-SLATE-RESULTS</span>.</div>
     </div>

@@ -25,6 +25,13 @@ def _get_csv(name: str, default: list[str]) -> list[str]:
     return [item for item in values if item]
 
 
+def _get_optional_float(name: str) -> float | None:
+    raw = os.getenv(name)
+    if raw is None or raw.strip() == "":
+        return None
+    return float(raw)
+
+
 class Settings(BaseModel):
     model_config = ConfigDict(frozen=False)
 
@@ -117,6 +124,8 @@ class Settings(BaseModel):
     results_provider_dry_run_only: bool = Field(default=True)
     football_data_api_key: str | None = Field(default=None)
     football_data_base_url: str = Field(default="https://api.football-data.org/v4")
+    economic_shadow_unit_cost: float = Field(default=1.0)
+    economic_shadow_payout_units: float | None = Field(default=None)
     # Sentry SDK is opt-in. With no DSN set the SDK import is skipped
     # entirely (zero overhead). When the DSN is present we tag events
     # with the environment and the asset version hash so each release is
@@ -325,6 +334,8 @@ def load_settings() -> Settings:
         football_data_base_url=os.getenv(
             "PROAI_FOOTBALL_DATA_BASE_URL", "https://api.football-data.org/v4"
         ),
+        economic_shadow_unit_cost=float(os.getenv("PROAI_ECONOMIC_SHADOW_UNIT_COST", "1.0")),
+        economic_shadow_payout_units=_get_optional_float("PROAI_ECONOMIC_SHADOW_PAYOUT_UNITS"),
         team_rating_feature_enabled=_get_bool("PROAI_TEAM_RATING_FEATURE_ENABLED", False),
         team_rating_gate_enabled=_get_bool("PROAI_TEAM_RATING_GATE_ENABLED", False),
         team_rating_gate_competitions=_get_csv(
