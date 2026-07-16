@@ -40,9 +40,13 @@ _FALLBACK_GUIA_URL = (
 _CONCURSO_RE = re.compile(r"CONCURSO\s+(\d{3,5})", flags=re.IGNORECASE)
 # Fixture pattern: HOME VS\nCASILLERO N\nAWAY — allowing whitespace and
 # accented characters in the team names. Greedy capture limited by the
-# explicit VS / CASILLERO markers.
+# explicit VS / CASILLERO markers. Hyphens are part of the alphabet because
+# tournament placeholder fixtures print composite names ("G FRANCIA-ESPAÑA
+# VS G INGLATERRA-ARGENTINA" for the 2026 World Cup final): without them the
+# casillero silently fails to parse and its position can be filled by the
+# wrong section (the PG-2342 pos 1-2 incident).
 _FIXTURE_RE = re.compile(
-    r"([A-ZÁÉÍÓÚÑÜ.][A-ZÁÉÍÓÚÑÜ.\s]*?)\s+VS\s*\n\s*CASILLERO\s+(\d{1,2})\s*\n\s*([A-ZÁÉÍÓÚÑÜ.][A-ZÁÉÍÓÚÑÜ.\s]*?)(?:\n|$)",
+    r"([A-ZÁÉÍÓÚÑÜ.][A-ZÁÉÍÓÚÑÜ.\s-]*?)\s+VS\s*\n\s*CASILLERO\s+(\d{1,2})\s*\n\s*([A-ZÁÉÍÓÚÑÜ.][A-ZÁÉÍÓÚÑÜ.\s-]*?)(?:\n|$)",
     flags=re.MULTILINE,
 )
 _VENTA_RE = re.compile(
@@ -167,15 +171,18 @@ def parse_guia_text(text: str) -> tuple[str | None, list[_Fixture], datetime | N
     draw_code = draw_match.group(1) if draw_match else None
 
     fixtures: list[_Fixture] = []
-    seen_positions: set[int] = set()
+    last_position = 0
     for fixture_match in _FIXTURE_RE.finditer(text):
         position = int(fixture_match.group(2))
-        # The first 14 distinct CASILLERO numbers correspond to the
-        # regular concurso. CASILLERO 1-7 will repeat for revancha; the
-        # set membership guard keeps us on the first pass only.
-        if position in seen_positions:
+        # Casillero numbers are strictly increasing within the regular
+        # concurso; the revancha section restarts at CASILLERO 1. Stopping
+        # on the first non-increase keeps revancha fixtures out even when
+        # an earlier regular casillero failed to parse — a dedup-by-number
+        # guard instead lets revancha 1-2 masquerade as regular positions
+        # 1-2 (the PG-2342 incident).
+        if position <= last_position:
             break
-        seen_positions.add(position)
+        last_position = position
         home = _normalize_team(fixture_match.group(1))
         away = _normalize_team(fixture_match.group(3))
         if not home or not away:

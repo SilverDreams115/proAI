@@ -58,6 +58,55 @@ def test_parse_guia_text_parses_cierre_in_utc() -> None:
     assert closes_at == datetime(2026, 5, 31, 3, 0, tzinfo=timezone.utc)
 
 
+PG2342_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "progol_guia_2342.txt"
+
+
+def test_parse_guia_text_keeps_world_cup_placeholders_out_of_revancha() -> None:
+    """Regression for the PG-2342 pos 1-2 incident. Casilleros 1-2 carry
+    hyphenated World Cup placeholder names ("G FRANCIA-ESPAÑA"); the old
+    regex could not parse them and the dedup-by-position guard then let
+    the REVANCHA casilleros 1-2 (Juárez-Puebla, Monterrey-S. Laguna) fill
+    the regular quiniela's first two positions."""
+    draw_code, fixtures, closes_at = parse_guia_text(
+        PG2342_FIXTURE_PATH.read_text(encoding="utf-8")
+    )
+
+    assert draw_code == "2342"
+    assert len(fixtures) == 14
+    assert [f.position for f in fixtures] == list(range(1, 15))
+    # Positions 1-2 are the World Cup final / third-place placeholders.
+    assert fixtures[0].home == "G FRANCIA-ESPAÑA"
+    assert fixtures[0].away == "G INGLATERRA-ARGENTINA"
+    assert fixtures[1].home == "P FRANCIA-ESPAÑA"
+    assert fixtures[1].away == "P INGLATERRA-ARGENTINA"
+    # The revancha teams must not leak into the regular slate anywhere.
+    all_names = {f.home for f in fixtures} | {f.away for f in fixtures}
+    assert "JUÁREZ" not in all_names
+    assert "MONTERREY" not in all_names
+    # Regular positions 3+ still parse as before.
+    assert fixtures[2].home == "PUMAS"
+    assert fixtures[2].away == "PACHUCA"
+    assert fixtures[13].home == "TÉCNICO UNIVERSITARIO"
+    assert fixtures[13].away == "AUCAS"
+    # Cierre: viernes 17 de julio 21:00 CDMX → sábado 18 03:00 UTC.
+    assert closes_at == datetime(2026, 7, 18, 3, 0, tzinfo=timezone.utc)
+
+
+def test_parse_guia_text_stops_at_revancha_even_with_unparsed_positions() -> None:
+    """If a regular casillero fails to parse for any reason, the revancha
+    section must never backfill its position: casillero numbers restart
+    at 1 there, so the first non-increasing position ends parsing."""
+    text = PG2342_FIXTURE_PATH.read_text(encoding="utf-8")
+    # Cripple casillero 1's VS marker so the position genuinely fails.
+    crippled = text.replace("G FRANCIA-ESPAÑA VS", "G FRANCIA-ESPAÑA XX", 1)
+    _, fixtures, _ = parse_guia_text(crippled)
+    positions = [f.position for f in fixtures]
+    assert 1 not in positions
+    assert positions == sorted(positions)
+    all_names = {f.home for f in fixtures} | {f.away for f in fixtures}
+    assert "JUÁREZ" not in all_names
+
+
 def test_parse_guia_text_handles_missing_concurso_gracefully() -> None:
     """A malformed PDF (no CONCURSO header) must return None for the
     draw_code and an empty fixtures list rather than raising."""
