@@ -339,8 +339,12 @@ async def visible_slates(
 
     # Diagnostics: official slates held back by the date gate, enriched with
     # PDF provenance so an operator sees the source bytes + the rejected block.
+    # Archived slates are history, not a pending activation problem — they must
+    # never resurface as "detectada, no jugable" (any concurso, not just PGM-803).
     suspect_slates: list[dict] = []
     for slate in official:
+        if slate.is_archived:
+            continue
         status, status_reasons = slate_date_status(session, slate)
         if status != DateStatus.DATE_VALID:
             entry = {

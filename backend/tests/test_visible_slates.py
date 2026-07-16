@@ -132,6 +132,18 @@ def test_date_suspect_slate_is_held_back_and_diagnosed(db):
     assert entry["date_status"] in {"stale_source", "date_suspect", "needs_operator_confirmation"}
 
 
+def test_archived_date_suspect_slate_never_surfaces_as_detected(db):
+    # An ARCHIVED slate with a bad date is history, not a pending activation:
+    # it must not reappear in discovery.suspect_slates ("Detectada, no jugable").
+    slate = _seed_slate(db, draw_code="PGM-803", week_type="midweek", n=9, closes_at=_past())
+    _make_official(db, slate)
+    slate.is_archived = True
+    db.flush()
+    res = _visible(db)
+    assert all(s["draw_code"] != "PGM-803" for s in res.discovery.suspect_slates)
+    assert all(s.draw_code != "PGM-803" for s in res.open_slates)
+
+
 def test_provisional_ms_pdf_window_is_visible_as_open(db):
     slate = _seed_slate(db, draw_code="PGM-804", week_type="midweek", n=9, closes_at=_future())
     _make_official(db, slate)
