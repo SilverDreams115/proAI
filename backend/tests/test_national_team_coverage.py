@@ -844,3 +844,15 @@ class TestCompetitionPolicyForFriendlyVariants:
         p = self._policy("Progol Concurso 2336")
         assert p["competition_readiness"] == "context_only"
         assert p["live_pick_allowed"] is False
+
+    def test_pg2342_lower_coverage_competitions_are_context_only(self):
+        for name in (
+            "Club Friendlies",
+            "Brazilian Serie B",
+            "Norwegian Eliteserien",
+            "Uruguayan Primera Division",
+            "Ecuador Serie A",
+        ):
+            p = self._policy(name)
+            assert p["competition_readiness"] == "context_only"
+            assert p["live_pick_allowed"] is False

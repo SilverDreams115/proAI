@@ -144,6 +144,17 @@ class ModelTrainingService(ModelTrainingArtifactsMixin):
         "swe": "swe",
         "swedish-allsvenskan": "swe",
         "allsvenskan": "swe",
+        "club-friendlies": "club-friendlies",
+        "serie-b-brazil": "serie-b-brazil",
+        "brazilian-serie-b": "serie-b-brazil",
+        "brazil-serie-b": "serie-b-brazil",
+        "campeonato-brasileiro-serie-b": "serie-b-brazil",
+        "norwegian-eliteserien": "norwegian-eliteserien",
+        "eliteserien": "norwegian-eliteserien",
+        "uruguayan-primera-division": "uruguayan-primera-division",
+        "liga-auf-uruguaya": "uruguayan-primera-division",
+        "ecuador-serie-a": "ecuador-serie-a",
+        "ligapro-serie-a": "ecuador-serie-a",
     }
     COMPETITION_POLICY_OVERRIDES = {
         "progol-media-semana": {
@@ -305,6 +316,56 @@ class ModelTrainingService(ModelTrainingArtifactsMixin):
                 "walk-forward benchmark yet."
             ),
             "blend_weights": {"elo": 0.33, "poisson": 0.23, "profile": 0.44},
+            "draw_bias": 0.02,
+        },
+        "club-friendlies": {
+            "competition_readiness": "context_only",
+            "live_pick_allowed": False,
+            "policy_reason": (
+                "Club friendly without an audited benchmark. Score with slate context only; "
+                "do not treat as a safe live pick."
+            ),
+            "blend_weights": {"elo": 0.28, "poisson": 0.20, "profile": 0.52},
+            "draw_bias": 0.015,
+        },
+        "serie-b-brazil": {
+            "competition_readiness": "context_only",
+            "live_pick_allowed": False,
+            "policy_reason": (
+                "Brazil Serie B fixture resolved, but no dedicated walk-forward "
+                "benchmark is loaded. Score with context only."
+            ),
+            "blend_weights": {"elo": 0.31, "poisson": 0.22, "profile": 0.47},
+            "draw_bias": 0.02,
+        },
+        "norwegian-eliteserien": {
+            "competition_readiness": "context_only",
+            "live_pick_allowed": False,
+            "policy_reason": (
+                "Norwegian Eliteserien fixture resolved, but no audited benchmark "
+                "is loaded. Score with context only."
+            ),
+            "blend_weights": {"elo": 0.32, "poisson": 0.23, "profile": 0.45},
+            "draw_bias": 0.02,
+        },
+        "uruguayan-primera-division": {
+            "competition_readiness": "context_only",
+            "live_pick_allowed": False,
+            "policy_reason": (
+                "Uruguayan Primera fixture resolved, but no dedicated benchmark "
+                "is loaded. Score with context only."
+            ),
+            "blend_weights": {"elo": 0.31, "poisson": 0.22, "profile": 0.47},
+            "draw_bias": 0.025,
+        },
+        "ecuador-serie-a": {
+            "competition_readiness": "context_only",
+            "live_pick_allowed": False,
+            "policy_reason": (
+                "Ecuador Serie A fixture resolved, but no dedicated benchmark "
+                "is loaded. Score with context only."
+            ),
+            "blend_weights": {"elo": 0.31, "poisson": 0.22, "profile": 0.47},
             "draw_bias": 0.02,
         },
     }
