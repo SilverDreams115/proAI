@@ -6,6 +6,12 @@ El modelo de producción es **XGBoost** (CPU-only). Es la única librería ML pe
 
 El modelo produce probabilidades `P(home) / P(draw) / P(away)` para cada partido de una slate Progol. Antes de XGBoost, se aplica un ajuste Poisson-Dixon para calibrar el peso del empate según el ritmo de goles del partido específico.
 
+XGBoost solo se usa en las competiciones donde el veredicto walk-forward publicado (`/data/backtest_history/index.json`, campo `xgboost_beats_heuristic`) lo aprueba; el resto rutea al **blend heurístico**: Elo + Poisson Dixon-Coles + perfil de equipo. En ese blend, Elo y perfil votan solo el reparto local-vs-visitante y el grid Dixon-Coles es dueño de la masa del empate — mezclar sus masas completas y renormalizar diluía E sistemáticamente (~0.30 → ~0.23), el hallazgo de la comparación contra mercado de 2026-07-16.
+
+### Retrain periódico del artefacto base
+
+El worker reentrena `elo_poisson_blend` cuando el último run en DB es más viejo que `PROAI_MODEL_RETRAIN_INTERVAL_HOURS` (default 24; 0 lo desactiva). El gate es el `trained_at` del run — no memoria del worker — así que los reinicios no lo redisparan. Esto mantiene frescos ratings, lambdas y curvas de calibración sin intervención del operador (el gap mayo→julio de 2026 apareció como sobreconfianza en partidos con forma reciente distinta). Es independiente del *adaptive retraining gate* de abajo, que aprende de jornadas Progol completas.
+
 ---
 
 ## Features de alto nivel
