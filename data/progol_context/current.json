@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-07-16T15:58:07.203090+00:00",
+  "generated_at": "2026-07-16T16:09:13.946498+00:00",
   "source": "active_slates_db",
   "items": [
     {
@@ -16,31 +16,31 @@
       "fixture_candidates": [
         {
           "position": 1,
-          "competition": "Progol Concurso 2342",
+          "competition": "International Friendlies",
           "country": null,
           "season": null,
-          "competition_is_placeholder": true,
-          "home_team": "G Francia-España",
+          "competition_is_placeholder": false,
+          "home_team": "Spain",
           "home_country": null,
-          "home_is_placeholder": true,
-          "away_team": "G Inglaterra-Argentina",
+          "home_is_placeholder": false,
+          "away_team": "Argentina",
           "away_country": null,
-          "away_is_placeholder": true,
+          "away_is_placeholder": false,
           "kickoff_at": "2026-07-18T15:00:00+00:00",
           "venue": null
         },
         {
           "position": 2,
-          "competition": "Progol Concurso 2342",
+          "competition": "International Friendlies",
           "country": null,
           "season": null,
-          "competition_is_placeholder": true,
-          "home_team": "P Francia-España",
+          "competition_is_placeholder": false,
+          "home_team": "France",
           "home_country": null,
-          "home_is_placeholder": true,
-          "away_team": "P Inglaterra-Argentina",
+          "home_is_placeholder": false,
+          "away_team": "England",
           "away_country": null,
-          "away_is_placeholder": true,
+          "away_is_placeholder": false,
           "kickoff_at": "2026-07-18T16:00:00+00:00",
           "venue": null
         },
