@@ -1,0 +1,91 @@
+{
+  "draw_code": "PG-2336",
+  "source": "manual_official",
+  "source_note": "LN oficial Progol 2336 (17/06/2026): LLELELELLEELLL; scores football-data + FIFA/Wikipedia (Mundial 2026 fase de grupos)",
+  "results": [
+    {
+      "position": 1,
+      "sign": "L",
+      "score": "2-0",
+      "source_note": "México vs South Africa"
+    },
+    {
+      "position": 2,
+      "sign": "L",
+      "score": "2-1",
+      "source_note": "South Korea vs Czech Republic"
+    },
+    {
+      "position": 3,
+      "sign": "E",
+      "score": "1-1",
+      "source_note": "Canada vs Bosnia-Herzegovina"
+    },
+    {
+      "position": 4,
+      "sign": "L",
+      "score": "4-1",
+      "source_note": "USA vs Paraguay"
+    },
+    {
+      "position": 5,
+      "sign": "E",
+      "score": "1-1",
+      "source_note": "Brazil vs Morocco"
+    },
+    {
+      "position": 6,
+      "sign": "L",
+      "score": "2-0",
+      "source_note": "Australia vs Turkey"
+    },
+    {
+      "position": 7,
+      "sign": "E",
+      "score": "2-2",
+      "source_note": "Netherlands vs Japan"
+    },
+    {
+      "position": 8,
+      "sign": "L",
+      "score": "1-0",
+      "source_note": "Ivory Coast vs Ecuador"
+    },
+    {
+      "position": 9,
+      "sign": "L",
+      "score": "5-1",
+      "source_note": "Sweden vs Tunisia"
+    },
+    {
+      "position": 10,
+      "sign": "E",
+      "score": "1-1",
+      "source_note": "Bélgica vs Egypt"
+    },
+    {
+      "position": 11,
+      "sign": "E",
+      "score": "2-2",
+      "source_note": "Iran vs New Zealand"
+    },
+    {
+      "position": 12,
+      "sign": "L",
+      "score": "3-1",
+      "source_note": "France vs Senegal"
+    },
+    {
+      "position": 13,
+      "sign": "L",
+      "score": "4-2",
+      "source_note": "England vs Croatia"
+    },
+    {
+      "position": 14,
+      "sign": "L",
+      "score": "1-0",
+      "source_note": "Ghana vs Panama"
+    }
+  ]
+}

@@ -1,0 +1,61 @@
+{
+  "draw_code": "PGM-801",
+  "source": "manual_official",
+  "source_note": "LN oficial sorteo MS 801 (27/06/2026): VLLELVEVE; scores FIFA/ESPN/olympics.com (Mundial 2026 grupos MD3, 24-26 jun)",
+  "results": [
+    {
+      "position": 1,
+      "sign": "V",
+      "score": "0-3",
+      "source_note": "Czech Republic vs México"
+    },
+    {
+      "position": 2,
+      "sign": "L",
+      "score": "3-1",
+      "source_note": "Switzerland vs Canada"
+    },
+    {
+      "position": 3,
+      "sign": "L",
+      "score": "2-1",
+      "source_note": "Ecuador vs Germany"
+    },
+    {
+      "position": 4,
+      "sign": "E",
+      "score": "1-1",
+      "source_note": "Japan vs Sweden"
+    },
+    {
+      "position": 5,
+      "sign": "L",
+      "score": "3-2",
+      "source_note": "Turkey vs USA"
+    },
+    {
+      "position": 6,
+      "sign": "V",
+      "score": "1-4",
+      "source_note": "Norway vs France"
+    },
+    {
+      "position": 7,
+      "sign": "E",
+      "score": "0-0",
+      "source_note": "Cabo Verde vs A. Saudita"
+    },
+    {
+      "position": 8,
+      "sign": "V",
+      "score": "0-1",
+      "source_note": "Uruguay vs Spain"
+    },
+    {
+      "position": 9,
+      "sign": "E",
+      "score": "1-1",
+      "source_note": "Egypt vs Iran"
+    }
+  ]
+}

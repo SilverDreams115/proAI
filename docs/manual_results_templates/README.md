@@ -41,3 +41,20 @@ docker compose exec --workdir /app/backend proai \
 
 After applying, re-run: `learning_inventory` → `score_completed_slate` →
 `audit_learning_calibration` → `audit_learning_dataset_readiness`.
+
+## Reglas aprendidas (backfill 2026-07-16, PG-2336/2339 + MS 799/801/802/803)
+
+- La **cadena oficial L/E/V** de Lotería Nacional es la fuente de verdad del
+  signo; los scores de proveedores/prensa solo la complementan. La cadena
+  derivada de los scores debe coincidir 100% con la oficial antes de aplicar.
+- **Eliminatorias**: Progol cuenta el tiempo regular (90'). Con prórroga o
+  penales, capturar el score de 90' (Bélgica 3-2 Senegal aet ⇒ E / 2-2).
+- Las **fechas/kickoffs de la DB pueden estar mal** en slates creadas desde la
+  guía (placeholders de bracket): no confiar en la ventana de fechas del
+  proveedor para identificar el fixture; confiar en el programa oficial del
+  concurso.
+- Posición con **slot de bracket** ("Ganador X"): relinkear con
+  `scripts/relink_slate_team.py` antes de aplicar.
+- Pendientes conocidos: PG-2341 (programa con mapeos dudosos y predicciones
+  incompletas; cadena oficial 12/07: EELVVLELVLVLLE) y PGM-804 (en curso al
+  2026-07-16).

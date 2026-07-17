@@ -1,0 +1,91 @@
+{
+  "draw_code": "PG-2339",
+  "source": "manual_official",
+  "source_note": "LN oficial Progol 2339 (04/07/2026): LEVELLLLEELVLV; scores 90' FIFA/ESPN/Wikipedia + Cooperativa/Gazeta (R32 Mundial + Copa Chile + Série B)",
+  "results": [
+    {
+      "position": 1,
+      "sign": "L",
+      "score": "2-0",
+      "source_note": "México vs Ecuador"
+    },
+    {
+      "position": 2,
+      "sign": "E",
+      "score": "1-1",
+      "source_note": "Netherlands vs Morocco"
+    },
+    {
+      "position": 3,
+      "sign": "V",
+      "score": "1-2",
+      "source_note": "Ivory Coast vs Norway"
+    },
+    {
+      "position": 4,
+      "sign": "E",
+      "score": "2-2",
+      "source_note": "Bélgica vs Senegal"
+    },
+    {
+      "position": 5,
+      "sign": "L",
+      "score": "2-0",
+      "source_note": "USA vs Bosnia-Herzegovina"
+    },
+    {
+      "position": 6,
+      "sign": "L",
+      "score": "3-0",
+      "source_note": "Spain vs Austria"
+    },
+    {
+      "position": 7,
+      "sign": "L",
+      "score": "2-1",
+      "source_note": "Portugal vs Croatia"
+    },
+    {
+      "position": 8,
+      "sign": "L",
+      "score": "2-0",
+      "source_note": "Switzerland vs Algeria"
+    },
+    {
+      "position": 9,
+      "sign": "E",
+      "score": "1-1",
+      "source_note": "Australia vs Egypt"
+    },
+    {
+      "position": 10,
+      "sign": "E",
+      "score": "1-1",
+      "source_note": "Argentina vs Cape Verde"
+    },
+    {
+      "position": 11,
+      "sign": "L",
+      "score": "1-0",
+      "source_note": "L. Colombia vs Ghana"
+    },
+    {
+      "position": 12,
+      "sign": "V",
+      "score": "0-1",
+      "source_note": "Botafogo Sp vs Crb"
+    },
+    {
+      "position": 13,
+      "sign": "L",
+      "score": "3-2",
+      "source_note": "Audax vs Palestino"
+    },
+    {
+      "position": 14,
+      "sign": "V",
+      "score": "0-1",
+      "source_note": "Cobresal vs La Serena"
+    }
+  ]
+}

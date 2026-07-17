@@ -1,0 +1,61 @@
+{
+  "draw_code": "PGM-803",
+  "source": "manual_official",
+  "source_note": "LN oficial sorteo MS 803 (10/07/2026): LELLVVVLV; scores 90' FIFA/ESPN + Gazeta/CBF/redgol/UEFA (R16+QF Mundial, Série B, Copa de la Liga, UCL qual)",
+  "results": [
+    {
+      "position": 1,
+      "sign": "L",
+      "score": "3-2",
+      "source_note": "Argentina vs Egypt"
+    },
+    {
+      "position": 2,
+      "sign": "E",
+      "score": "0-0",
+      "source_note": "Switzerland vs Colombia"
+    },
+    {
+      "position": 3,
+      "sign": "L",
+      "score": "2-0",
+      "source_note": "France vs Morocco"
+    },
+    {
+      "position": 4,
+      "sign": "L",
+      "score": "2-1",
+      "source_note": "Spain vs Bélgica"
+    },
+    {
+      "position": 5,
+      "sign": "V",
+      "score": "0-1",
+      "source_note": "Athletic Club vs Operario"
+    },
+    {
+      "position": 6,
+      "sign": "V",
+      "score": "1-2",
+      "source_note": "Ponte Preta vs Criciuma"
+    },
+    {
+      "position": 7,
+      "sign": "V",
+      "score": "0-1",
+      "source_note": "La Calera vs Coquimbo"
+    },
+    {
+      "position": 8,
+      "sign": "L",
+      "score": "2-1",
+      "source_note": "Ñublense vs O ´"
+    },
+    {
+      "position": 9,
+      "sign": "V",
+      "score": "1-4",
+      "source_note": "Vitebsk vs U. Craiova"
+    }
+  ]
+}

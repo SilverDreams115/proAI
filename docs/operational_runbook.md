@@ -201,13 +201,43 @@ intento de escribir DB productiva o activar el ticket real es un **stop inmediat
 - CLI: `python -m scripts.audit_slate_options --active-upcoming`.
 - Probe pricing: `python -m scripts.probe_progol_pricing`.
 
-### Validación de slates terminadas (PG-2337 / PGM-800)
+### Validación de slates terminadas
 - Panel **Validación de resultados** + endpoints
   `GET /api/tracking/completed-slates/results-validation` y
   `/api/tracking/slates/{id}/results-validation`.
 - CLI: `python -m scripts.validate_completed_slate_results --draw-code PG-2337`
   (o `--all-completed`). Solo lectura; reporta coverage, conflictos y qué falta.
-- Aplicar resultados: **bloqueado**
-  (`scripts/apply_completed_slate_results.py --apply --confirm
-  APPLY-COMPLETED-SLATE-RESULTS`), y aun así exige `ready_to_apply=true`. En R6.4
-  PG-2337/PGM-800 tienen 0 resultados → NOT READY → no se aplica nada.
+
+### Backfill post-jornada de resultados oficiales (proceso estándar, R7.1)
+
+El proveedor gratuito no cubre todas las ligas del programa (Sudamericana,
+ligas argentina/colombiana/chilena, Liga MX, MLS, Série B) y en eliminatorias
+reporta marcadores con tiempo extra. La vía canónica para cerrar una jornada
+en el learning loop es SIEMPRE el flujo manual-oficial:
+
+1. **Cadena oficial**: tomar la combinación ganadora del concurso en
+   `loterianacional.gob.mx` (Progol y Progol/Resultados listan los últimos 15
+   sorteos con su secuencia L/E/V). Esa cadena es la fuente de verdad del signo.
+2. **Plantilla**: `python -m scripts.make_manual_results_template --draw-code
+   PG-XXXX` (fixtures reales de la slate en `source_note`).
+3. **Scores**: llenar `sign` + `score` por posición desde fuentes verificables
+   (FIFA/ligas oficiales). Regla Progol: el signo cuenta el **tiempo regular
+   (90')**; si hubo prórroga/penales el `score` a capturar es el de 90'
+   (p.ej. Bélgica 3-2 Senegal en prórroga ⇒ `E` / `2-2`). El dry-run del
+   proveedor sirve como cross-check, nunca como fuente única.
+4. **Placeholders**: si una posición quedó ligada a un slot de bracket
+   ("Ganador X"), relinkear ANTES de aplicar:
+   `python -m scripts.relink_slate_team --draw-code PGM-803 --position 4
+   --side away --target-team "Bélgica" --dry-run` (apply con
+   `--apply --confirm RELINK-SLATE-TEAM`). In-place, preserva PK/predicciones.
+5. **Validar y aplicar**: `python -m scripts.validate_completed_slate_results
+   --manual-file <archivo> --dry-run` debe dar `ready_to_apply=true` y 0
+   blockers; después `--apply --confirm APPLY-COMPLETED-SLATE-RESULTS`.
+6. **Verificar**: `GET /api/learning/dataset-readiness` debe sumar la slate a
+   `comparable_slates`.
+
+La cadena derivada de los scores DEBE coincidir 100% con la cadena oficial del
+paso 1 antes de aplicar; cualquier desviación es señal de fixture mal mapeado
+(no aplicar: investigar/relinkear). Los apply automáticos de proveedor
+(`apply_provider_results.py`, `apply_completed_slate_results.py`) siguen
+intencionalmente inertes.

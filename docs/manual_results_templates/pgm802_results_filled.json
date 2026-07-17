@@ -1,0 +1,61 @@
+{
+  "draw_code": "PGM-802",
+  "source": "manual_official",
+  "source_note": "LN oficial sorteo MS 802 (03/07/2026): LVELLLLEE; scores 90' verificados FIFA/ESPN/Wikipedia (R32 Mundial 2026)",
+  "results": [
+    {
+      "position": 1,
+      "sign": "L",
+      "score": "2-0",
+      "source_note": "México vs Ecuador"
+    },
+    {
+      "position": 2,
+      "sign": "V",
+      "score": "1-2",
+      "source_note": "Ivory Coast vs Norway"
+    },
+    {
+      "position": 3,
+      "sign": "E",
+      "score": "2-2",
+      "source_note": "Bélgica vs Senegal"
+    },
+    {
+      "position": 4,
+      "sign": "L",
+      "score": "2-0",
+      "source_note": "USA vs Bosnia-Herzegovina"
+    },
+    {
+      "position": 5,
+      "sign": "L",
+      "score": "3-0",
+      "source_note": "Spain vs Austria"
+    },
+    {
+      "position": 6,
+      "sign": "L",
+      "score": "2-1",
+      "source_note": "Portugal vs Croatia"
+    },
+    {
+      "position": 7,
+      "sign": "L",
+      "score": "2-0",
+      "source_note": "Switzerland vs Algeria"
+    },
+    {
+      "position": 8,
+      "sign": "E",
+      "score": "1-1",
+      "source_note": "Australia vs Egypt"
+    },
+    {
+      "position": 9,
+      "sign": "E",
+      "score": "1-1",
+      "source_note": "Argentina vs Cape Verde"
+    }
+  ]
+}
