@@ -347,3 +347,35 @@ def test_no_active_service_integration_and_defaults_off():
     settings = load_settings()
     assert settings.team_rating_feature_enabled is False
     assert settings.team_rating_gate_enabled is False
+
+
+def test_shadow_audit_candidate_applies_per_position_on_mixed_slate(tmp_path):
+    """Candidate availability is per position: friendlies rows route even when
+    the slate as a whole is mixed; non-friendly rows stay blocked by the
+    competition gate. The gate_config keeps the slate-scope verdict."""
+    session = _make_session(tmp_path)
+    slate = _seed(session)
+    links = sorted(slate.matches, key=lambda link: link.position)
+
+    report = shadow_audit.audit_shadow(
+        session,
+        links,
+        assume_gate_enabled=True,
+        assume_calibrator_available=False,
+        routing_policy="rating-replaces-fallback",
+        calibrator_candidate_id="international_friendlies_temperature_v1",
+        assume_calibrator_candidate_available=True,
+    )
+
+    gate_config = report["gate_config"]
+    assert gate_config["calibrator_compatible"] is False  # slate scope: mixed
+    assert "mixed_competitions" in gate_config["calibrator_compatibility_blockers"]
+
+    summary = report["summary"]
+    assert summary["positions_would_route"] == [1, 3]
+    rows = {r["position"]: r for r in report["rows"]}
+    assert rows[1]["would_use_rating_model"] is True
+    assert "calibrator_unavailable" not in rows[1]["blockers"]
+    assert rows[4]["would_use_rating_model"] is False
+    assert "competition_not_allowed" in rows[4]["blockers"]
+    session.close()

@@ -346,25 +346,42 @@ def audit_shadow(
         and calibrator_candidate is not None
         and calibrator_compatible
     )
-    effective_assume_calibrator_available = (
-        assume_calibrator_available or candidate_available
-    )
     run, snaps = load_active_run_snapshots(session)
     latest_predictions = _latest_predictions_by_match(session)
-    rows = [
-        _row_for_link(
-            link,
-            snaps=snaps,
-            latest_predictions=latest_predictions,
-            assume_gate_enabled=assume_gate_enabled,
-            assume_calibrator_available=effective_assume_calibrator_available,
-            routing_policy=selected_policy,
-            calibrator_candidate=calibrator_candidate,
-            calibrator_candidate_available=candidate_available,
-            calibrator_candidate_compatible=calibrator_compatible,
+    # Candidate availability is decided PER POSITION: a mixed-competition slate
+    # (the normal case outside pure-Mundial weeks) must not disable the
+    # candidate for the positions that ARE inside its competition — the gate's
+    # own competition allowlist already blocks the rest. The gate_config fields
+    # keep the slate-scope verdict (mixed_competitions stays visible there).
+    rows = []
+    for link in links:
+        row_compatible = False
+        if calibrator_candidate is not None:
+            row_compatible, _ = is_calibrator_candidate_compatible(
+                candidate=calibrator_candidate,
+                competition_name=link.match.competition.name,
+                subset="both_medium_plus_only",
+                routing_policy=selected_policy,
+                min_test_rows=settings.team_rating_gate_min_test_rows,
+            )
+        row_candidate_available = (
+            assume_calibrator_candidate_available and row_compatible
         )
-        for link in links
-    ]
+        rows.append(
+            _row_for_link(
+                link,
+                snaps=snaps,
+                latest_predictions=latest_predictions,
+                assume_gate_enabled=assume_gate_enabled,
+                assume_calibrator_available=(
+                    assume_calibrator_available or row_candidate_available
+                ),
+                routing_policy=selected_policy,
+                calibrator_candidate=calibrator_candidate,
+                calibrator_candidate_available=row_candidate_available,
+                calibrator_candidate_compatible=row_compatible,
+            )
+        )
     return {
         "active_run": {
             "run_id": run.id,

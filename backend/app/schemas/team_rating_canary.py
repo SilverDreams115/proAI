@@ -15,6 +15,7 @@ class TeamRatingCanaryStatusResponse(BaseModel):
     allowed_positions: list[int]
     active_positions: list[int]
     blocked_positions: list[int]
+    calibrator_compatibility_blockers: list[str] = []
     full_activation: bool
     ticket_integration: bool
     rollback_available: bool

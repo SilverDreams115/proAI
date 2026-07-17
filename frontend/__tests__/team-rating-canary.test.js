@@ -51,6 +51,25 @@ describe("renderTeamRatingCanaryPanel", () => {
   it("renders an empty state without data", () => {
     expect(renderTeamRatingCanaryPanel(null)).toContain("Sin datos de canary");
   });
+  it("never claims ACTIVO with zero active positions and surfaces calibrator blockers", () => {
+    const idle = renderTeamRatingCanaryPanel({
+      ...STATUS,
+      active_positions: [],
+      blocked_positions: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14],
+      calibrator_compatibility_blockers: ["mixed_competitions"],
+    });
+    expect(idle).not.toContain("CANARY ACTIVO");
+    expect(idle).toContain("CANARY SIN POSICIONES ACTIVAS");
+    expect(idle).toContain("mixed_competitions");
+  });
+  it("shows slate-scope blockers as a note when positions are active", () => {
+    const active = renderTeamRatingCanaryPanel({
+      ...STATUS,
+      calibrator_compatibility_blockers: ["mixed_competitions"],
+    });
+    expect(active).toContain("CANARY ACTIVO");
+    expect(active).toContain("mixed_competitions");
+  });
 });
 
 describe("per-card CANARY badge wiring", () => {

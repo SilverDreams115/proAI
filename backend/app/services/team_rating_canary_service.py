@@ -54,6 +54,11 @@ class CanaryPlan:
     allowed_positions: list[int]
     active_positions: list[int]
     blocked_positions: list[int]
+    # Slate-scope calibrator compatibility blockers from the audited dry-run
+    # (e.g. mixed_competitions). Informative: positions are gated per-position,
+    # but the status panel must never claim "enabled" without surfacing why
+    # nothing (or only part) activates.
+    calibrator_compatibility_blockers: list[str]
 
 
 def _normalize(value: str) -> str:
@@ -96,10 +101,14 @@ def compute_canary_plan(session: Session, slate: ProgolSlateModel) -> CanaryPlan
     allow_comps = {_normalize(c) for c in settings.team_rating_canary_competition_allowlist}
 
     active_positions: list[int] = []
+    compatibility_blockers: list[str] = []
     if enabled and in_scope:
         links = sorted(slate.matches, key=lambda link: link.position)
         dry_run = build_activation_dry_run_payload(
             session, links, slate_id=slate.id, draw_code=draw_code
+        )
+        compatibility_blockers = list(
+            (dry_run.get("calibrator") or {}).get("compatibility_blockers", [])
         )
         would_route = {
             int(m["position"]): m
@@ -122,6 +131,7 @@ def compute_canary_plan(session: Session, slate: ProgolSlateModel) -> CanaryPlan
         allowed_positions=allowed_positions,
         active_positions=active_positions,
         blocked_positions=blocked_positions,
+        calibrator_compatibility_blockers=compatibility_blockers,
     )
 
 
@@ -193,6 +203,7 @@ def build_canary_status(session: Session, slate: ProgolSlateModel) -> dict[str, 
         "allowed_positions": plan.allowed_positions,
         "active_positions": plan.active_positions,
         "blocked_positions": plan.blocked_positions,
+        "calibrator_compatibility_blockers": plan.calibrator_compatibility_blockers,
         "full_activation": False,
         "ticket_integration": False,
         "rollback_available": True,

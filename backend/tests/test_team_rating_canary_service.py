@@ -255,3 +255,35 @@ def test_canary_service_has_no_ticket_integration():
     assert "save_snapshot" not in code
     assert "session.add" not in code
     assert ".commit(" not in code
+
+
+def test_canary_stays_active_for_friendlies_on_mixed_slate(tmp_path, monkeypatch):
+    """A mixed-competition slate (the normal case outside pure-Mundial weeks)
+    must not disable the candidate for the positions inside its competition:
+    before the per-position compatibility fix, one non-friendly position made
+    calibrator_unavailable block ALL positions and the canary went silently
+    dead while the status header still said enabled."""
+    session = _make_session(tmp_path)
+    slate = _seed(session)
+    other = CompetitionModel(name="Liga MX", country="MX")
+    t1 = TeamModel(name="X1", country=None)
+    t2 = TeamModel(name="X2", country=None)
+    session.add_all([other, t1, t2])
+    session.flush()
+    extra = MatchModel(
+        competition_id=other.id, home_team_id=t1.id, away_team_id=t2.id,
+        kickoff_at=_BASE.replace(day=6),
+    )
+    session.add(extra)
+    session.flush()
+    session.add(ProgolSlateMatchModel(slate_id=slate.id, match_id=extra.id, position=6))
+    session.commit()
+    _enable_canary(monkeypatch, positions=(1, 2, 3))
+
+    status = build_canary_status(session, slate)
+
+    assert status["active_positions"] == [1, 2]
+    assert 6 in status["blocked_positions"]
+    # The slate-scope incompatibility stays visible instead of silently
+    # zeroing the canary.
+    assert "mixed_competitions" in status["calibrator_compatibility_blockers"]
