@@ -28,7 +28,6 @@ import logging
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -200,7 +199,6 @@ def train(
     *,
     params: dict[str, Any] | None = None,
     num_boost_round: int = DEFAULT_NUM_BOOST_ROUND,
-    persist_root: Path | None = None,
 ) -> dict[str, Any] | None:
     """Fit the xG booster and persist it via ``artifact_storage``.
 

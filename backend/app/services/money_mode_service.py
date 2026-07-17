@@ -169,7 +169,6 @@ def _build_ticket(
 def _decide(
     *,
     validation: dict[str, Any],
-    aggressive: dict[str, Any],
     balanced: dict[str, Any],
     conservative: dict[str, Any],
     match_count: int,
@@ -326,7 +325,6 @@ def _build_money_mode_uncached(session: Session, slate: ProgolSlateModel) -> dic
 
     decision = _decide(
         validation=validation,
-        aggressive=tickets["aggressive"],
         balanced=tickets["balanced"],
         conservative=tickets["conservative"],
         match_count=match_count,
