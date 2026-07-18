@@ -94,12 +94,28 @@ NEURAL_ACTIVE_MODEL_NAME = "neural_baseline_active"
 
 @dataclass
 class NeuralBaselineConfig:
-    hidden_dims: list[int] = field(default_factory=lambda: [64, 32])
+    # A single small hidden layer. [64, 32] (~3k params) massively
+    # overfits the current tiny dataset (tens of rows); [16] (~256 params)
+    # plus L2 + early stopping generalizes far better on small data.
+    hidden_dims: list[int] = field(default_factory=lambda: [16])
     learning_rate: float = 0.01
-    epochs: int = 150
+    epochs: int = 300
     batch_size: int = 32
     min_rows: int = 20
     random_seed: int = 42
+    # L2 weight decay (applied to weights, not biases) — reduces overfit.
+    l2: float = 1e-3
+    # Inverse-frequency class weighting in the loss so the majority class
+    # (home wins) stops dominating the gradient and drawing/away recall
+    # doesn't collapse to ~0.
+    use_class_weights: bool = True
+    # Early stopping on the walk-forward holdout: stop after this many
+    # epochs without validation-loss improvement (only used when a
+    # validation fold is supplied; the final all-data fit runs full epochs).
+    early_stopping_patience: int = 30
+    # Number of most-recent slates held out for the walk-forward,
+    # out-of-sample evaluation (grouped by slate to avoid same-slate leakage).
+    holdout_slates: int = 1
     model_type: str = "neural_baseline_experimental"
     is_production: bool = False
 
@@ -230,10 +246,18 @@ class _NumpyMLP:
         return exp / exp.sum(axis=1, keepdims=True)
 
     @staticmethod
-    def _cross_entropy(probs: np.ndarray, y: np.ndarray) -> float:
+    def _cross_entropy(
+        probs: np.ndarray,
+        y: np.ndarray,
+        sample_weights: np.ndarray | None = None,
+    ) -> float:
         n = len(y)
         clipped = np.clip(probs[np.arange(n), y], 1e-9, 1.0)
-        return float(-np.mean(np.log(clipped)))
+        neg_log = -np.log(clipped)
+        if sample_weights is not None:
+            total = float(np.sum(sample_weights))
+            return float(np.sum(neg_log * sample_weights) / total) if total > 0 else 0.0
+        return float(np.mean(neg_log))
 
     @staticmethod
     def _brier_score(probs: np.ndarray, y: np.ndarray) -> float:
@@ -257,17 +281,37 @@ class _NumpyMLP:
 
     # --- backward --------------------------------------------------------
 
-    def backward(self, y: np.ndarray, lr: float) -> None:
-        """SGD update on one batch."""
+    def backward(
+        self,
+        y: np.ndarray,
+        lr: float,
+        *,
+        l2: float = 0.0,
+        sample_weights: np.ndarray | None = None,
+    ) -> None:
+        """SGD update on one batch.
+
+        ``sample_weights`` (per-row, e.g. inverse class frequency) reweights
+        each example's gradient so minority classes are not drowned out.
+        ``l2`` applies weight decay to the weight matrices (never biases).
+        """
         n = len(y)
         # Gradient at output: dL/dZ_out = softmax - one_hot
         dA = self._cache[-1].copy()
         dA[np.arange(n), y] -= 1.0
-        dA /= n
+        if sample_weights is not None:
+            w = sample_weights.reshape(-1, 1).astype(np.float32)
+            dA *= w
+            denom = float(np.sum(sample_weights))
+            dA /= denom if denom > 0 else 1.0
+        else:
+            dA /= n
 
         for i in range(self._n_layers - 1, -1, -1):
             A_prev = self._cache[i]
             dW = A_prev.T @ dA
+            if l2:
+                dW = dW + l2 * self.weights[i]
             db = dA.sum(axis=0)
             self.weights[i] -= lr * dW
             self.biases[i] -= lr * db
@@ -286,22 +330,55 @@ class _NumpyMLP:
         lr: float = 0.01,
         batch_size: int = 32,
         seed: int = 42,
+        l2: float = 0.0,
+        class_weights: np.ndarray | None = None,
+        X_val: np.ndarray | None = None,
+        y_val: np.ndarray | None = None,
+        patience: int | None = None,
     ) -> list[float]:
-        """Train in-place; return per-epoch loss history."""
+        """Train in-place; return per-epoch (training) loss history.
+
+        When ``class_weights`` is given, each row's gradient is scaled by
+        ``class_weights[y]`` (inverse-frequency balancing). When a
+        validation fold (``X_val``/``y_val``) and ``patience`` are given,
+        training early-stops on validation cross-entropy and restores the
+        best-seen weights.
+        """
         rng = np.random.default_rng(seed)
         n = len(X)
         history: list[float] = []
+        best_val = float("inf")
+        best_state: tuple[list[np.ndarray], list[np.ndarray]] | None = None
+        epochs_since_improve = 0
+        use_es = X_val is not None and y_val is not None and patience is not None
         for _ in range(epochs):
             idx = rng.permutation(n)
             epoch_loss = 0.0
             n_batches = 0
             for start in range(0, n, batch_size):
                 bi = idx[start : start + batch_size]
+                sw = class_weights[y[bi]] if class_weights is not None else None
                 probs = self.forward(X[bi])
-                epoch_loss += self._cross_entropy(probs, y[bi])
-                self.backward(y[bi], lr)
+                epoch_loss += self._cross_entropy(probs, y[bi], sw)
+                self.backward(y[bi], lr, l2=l2, sample_weights=sw)
                 n_batches += 1
             history.append(epoch_loss / max(n_batches, 1))
+            if use_es:
+                val_probs = self.forward(X_val)
+                val_ce = self._cross_entropy(val_probs, y_val)
+                if val_ce < best_val - 1e-6:
+                    best_val = val_ce
+                    best_state = (
+                        [w.copy() for w in self.weights],
+                        [b.copy() for b in self.biases],
+                    )
+                    epochs_since_improve = 0
+                else:
+                    epochs_since_improve += 1
+                    if epochs_since_improve >= patience:
+                        break
+        if best_state is not None:
+            self.weights, self.biases = best_state
         return history
 
     # --- inference -------------------------------------------------------
@@ -343,7 +420,14 @@ class NeuralBaselineModel:
         self._train_history: list[float] = []
         self._trained_on_rows: int = 0
 
-    def fit(self, X: np.ndarray, y: np.ndarray) -> "NeuralBaselineModel":
+    def fit(
+        self,
+        X: np.ndarray,
+        y: np.ndarray,
+        *,
+        X_val: np.ndarray | None = None,
+        y_val: np.ndarray | None = None,
+    ) -> "NeuralBaselineModel":
         cfg = self.config
         self._mlp = _NumpyMLP(
             input_dim=X.shape[1],
@@ -351,15 +435,31 @@ class NeuralBaselineModel:
             output_dim=3,
             seed=cfg.random_seed,
         )
+        class_weights = self._inverse_frequency_weights(y) if cfg.use_class_weights else None
         self._train_history = self._mlp.fit(
             X, y,
             epochs=cfg.epochs,
             lr=cfg.learning_rate,
             batch_size=cfg.batch_size,
             seed=cfg.random_seed,
+            l2=cfg.l2,
+            class_weights=class_weights,
+            X_val=X_val,
+            y_val=y_val,
+            patience=cfg.early_stopping_patience if X_val is not None else None,
         )
         self._trained_on_rows = len(X)
         return self
+
+    @staticmethod
+    def _inverse_frequency_weights(y: np.ndarray, n_classes: int = 3) -> np.ndarray:
+        """Balanced class weights: total / (n_classes * count_c), clipped so
+        an absent class doesn't explode. Mirrors sklearn's 'balanced' scheme
+        but stays pure-numpy."""
+        counts = np.bincount(y, minlength=n_classes).astype(np.float32)
+        n = float(len(y))
+        weights = n / (n_classes * np.maximum(counts, 1.0))
+        return weights.astype(np.float32)
 
     def predict_proba(self, X: np.ndarray) -> np.ndarray:
         if self._mlp is None:
@@ -415,6 +515,9 @@ class NeuralBaselineModel:
                 "epochs": cfg.epochs,
                 "batch_size": cfg.batch_size,
                 "random_seed": cfg.random_seed,
+                "l2": cfg.l2,
+                "use_class_weights": cfg.use_class_weights,
+                "early_stopping_patience": cfg.early_stopping_patience,
             },
             "feature_names": FEATURE_NAMES,
             "shadow_safe": True,
@@ -514,6 +617,9 @@ class NeuralBaselineService:
             "encoded_rows": len(X),
             "metrics": metrics,
             "comparison": self.compare_against_baseline(artifact),
+            # Honest out-of-sample number — judge the model by this, not by
+            # the in-sample ``metrics`` above (same rows train & score).
+            "holdout": self.walk_forward_eval(),
         }
 
     def train_offline(self) -> dict[str, Any]:
@@ -551,6 +657,7 @@ class NeuralBaselineService:
             "trainable_rows": n,
             "encoded_rows": len(X),
             "metrics": metrics,
+            "holdout": self.walk_forward_eval(),
             "artifact": artifact,
         }
 
@@ -639,6 +746,97 @@ class NeuralBaselineService:
             "neural_better_accuracy": acc_delta > 0,
         }
 
+    def _split_rows_by_slate(
+        self,
+    ) -> tuple[list[AdaptiveDatasetRow], list[AdaptiveDatasetRow]] | None:
+        """Group rows by slate and hold out the most recent ``holdout_slates``.
+
+        Rows arrive newest-slate-first (``_build_all_rows`` iterates jornada
+        scores by ``computed_at`` desc), so the first distinct slate ids are
+        the most recent. Holding out WHOLE slates (never individual rows)
+        prevents same-slate leakage between train and eval. Returns ``None``
+        when there aren't at least two slates or either fold would be empty.
+        """
+        order: list[str] = []
+        seen: set[str] = set()
+        for r in self.rows:
+            if r.slate_id not in seen:
+                seen.add(r.slate_id)
+                order.append(r.slate_id)
+        k = self.config.holdout_slates
+        if len(order) < k + 1:
+            return None
+        holdout_ids = set(order[:k])
+        holdout = [r for r in self.rows if r.slate_id in holdout_ids]
+        train = [r for r in self.rows if r.slate_id not in holdout_ids]
+        if not holdout or not train:
+            return None
+        return train, holdout
+
+    def walk_forward_eval(self) -> dict[str, Any]:
+        """Honest, out-of-sample evaluation.
+
+        Trains on the older slates and evaluates on the held-out most-recent
+        slate(s) — the rows the model never saw in training. This replaces the
+        misleading in-sample ``metrics`` (which trains and scores on the same
+        rows) as the number to judge the model by.
+        """
+        split = self._split_rows_by_slate()
+        if split is None:
+            return {
+                "status": "not_enough_slates",
+                "reason": "Need at least holdout_slates + 1 distinct slates.",
+            }
+        train_rows, holdout_rows = split
+        try:
+            X_tr, y_tr, _ = NeuralDatasetBuilder().build(train_rows)
+            X_ho, y_ho, _ = NeuralDatasetBuilder().build(holdout_rows)
+        except ValueError as exc:
+            return {"status": "not_enough_data", "reason": str(exc)}
+        if len(X_tr) < 1 or len(X_ho) < 1:
+            return {"status": "not_enough_data", "reason": "empty train/holdout fold"}
+
+        model = NeuralBaselineModel(self.config).fit(X_tr, y_tr, X_val=X_ho, y_val=y_ho)
+        neural = model.evaluate(X_ho, y_ho)
+
+        # Baseline (production probs stored on the holdout rows) on the same fold.
+        valid = [
+            r for r in holdout_rows
+            if RESULT_TO_IDX.get(r.actual_result) is not None
+            and not (r.prob_home is None and r.prob_draw is None and r.prob_away is None)
+        ]
+        base_probs = np.array(
+            [[r.prob_home or 1/3, r.prob_draw or 1/3, r.prob_away or 1/3] for r in valid],
+            dtype=np.float32,
+        )
+        base_y = np.array([RESULT_TO_IDX[r.actual_result] for r in valid], dtype=np.int64)
+        baseline = {
+            "accuracy": round(float(np.mean(base_probs.argmax(axis=1) == base_y)), 4),
+            "brier_score": round(float(_NumpyMLP._brier_score(base_probs, base_y)), 4),
+            "cross_entropy": round(float(_NumpyMLP._cross_entropy(base_probs, base_y)), 4),
+        } if len(valid) else None
+
+        holdout_codes = sorted({r.draw_code for r in holdout_rows})
+        result: dict[str, Any] = {
+            "status": "ok",
+            "holdout_slates": holdout_codes,
+            "train_rows": int(len(X_tr)),
+            "holdout_rows": int(len(X_ho)),
+            "neural": {
+                "accuracy": neural["accuracy"],
+                "brier_score": neural["brier_score"],
+                "cross_entropy": neural["cross_entropy"],
+            },
+            "per_class": neural["per_class"],
+            "baseline": baseline,
+        }
+        if baseline is not None:
+            result["brier_delta"] = round(baseline["brier_score"] - neural["brier_score"], 4)
+            result["accuracy_delta"] = round(neural["accuracy"] - baseline["accuracy"], 4)
+            result["neural_better_brier"] = result["brier_delta"] > 0
+            result["neural_better_accuracy"] = result["accuracy_delta"] > 0
+        return result
+
 
 class NeuralBaselineRegistryService:
     """Persist and promote neural baseline artifacts safely.
@@ -675,6 +873,7 @@ class NeuralBaselineRegistryService:
                 "saved_at": _utc_iso(),
                 "metrics": result["metrics"],
                 "comparison": comparison,
+                "holdout": result.get("holdout"),
                 "dataset": self._dataset_summary(),
             }
         )
@@ -694,6 +893,7 @@ class NeuralBaselineRegistryService:
             "encoded_rows": result["encoded_rows"],
             "metrics": result["metrics"],
             "comparison": comparison,
+            "holdout": result.get("holdout"),
         }
 
     def latest_candidate(self, *, include_artifact: bool = False) -> dict[str, Any]:
