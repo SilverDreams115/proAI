@@ -165,6 +165,24 @@ class NormalizationService:
         "norway": "norway",
         "morocco": "morocco",
         "croatia": "croatia",
+        # Club short/long-name pins (2026-07-17). football-data emits the
+        # long form ("Kalmar FF", "Malmo FF", "Sarpsborg 08") while TheSportsDB
+        # emits the short form ("Kalmar", "Malmö", "Sarpsborg"); without these
+        # both forms produced different slugs and the TSDB ingest created a
+        # duplicate team, splitting each side's recent form across two rows.
+        # Pin both spellings to the canonical slug so resolve_team unifies them.
+        "kalmar": "kalmar-ff",
+        "kalmar ff": "kalmar-ff",
+        "malmo": "malmo-ff",
+        "malmo ff": "malmo-ff",
+        "sarpsborg": "sarpsborg-08",
+        "sarpsborg 08": "sarpsborg-08",
+        # Uruguayan CA Cerro (Montevideo). TSDB writes bare "Cerro"; the
+        # canonical row is "Ca Cerro". Paraguayan Cerro Porteño normalizes
+        # to "cerro-porteno" and is unaffected.
+        "cerro": "ca-cerro",
+        "ca cerro": "ca-cerro",
+        "club atletico cerro": "ca-cerro",
     }
     COMPETITION_ALIAS_SLUGS = {
         "copa de alemania": "german-cup",

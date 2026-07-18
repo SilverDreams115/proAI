@@ -93,6 +93,12 @@ class IngestionService:
                 completed_run = self.repository.mark_run_success(run, documents)
                 entity_repository = EntityRepository(self.repository.session)
                 self._auto_discover_slates(completed_run.source_id)
+                # Persist this source's historical results BEFORE auto-linking
+                # so the matches it creates are visible to the link pass in the
+                # same run. Previously auto-link ran first, so the last source
+                # ingested in a batch never linked its own docs (0/N matched)
+                # until an unrelated later run happened to re-scan them.
+                self._persist_historical_results(completed_run.source_id, documents)
                 matches = entity_repository.list_matches()
                 linked_items = EvidenceService(
                     EvidenceRepository(self.repository.session),
@@ -100,7 +106,6 @@ class IngestionService:
                 ).auto_link_unmatched_documents(matches)
                 self._persist_player_availability(completed_run.source_id, linked_items)
                 self._persist_structured_stats(completed_run.source_id, documents, matches)
-                self._persist_historical_results(completed_run.source_id, documents)
                 metrics_store.record_ingestion_run(
                     source_name=source.name,
                     status=completed_run.status,
