@@ -329,41 +329,45 @@ class ModelTrainingService(ModelTrainingArtifactsMixin):
             "draw_bias": 0.015,
         },
         "serie-b-brazil": {
-            "competition_readiness": "context_only",
-            "live_pick_allowed": False,
+            "competition_readiness": "ready",
+            "live_pick_allowed": True,
             "policy_reason": (
-                "Brazil Serie B fixture resolved, but no dedicated walk-forward "
-                "benchmark is loaded. Score with context only."
+                "Operator-forced ready policy: TheSportsDB Brasileirao Serie B "
+                "history (2024-2026) loaded. Volatile second tier; no audited "
+                "walk-forward benchmark yet, treat picks with caution."
             ),
             "blend_weights": {"elo": 0.31, "poisson": 0.22, "profile": 0.47},
             "draw_bias": 0.02,
         },
         "norwegian-eliteserien": {
-            "competition_readiness": "context_only",
-            "live_pick_allowed": False,
+            "competition_readiness": "ready",
+            "live_pick_allowed": True,
             "policy_reason": (
-                "Norwegian Eliteserien fixture resolved, but no audited benchmark "
-                "is loaded. Score with context only."
+                "Operator-forced ready policy: TheSportsDB Norwegian Eliteserien "
+                "history (2024-2026) loaded; no audited walk-forward benchmark "
+                "yet, treat picks with caution."
             ),
             "blend_weights": {"elo": 0.32, "poisson": 0.23, "profile": 0.45},
             "draw_bias": 0.02,
         },
         "uruguayan-primera-division": {
-            "competition_readiness": "context_only",
-            "live_pick_allowed": False,
+            "competition_readiness": "ready",
+            "live_pick_allowed": True,
             "policy_reason": (
-                "Uruguayan Primera fixture resolved, but no dedicated benchmark "
-                "is loaded. Score with context only."
+                "Operator-forced ready policy: TheSportsDB Uruguayan Primera "
+                "history (2024-2026) loaded; no audited walk-forward benchmark "
+                "yet, treat picks with caution."
             ),
             "blend_weights": {"elo": 0.31, "poisson": 0.22, "profile": 0.47},
             "draw_bias": 0.025,
         },
         "ecuador-serie-a": {
-            "competition_readiness": "context_only",
-            "live_pick_allowed": False,
+            "competition_readiness": "ready",
+            "live_pick_allowed": True,
             "policy_reason": (
-                "Ecuador Serie A fixture resolved, but no dedicated benchmark "
-                "is loaded. Score with context only."
+                "Operator-forced ready policy: TheSportsDB Ecuador Serie A "
+                "history (2024-2026) loaded; no audited walk-forward benchmark "
+                "yet, treat picks with caution."
             ),
             "blend_weights": {"elo": 0.31, "poisson": 0.22, "profile": 0.47},
             "draw_bias": 0.02,

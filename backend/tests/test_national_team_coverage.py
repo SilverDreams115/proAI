@@ -845,14 +845,25 @@ class TestCompetitionPolicyForFriendlyVariants:
         assert p["competition_readiness"] == "context_only"
         assert p["live_pick_allowed"] is False
 
-    def test_pg2342_lower_coverage_competitions_are_context_only(self):
+    def test_club_friendlies_stays_context_only(self):
+        # Club friendlies have no audited benchmark AND unstable line-ups,
+        # so they stay context_only (unlike league play below).
+        p = self._policy("Club Friendlies")
+        assert p["competition_readiness"] == "context_only"
+        assert p["live_pick_allowed"] is False
+
+    def test_pg2342_lower_coverage_leagues_are_operator_forced_ready(self):
+        # 2026-07-17: these domestic leagues have TheSportsDB history loaded,
+        # so they run under an operator-forced ready policy (with caution),
+        # matching Liga MX / Brasileirao / Allsvenskan. No audited walk-forward
+        # benchmark yet; the sanity layer still blocks picks lacking anchors.
         for name in (
-            "Club Friendlies",
             "Brazilian Serie B",
             "Norwegian Eliteserien",
             "Uruguayan Primera Division",
             "Ecuador Serie A",
         ):
             p = self._policy(name)
-            assert p["competition_readiness"] == "context_only"
-            assert p["live_pick_allowed"] is False
+            assert p["competition_readiness"] == "ready"
+            assert p["live_pick_allowed"] is True
+            assert "operator-forced ready policy" in p["policy_reason"].lower()
