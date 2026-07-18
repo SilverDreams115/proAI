@@ -28,11 +28,13 @@ from urllib.parse import quote
 # League IDs verified against TheSportsDB lookupleague.php during F6.5.
 THESPORTSDB_LEAGUES: list[tuple[str, str, str, list[str]]] = [
     ("4351", "Brasileirao", "Brazil", ["2024", "2025", "2026"]),
-    # Brasileiro Serie B (second tier) — covers Avaí, Criciuma and
-    # other relegated/promoted sides that show up in Progol when
-    # Serie A teams are off-cycle. League id verified via TSDB
-    # lookupleague.php (May 2026).
-    ("4395", "Brasileirao Serie B", "Brazil", ["2024", "2025", "2026"]),
+    # Brasileiro Serie B (second tier) — covers Avaí, Criciuma, Operário
+    # and other relegated/promoted sides that show up in Progol when
+    # Serie A teams are off-cycle. The id used since F6.5 (4395) was WRONG
+    # — lookupleague says 4395 = Scottish Championship, which is why every
+    # weekly ingest completed with 0 documents. 4404 re-verified 2026-07-16
+    # (lookupleague + eventsround r=16 s=2026 returns real scored events).
+    ("4404", "Brasileirao Serie B", "Brazil", ["2024", "2025", "2026"]),
     ("4350", "Liga MX", "Mexico", ["2022-2023", "2023-2024", "2024-2025", "2025-2026"]),
     ("4346", "MLS", "United States", ["2024", "2025", "2026"]),
     ("4627", "Primera Division Chile", "Chile", ["2024", "2025", "2026"]),
@@ -73,6 +75,26 @@ THESPORTSDB_LEAGUES: list[tuple[str, str, str, list[str]]] = [
     ("5513", "World Cup Qualifying AFC", "Asia", ["2026"]),
     # CONCACAF WCQ 2026: covers Canada, Mexico, USA qualifying rounds.
     ("5516", "World Cup Qualifying CONCACAF", "CONCACAF", ["2026"]),
+    # --- Bloque 2026-07-16: ligas que aparecían en Progol sin fuente y
+    # dejaban posiciones BLOQUEADO por LOW_EVIDENCE (PG-2342 audit). Ids
+    # verificados via lookupleague/search_all_leagues el 2026-07-16.
+    # Norwegian Eliteserien (calendar-year): Kristiansund, Sarpsborg,
+    # Fredrikstad, Lillestrom...
+    ("4358", "Norwegian Eliteserien", "Norway", ["2024", "2025", "2026"]),
+    # Uruguayan Primera División (calendar-year): Central Español, Cerro
+    # Largo, CA Cerro, Racing Montevideo...
+    ("4432", "Uruguayan Primera Division", "Uruguay", ["2024", "2025", "2026"]),
+    # Ecuadorian Serie A (calendar-year): Técnico Universitario, SD Aucas,
+    # Emelec, Barcelona SC...
+    ("4686", "Ecuador Serie A", "Ecuador", ["2024", "2025", "2026"]),
+    # Portuguese Primeira Liga (European split season): Braga, Benfica...
+    ("4344", "Portuguese Primeira Liga", "Portugal", ["2024-2025", "2025-2026"]),
+    # Colombian Liga DIMAYOR (Primera A, calendar-year): Millonarios,
+    # América de Cali... — cierra el hueco histórico de Colombia.
+    ("4497", "Colombian Primera A", "Colombia", ["2024", "2025", "2026"]),
+    # Argentinian Primera División (calendar-year): Rivadavia, Tigre... —
+    # cierra el hueco histórico de Argentina.
+    ("4406", "Argentinian Primera Division", "Argentina", ["2024", "2025", "2026"]),
 ]
 
 
@@ -91,7 +113,11 @@ def _source_for(league_id: str, label: str, seasons: list[str]) -> dict[str, obj
     }
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    import argparse
+    import time
+    from datetime import datetime, timedelta, timezone
+
     from sqlalchemy import select
 
     from app.db import session as db_session
@@ -102,6 +128,22 @@ def main() -> int:
     from app.services.ingestion_service import IngestionService
     from app.services.scheduler_service import SchedulerService
 
+    parser = argparse.ArgumentParser(description="Register/refresh TheSportsDB sources.")
+    parser.add_argument(
+        "--only",
+        help="comma-separated league ids; skip the rest (full run re-ingests "
+        "every league and burns the free-tier rate budget before reaching "
+        "the new ones)",
+    )
+    parser.add_argument(
+        "--sleep-seconds",
+        type=int,
+        default=0,
+        help="pause between leagues so the free-tier 429 window can recover",
+    )
+    args = parser.parse_args(argv)
+    only_ids = {s.strip() for s in args.only.split(",")} if args.only else None
+
     run_migrations(db_session.engine)
     session = db_session.SessionLocal()
     ingestion = IngestionService(IngestionRepository(session))
@@ -110,8 +152,14 @@ def main() -> int:
 
     registered: list[tuple[str, str]] = []
     failed: list[tuple[str, str]] = []
+    first = True
     try:
         for league_id, label, _country, seasons in THESPORTSDB_LEAGUES:
+            if only_ids is not None and league_id not in only_ids:
+                continue
+            if not first and args.sleep_seconds:
+                time.sleep(args.sleep_seconds)
+            first = False
             payload = _source_for(league_id, label, seasons)
             existing = session.scalar(select(SourceModel).where(SourceModel.name == payload["name"]))
             if existing is None:
@@ -145,6 +193,12 @@ def main() -> int:
                     source_id=source.id,
                     job_name=f"refresh-{source.id[:8]}-tsdb-{league_id}",
                     interval_minutes=refresh_interval_minutes,
+                    # One full interval out: the bootstrap just ingested this
+                    # league, and ensure_refresh_job's default (now) makes the
+                    # worker re-ingest immediately, doubling the free-tier
+                    # rate burn while later leagues are still bootstrapping.
+                    next_run_at=datetime.now(timezone.utc)
+                    + timedelta(minutes=refresh_interval_minutes),
                 )
                 print(f"[schedule] {source.name} -> {job.job_name} every {refresh_interval_minutes}min")
             except Exception as exc:  # pragma: no cover
