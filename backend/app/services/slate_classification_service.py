@@ -33,9 +33,13 @@ from app.models.tables import (
 # FIFA window can legitimately be all international friendlies, so this is
 # never enough on its own to override genuine LN lineage.
 _DEMO_ONLY_COMPETITIONS = {"international friendlies"}
-# Only the real Lotería Nacional domain counts as official lineage. A loose
-# "progol" substring would wrongly trust a local/seeded proposal URL.
-_OFFICIAL_SOURCE_HINTS = ("loterianacional.gob.mx",)
+# Hosts that count as official Progol lineage. Lotería Nacional is the
+# primary authority; TuLotero is a licensed Progol reseller whose product
+# pages mirror the official concurso, so an operator-captured slate sourced
+# from TuLotero is a real concurso (used when LN has not yet published its
+# guía). Kept as an explicit allow-list — a loose "progol" substring would
+# wrongly trust a local/seeded proposal URL.
+_OFFICIAL_SOURCE_HINTS = ("loterianacional.gob.mx", "tulotero.mx")
 
 
 class SlateClassification(str, Enum):
