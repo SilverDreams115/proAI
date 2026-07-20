@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import signal
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -26,6 +27,29 @@ from app.services.slate_service import SlateService
 configure_logging(level=settings.log_level, json_logs=settings.log_json)
 logger = logging.getLogger("proai.worker.scheduler")
 WORKER_HEARTBEAT_PATH = Path("/data/scheduler_worker_heartbeat.json")
+
+# Wall-clock budget for the synchronous scheduled source refreshes
+# (run_due_jobs). These fetch external providers (TheSportsDB round-by-round,
+# football-data.org) inside the worker's main loop; a single provider that
+# stalls on a slow/endless response would otherwise wedge the loop forever and
+# freeze the liveness heartbeat, tripping the /health worker-freshness alert
+# even though every other worker duty is fine. SIGALRM interrupts the blocked
+# read in the main thread; the cycle then completes and the heartbeat stays
+# fresh. Kept comfortably below health_worker_poll_critical_age_seconds (300s).
+RUN_DUE_JOBS_BUDGET_SECONDS = 90
+
+
+class _RunDueJobsBudgetExceeded(BaseException):
+    """Raised by the SIGALRM handler to unblock a stalled source refresh.
+
+    Subclasses BaseException (not Exception) so it propagates past the
+    per-job ``except Exception`` guard inside SchedulerService.run_due_jobs
+    and unwinds the whole batch instead of being swallowed as one job's
+    failure."""
+
+
+def _raise_run_due_jobs_budget(signum, frame):  # pragma: no cover - signal path
+    raise _RunDueJobsBudgetExceeded()
 
 
 @dataclass(slots=True)
@@ -106,7 +130,43 @@ class SchedulerWorker:
             self._maybe_observe_live_results(session, polled_at)
             self._maybe_retrain_model(session, polled_at)
             self._maybe_run_maintenance(session, polled_at)
-            runs = service.run_due_jobs()
+            # Refresh the liveness heartbeat AFTER the fast, critical duties
+            # (observe / MS-PDF watch / live results / retrain) and BEFORE the
+            # slow, network-bound scheduled source refreshes — so a stalled
+            # provider can't make the worker look dead. The refreshes are then
+            # bounded by a wall-clock budget: if they exceed it, SIGALRM
+            # unblocks the loop, we skip the rest this cycle, and the next
+            # cycle re-runs the critical duties on schedule.
+            self._state.last_polled_at = datetime.now(timezone.utc).isoformat()
+            write_worker_heartbeat(self._state)
+            runs: list = []
+            # SIGALRM-based budget only works from the main thread; when it
+            # isn't available (e.g. embedded/test invocation off the main
+            # thread) we simply run the refreshes unbounded.
+            previous_handler = None
+            armed = False
+            try:
+                previous_handler = signal.signal(signal.SIGALRM, _raise_run_due_jobs_budget)
+                signal.alarm(RUN_DUE_JOBS_BUDGET_SECONDS)
+                armed = True
+            except ValueError:
+                armed = False
+            try:
+                runs = service.run_due_jobs()
+            except _RunDueJobsBudgetExceeded:
+                session.rollback()
+                logger.warning(
+                    "run_due_jobs exceeded wall-clock budget; skipped remaining "
+                    "source refreshes this cycle",
+                    extra={
+                        "event": "run_due_jobs_budget_exceeded",
+                        "budget_seconds": RUN_DUE_JOBS_BUDGET_SECONDS,
+                    },
+                )
+            finally:
+                if armed:
+                    signal.alarm(0)
+                    signal.signal(signal.SIGALRM, previous_handler)
             self._state.executed_runs += len(runs)
             if runs:
                 self._state.last_executed_at = datetime.now(timezone.utc).isoformat()
