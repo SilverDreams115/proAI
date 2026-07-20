@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta, timezone
 import logging
 from types import SimpleNamespace
+from typing import Callable
 from time import perf_counter
 
 from app.core.errors import NotFoundError
@@ -89,7 +90,13 @@ class SchedulerService:
     def list_jobs(self):
         return self.repository.list_jobs()
 
-    def run_due_jobs(self):
+    def run_due_jobs(self, on_job_processed: Callable[[], None] | None = None):
+        """Run all due scheduled jobs.
+
+        ``on_job_processed`` is invoked after each job is processed and saved
+        so a long-running batch (many overdue source refreshes) can refresh the
+        worker liveness heartbeat between jobs instead of only at batch end.
+        """
         now = datetime.now(timezone.utc)
         jobs = self.repository.list_due_jobs(now)
         runs = []
@@ -120,6 +127,8 @@ class SchedulerService:
             with managed_transaction(self.repository.session):
                 self.repository.save_job(job)
             runs.append(run)
+            if on_job_processed is not None:
+                on_job_processed()
         return runs
 
     def _run_job(self, job):

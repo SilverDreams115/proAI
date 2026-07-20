@@ -151,8 +151,15 @@ class SchedulerWorker:
                 armed = True
             except ValueError:
                 armed = False
+            def _beat() -> None:
+                # Refresh the liveness heartbeat between jobs so a long batch of
+                # overdue source refreshes doesn't age the poll timestamp past
+                # the /health freshness thresholds mid-cycle.
+                self._state.last_polled_at = datetime.now(timezone.utc).isoformat()
+                write_worker_heartbeat(self._state)
+
             try:
-                runs = service.run_due_jobs()
+                runs = service.run_due_jobs(on_job_processed=_beat)
             except _RunDueJobsBudgetExceeded:
                 session.rollback()
                 logger.warning(
