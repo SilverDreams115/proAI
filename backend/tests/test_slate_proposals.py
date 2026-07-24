@@ -48,6 +48,31 @@ def test_parse_guia_text_extracts_draw_code_and_all_14_fixtures() -> None:
     assert fixtures[13].away == "BROMMAPOJKARNA"
 
 
+def test_parse_guia_text_keeps_apostrophe_team_names() -> None:
+    """Regression for the PG-2343 pos 9/13 incident. LN prints team names
+    with an acute-accent apostrophe ("NEWELL´S", "O´HIGGINS"); the old regex
+    excluded it, truncating "NEWELL´S" to "S" and dropping the whole
+    "DEPORTES CONCEPCIÓN vs O´HIGGINS" casillero, so the weekend parse
+    yielded only 13 fixtures and discovery rejected the concurso."""
+    text = (
+        "CONCURSO 2343\n"
+        "LOCAL VISITANTE\n"
+        "NEWELL´S VS\n"
+        "CASILLERO 9\n"
+        "TALLERES\n"
+        "DEPORTES CONCEPCIÓN VS\n"
+        "CASILLERO 13\n"
+        "O´HIGGINS\n"
+    )
+    draw_code, fixtures, _ = parse_guia_text(text)
+    assert draw_code == "2343"
+    by_pos = {f.position: f for f in fixtures}
+    assert by_pos[9].home == "NEWELL´S"
+    assert by_pos[9].away == "TALLERES"
+    assert by_pos[13].home == "DEPORTES CONCEPCIÓN"
+    assert by_pos[13].away == "O´HIGGINS"
+
+
 def test_parse_guia_text_parses_cierre_in_utc() -> None:
     """LN publishes "ANTES DE LAS 21:00" Mexico City local time. The DB
     column is UTC-aware, so the parser must convert (UTC-6, no DST in

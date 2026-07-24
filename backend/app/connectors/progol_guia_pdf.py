@@ -44,9 +44,12 @@ _CONCURSO_RE = re.compile(r"CONCURSO\s+(\d{3,5})", flags=re.IGNORECASE)
 # tournament placeholder fixtures print composite names ("G FRANCIA-ESPAÑA
 # VS G INGLATERRA-ARGENTINA" for the 2026 World Cup final): without them the
 # casillero silently fails to parse and its position can be filled by the
-# wrong section (the PG-2342 pos 1-2 incident).
+# wrong section (the PG-2342 pos 1-2 incident). Apostrophes (ASCII ', acute
+# ´ U+00B4, and curly ' ') are alphabet too: LN prints "NEWELL´S" and
+# "O´HIGGINS", and dropping them truncated the name or lost the whole
+# casillero (the PG-2343 pos 9/13 incident).
 _FIXTURE_RE = re.compile(
-    r"([A-ZÁÉÍÓÚÑÜ.][A-ZÁÉÍÓÚÑÜ.\s-]*?)\s+VS\s*\n\s*CASILLERO\s+(\d{1,2})\s*\n\s*([A-ZÁÉÍÓÚÑÜ.][A-ZÁÉÍÓÚÑÜ.\s-]*?)(?:\n|$)",
+    r"([A-ZÁÉÍÓÚÑÜ.][A-ZÁÉÍÓÚÑÜ.'´‘’\s-]*?)\s+VS\s*\n\s*CASILLERO\s+(\d{1,2})\s*\n\s*([A-ZÁÉÍÓÚÑÜ.][A-ZÁÉÍÓÚÑÜ.'´‘’\s-]*?)(?:\n|$)",
     flags=re.MULTILINE,
 )
 _VENTA_RE = re.compile(
