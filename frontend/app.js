@@ -34,10 +34,6 @@ import {
   predictionAllowsConfidentSingle,
   probBarWidthClass,
 } from "./helpers.js";
-import { renderTeamRatingShadowPanel } from "./team-rating-shadow.js";
-import { renderTeamRatingActivationDryRunPanel } from "./team-rating-activation-dry-run.js";
-import { renderTeamRatingActivationReadinessPanel } from "./team-rating-activation-readiness.js";
-import { renderTeamRatingCanaryPanel } from "./team-rating-canary.js";
 import { presentationGuardOf, SIGNAL_LABEL } from "./presentation-guard.js";
 import { renderTicketCanaryDryRunPanel } from "./ticket-canary-dry-run.js";
 import { renderMoneyModePanel } from "./money-mode.js";
@@ -46,7 +42,6 @@ import { renderExternalResultsPanel } from "./external-results.js";
 import { renderSlateOptionsPanel } from "./slate-options.js";
 import { renderTrackingResultsValidationPanel } from "./tracking-results-validation.js";
 import { renderHistoricalDataSummary, renderLearningDashboard, renderLearningSummary } from "./learning-dashboard.js?v=history-ui-1";
-import { renderProductFlowPanel } from "./product-flow.js";
 import { renderSlateReadinessReportPanel } from "./slate-readiness-report.js";
 import { renderOperationalPredictionAuditPanel } from "./operational-prediction-audit.js";
 import {
@@ -1625,14 +1620,6 @@ function _diagBody(id, renderFn, data) {
   node.innerHTML = renderFn(data);
 }
 
-function renderTeamRatingShadow() {
-  _diagBody("team-rating-shadow-body", renderTeamRatingShadowPanel, state.teamRatingShadow);
-}
-
-function renderTeamRatingCanary() {
-  _diagBody("team-rating-canary-body", renderTeamRatingCanaryPanel, state.teamRatingCanary);
-}
-
 function renderTicketCanaryDryRun() {
   _diagBody("ticket-canary-dry-run-body", renderTicketCanaryDryRunPanel, state.ticketCanaryDryRun);
 }
@@ -1643,10 +1630,6 @@ function renderMoneyMode() {
 
 function renderOperationalMoneyModeStatus() {
   _diagBody("operational-money-mode-status-body", renderOperationalMoneyModeStatusPanel, state.moneyModeOpsStatus);
-}
-
-function renderProductFlow() {
-  _diagBody("product-flow-body", renderProductFlowPanel, state.productFlow);
 }
 
 function renderOperationalPredictionAudit() {
@@ -1697,19 +1680,10 @@ function renderTrackingResultsValidation() {
   _diagBody("tracking-results-validation-body", renderTrackingResultsValidationPanel, state.resultsValidation);
 }
 
-function renderTeamRatingDryRun() {
-  _diagBody("team-rating-dry-run-body", renderTeamRatingActivationDryRunPanel, state.teamRatingDryRun);
-}
-
-function renderTeamRatingReadiness() {
-  _diagBody("team-rating-readiness-body", renderTeamRatingActivationReadinessPanel, state.teamRatingReadiness);
-}
-
 // Render only the deferred Diagnóstico panels (used when their lazy payload
 // arrives), without re-rendering the whole prediction board.
 function renderDiagnosticsPanels() {
   renderOperationalMoneyModeStatus();
-  renderProductFlow();
   renderOperationalPredictionAudit();
   renderSlateReadinessReport();
   renderMoneyMode();
@@ -1719,10 +1693,6 @@ function renderDiagnosticsPanels() {
   renderExternalResults();
   renderLiveResultsObserver();
   renderNeuralShadow();
-  renderTeamRatingShadow();
-  renderTeamRatingDryRun();
-  renderTeamRatingReadiness();
-  renderTeamRatingCanary();
 }
 
 function renderBoard() {
@@ -2288,8 +2258,8 @@ function renderLoadingRows() {
 async function loadSlateDetails(slateId) {
   // R6.3 performance: the prediction board only awaits the CORE fetches it needs
   // to render (predictions, features, ticket, quality + the three batch context
-  // maps). The heavy diagnostics (Money Mode, ticket canary dry-run, the four
-  // team-rating panels, external results) are deferred to loadSlateDiagnostics
+  // maps). The heavy diagnostics (Money Mode, ticket canary dry-run,
+  // external results) are deferred to loadSlateDiagnostics
   // so they never block first paint of the board.
   //
   // Stale-response guard: every switch bumps the sequence; if a newer switch
@@ -2301,7 +2271,6 @@ async function loadSlateDetails(slateId) {
   state.diagnosticsSlateId = null;
   state.moneyMode = null;
   state.moneyModeOpsStatus = null;
-  state.productFlow = null;
   state.slateOptions = null;
   state.operationalPredictionAudit = null;
   const [predictions, features, ticketPlan, quality, evidenceBySlate, availabilityBySlate, resultsBySlate] = await Promise.all([
@@ -2384,15 +2353,10 @@ function writeLnResultsSnapshot(report) {
 }
 
 function _applyDiagnostics(payload) {
-  const [shadow, dryRun, readiness, canary, ticketCanaryDryRun, moneyMode, opsStatus, productFlow, operationalPredictionAudit, slateReadinessReport, externalResults, slateOptions, resultsValidation, liveResultsObserver] = payload;
-  state.teamRatingShadow = (shadow && !Array.isArray(shadow)) ? shadow : null;
-  state.teamRatingDryRun = (dryRun && !Array.isArray(dryRun)) ? dryRun : null;
-  state.teamRatingReadiness = (readiness && !Array.isArray(readiness)) ? readiness : null;
-  state.teamRatingCanary = (canary && !Array.isArray(canary)) ? canary : null;
+  const [ticketCanaryDryRun, moneyMode, opsStatus, operationalPredictionAudit, slateReadinessReport, externalResults, slateOptions, resultsValidation, liveResultsObserver] = payload;
   state.ticketCanaryDryRun = (ticketCanaryDryRun && !Array.isArray(ticketCanaryDryRun)) ? ticketCanaryDryRun : null;
   state.moneyMode = (moneyMode && !Array.isArray(moneyMode)) ? moneyMode : null;
   state.moneyModeOpsStatus = (opsStatus && !Array.isArray(opsStatus)) ? opsStatus : null;
-  state.productFlow = (productFlow && !Array.isArray(productFlow)) ? productFlow : null;
   state.operationalPredictionAudit = (operationalPredictionAudit && !Array.isArray(operationalPredictionAudit)) ? operationalPredictionAudit : null;
   state.slateReadinessReport = (slateReadinessReport && !Array.isArray(slateReadinessReport)) ? slateReadinessReport : null;
   state.externalResults = (externalResults && !Array.isArray(externalResults)) ? externalResults : null;
@@ -2417,16 +2381,14 @@ async function preheatSlateDiagnostics(slateId) {
   if (getCachedDiagnostics(slateId)) return;
   state.diagnosticsPreheatedSlateId = slateId;
   const seq = ++diagnosticsPreheatRequestSeq;
-  const [moneyMode, opsStatus, productFlow, slateOptions] = await Promise.all([
+  const [moneyMode, opsStatus, slateOptions] = await Promise.all([
     safeFetch(`/predictions/slates/${slateId}/money-mode`, {optional: true}),
     safeFetch(`/operations/money-mode/status`, {optional: true}),
-    safeFetch(`/operations/product-flow?slate_id=${encodeURIComponent(slateId)}`, {optional: true}),
     safeFetch(`/predictions/slates/${slateId}/options`, {optional: true}),
   ]);
   if (seq !== diagnosticsPreheatRequestSeq || state.activeSlateId !== slateId) return;
   state.moneyMode = (moneyMode && !Array.isArray(moneyMode)) ? moneyMode : state.moneyMode;
   state.moneyModeOpsStatus = (opsStatus && !Array.isArray(opsStatus)) ? opsStatus : state.moneyModeOpsStatus;
-  state.productFlow = (productFlow && !Array.isArray(productFlow)) ? productFlow : state.productFlow;
   state.slateOptions = (slateOptions && !Array.isArray(slateOptions)) ? slateOptions : state.slateOptions;
   if (_isDiagnosticoActive()) renderDiagnosticsPanels();
 }
@@ -2448,16 +2410,11 @@ async function loadSlateDiagnostics(slateId) {
   state.diagnosticsLoading = true;
   state.diagnosticsSlateId = null;
   renderDiagnosticsPanels(); // immediate skeleton
-  const payload = Array(14).fill(null);
+  const payload = Array(9).fill(null);
   const requests = [
-    { path: `/predictions/slates/${slateId}/team-rating-shadow` },
-    { path: `/predictions/slates/${slateId}/team-rating-activation-dry-run` },
-    { path: `/predictions/slates/${slateId}/team-rating-activation-readiness` },
-    { path: `/predictions/slates/${slateId}/team-rating-canary-status` },
     { path: `/predictions/slates/${slateId}/ticket-canary-dry-run` },
     { path: `/predictions/slates/${slateId}/money-mode` },
     { path: `/operations/money-mode/status`, deferred: true },
-    { path: `/operations/product-flow?slate_id=${encodeURIComponent(slateId)}`, deferred: true },
     { path: `/tracking/operational-prediction-audit?slate_id=${encodeURIComponent(slateId)}`, deferred: true },
     { path: `/slates/${slateId}/readiness-report`, deferred: true },
     { path: `/results/slates/${slateId}/provider-dry-run` },

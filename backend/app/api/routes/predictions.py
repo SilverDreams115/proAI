@@ -14,10 +14,6 @@ from app.schemas.prediction import MatchPredictionResponse
 from app.schemas.prediction import TicketRecommendationResponse
 from app.schemas.feature import MatchFeatureResponse
 from app.schemas.feature import MatchDataQualityResponse
-from app.schemas.team_rating_shadow import TeamRatingShadowResponse
-from app.schemas.team_rating_activation_dry_run import TeamRatingActivationDryRunResponse
-from app.schemas.team_rating_activation_readiness import TeamRatingActivationReadinessResponse
-from app.schemas.team_rating_canary import TeamRatingCanaryStatusResponse
 from app.services.feature_service import FeatureService
 from app.services.ingestion_service import IngestionService
 from app.services.model_training_service import ModelTrainingService
@@ -130,99 +126,6 @@ async def get_slate_feature_snapshots(
             )
         )
     return responses
-
-
-@router.get(
-    "/slates/{slate_id}/team-rating-shadow",
-    response_model=TeamRatingShadowResponse,
-)
-async def get_slate_team_rating_shadow(
-    slate_id: str,
-    session: Session = Depends(get_db_session),
-) -> TeamRatingShadowResponse:
-    """Read-only Team Rating Shadow diagnostic for the slate.
-
-    Shadow-only: reports what the inactive team-rating gate *would* do if it
-    were enabled (eligibility, routing, blockers per match) without touching
-    predictions, picks, tickets or probabilities, and without writing any row.
-    """
-    from app.services.team_rating_shadow_report import build_slate_shadow_report
-
-    slate_service = SlateService(SlateRepository(session))
-    slate = slate_service.get_slate(slate_id)
-    if slate is None:
-        raise HTTPException(status_code=404, detail="Slate not found.")
-    return build_slate_shadow_report(session, slate)
-
-
-@router.get(
-    "/slates/{slate_id}/team-rating-activation-dry-run",
-    response_model=TeamRatingActivationDryRunResponse,
-)
-async def get_slate_team_rating_activation_dry_run(
-    slate_id: str,
-    session: Session = Depends(get_db_session),
-) -> TeamRatingActivationDryRunResponse:
-    """Read-only controlled-activation dry-run for the slate (R5.5).
-
-    Simulates what enabling the controlled team-rating gate would do — engine,
-    probabilities, pick and deltas per match, plus what blocks real activation —
-    without touching real predictions, picks, tickets, probabilities or the
-    approval gate, and without writing any row.
-    """
-    from app.services.team_rating_activation_dry_run_service import (
-        build_slate_activation_dry_run,
-    )
-
-    slate_service = SlateService(SlateRepository(session))
-    slate = slate_service.get_slate(slate_id)
-    if slate is None:
-        raise HTTPException(status_code=404, detail="Slate not found.")
-    return build_slate_activation_dry_run(session, slate)
-
-
-@router.get(
-    "/slates/{slate_id}/team-rating-activation-readiness",
-    response_model=TeamRatingActivationReadinessResponse,
-)
-async def get_slate_team_rating_activation_readiness(
-    slate_id: str,
-    session: Session = Depends(get_db_session),
-) -> TeamRatingActivationReadinessResponse:
-    """Read-only activation-readiness report for the slate (R5.6-A).
-
-    Reports whether the technical blockers before a minimal canary are cleared,
-    the canary plan and the calibrator approval state, without activating the
-    gate or changing real predictions, picks, tickets, probabilities or the
-    approval gate, and without writing any row.
-    """
-    from app.services.team_rating_activation_readiness_service import (
-        build_slate_activation_readiness,
-    )
-
-    slate_service = SlateService(SlateRepository(session))
-    slate = slate_service.get_slate(slate_id)
-    if slate is None:
-        raise HTTPException(status_code=404, detail="Slate not found.")
-    return build_slate_activation_readiness(session, slate)
-
-
-@router.get(
-    "/slates/{slate_id}/team-rating-canary-status",
-    response_model=TeamRatingCanaryStatusResponse,
-)
-async def get_slate_team_rating_canary_status(
-    slate_id: str,
-    session: Session = Depends(get_db_session),
-) -> TeamRatingCanaryStatusResponse:
-    """Read-only status of the controlled team-rating canary for the slate."""
-    from app.services.team_rating_canary_service import build_canary_status
-
-    slate_service = SlateService(SlateRepository(session))
-    slate = slate_service.get_slate(slate_id)
-    if slate is None:
-        raise HTTPException(status_code=404, detail="Slate not found.")
-    return TeamRatingCanaryStatusResponse(**build_canary_status(session, slate))
 
 
 @router.get("/active-slates/ticket-canary-dry-run")

@@ -1,7 +1,7 @@
 // R6.3 — Per-slate cache for the heavy diagnostic panels.
 //
 // The prediction board must render without waiting on Money Mode, the ticket
-// canary dry-run, the team-rating diagnostics or the external-results probe.
+// canary dry-run or the external-results probe.
 // Those payloads are fetched lazily and cached here keyed by slate_id, so
 // switching back to a slate the operator already opened is instant and never
 // refetches. Pure in-memory; holds no DOM and writes nothing.
