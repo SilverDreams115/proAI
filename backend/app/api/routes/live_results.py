@@ -62,23 +62,18 @@ class IngestResultsRequest(BaseModel):
 
 router = APIRouter(prefix="/slates", tags=["live-results"])
 
-# How many closed / open slates the seguimiento dashboard surfaces.
-DASHBOARD_LIMIT = 2
-
-
 @router.get(
     "/live/dashboard",
     response_model=LiveDashboardResponse,
-    summary="Seguimiento: 2 closed + 2 open slates with predictions",
+    summary="Seguimiento: complete restored slate history",
 )
 async def live_dashboard(session: Session = Depends(get_db_session)) -> LiveDashboardResponse:
     service = SlateService(SlateRepository(session))
     now = datetime.now(timezone.utc)
-    candidates = [
-        slate
-        for slate in service.list_slates(include_closed=True)
-        if _has_predictions_and_snapshot(session, slate)
-    ]
+    # Historical views must expose the restored inventory honestly. Missing
+    # predictions, snapshots or results are display states, not reasons to
+    # hide a slate from Seguimiento/Aprendizaje/Diagnóstico.
+    candidates = list(service.list_slates(include_closed=True))
     closed = [s for s in candidates if service.is_closed(s, now)]
     open_ = [s for s in candidates if not service.is_closed(s, now)]
     # Closed: most recently closed first. Open: soonest to close first.
@@ -87,8 +82,8 @@ async def live_dashboard(session: Session = Depends(get_db_session)) -> LiveDash
 
     live_service = LiveResultsService(session)
     return LiveDashboardResponse(
-        closed=[_dashboard_entry(live_service, service, s, now) for s in closed[:DASHBOARD_LIMIT]],
-        open=[_dashboard_entry(live_service, service, s, now) for s in open_[:DASHBOARD_LIMIT]],
+        closed=[_dashboard_entry(live_service, service, s, now) for s in closed],
+        open=[_dashboard_entry(live_service, service, s, now) for s in open_],
     )
 
 

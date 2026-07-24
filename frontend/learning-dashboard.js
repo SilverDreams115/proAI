@@ -167,3 +167,30 @@ export function renderLearningSummary(summary) {
     </div>
     <p class="meta-copy subtle">Solo lectura. No se entrena ni se promueve ningún modelo desde esta vista.</p>`;
 }
+
+export function renderHistoricalDataSummary(inventory, summary, readiness) {
+  if (!inventory || !Array.isArray(inventory.slates)) {
+    return `<div class="empty-state alert-state">No se pudo cargar el histórico restaurado. Actualiza la vista o revisa la conexión con la API.</div>`;
+  }
+  const scored = Number(summary?.total_slates_scored || 0);
+  const rows = Number(summary?.total_rows || 0);
+  const predictions = inventory.slates.reduce(
+    (total, slate) => total + Number(slate.prediction_count || 0),
+    0,
+  );
+  const results = inventory.slates.reduce(
+    (total, slate) => total + Number(slate.canonical_result_count || 0),
+    0,
+  );
+  const ready = readiness?.training_ready ? "sí" : "no";
+  return `
+    <div class="learn-summary historical-data-summary">
+      <div class="ls-cell"><strong>${escapeHtml(inventory.slate_count || inventory.slates.length)}</strong><span>quinielas restauradas</span></div>
+      <div class="ls-cell"><strong>${escapeHtml(predictions)}</strong><span>predicciones históricas</span></div>
+      <div class="ls-cell"><strong>${escapeHtml(results)}</strong><span>resultados vinculados</span></div>
+      <div class="ls-cell"><strong>${escapeHtml(scored)}</strong><span>jornadas evaluadas</span></div>
+      <div class="ls-cell"><strong>${escapeHtml(rows)}</strong><span>filas de aprendizaje</span></div>
+      <div class="ls-cell"><strong>${escapeHtml(ready)}</strong><span>training ready</span></div>
+    </div>
+    <p class="meta-copy subtle">Histórico restaurado visible en modo solo lectura. Las jornadas pendientes y no comparables se conservan y aparecen en Aprendizaje.</p>`;
+}

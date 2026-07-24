@@ -45,7 +45,7 @@ import { renderOperationalMoneyModeStatusPanel } from "./operational-money-mode-
 import { renderExternalResultsPanel } from "./external-results.js";
 import { renderSlateOptionsPanel } from "./slate-options.js";
 import { renderTrackingResultsValidationPanel } from "./tracking-results-validation.js";
-import { renderLearningDashboard, renderLearningSummary } from "./learning-dashboard.js";
+import { renderHistoricalDataSummary, renderLearningDashboard, renderLearningSummary } from "./learning-dashboard.js?v=history-ui-1";
 import { renderProductFlowPanel } from "./product-flow.js";
 import { renderSlateReadinessReportPanel } from "./slate-readiness-report.js";
 import { renderOperationalPredictionAuditPanel } from "./operational-prediction-audit.js";
@@ -2034,6 +2034,9 @@ function activateView(view) {
     loadLearningDashboard();
     loadLearningSummary();
   }
+  if (view === "seguimiento" || view === "diagnostico") {
+    loadHistoricalDataSummary();
+  }
   // R6.3: the heavy Diagnóstico panels load only when this tab is opened, and
   // only if not already loaded for the active slate (cache makes re-open free).
   if (view === "diagnostico" && state.activeSlateId && state.diagnosticsSlateId !== state.activeSlateId) {
@@ -2096,6 +2099,39 @@ async function loadLearningSummary() {
   } catch (err) {
     // Best-effort: leave the honest placeholder in place.
   }
+}
+
+let historicalDataSummaryPromise = null;
+let historicalDataSummary = null;
+function renderHistoricalDataPanels() {
+  for (const id of ["tracking-history-body", "diagnostic-history-body"]) {
+    const node = getById(id);
+    if (node && historicalDataSummary) node.innerHTML = historicalDataSummary;
+  }
+}
+
+async function loadHistoricalDataSummary() {
+  if (historicalDataSummary) {
+    renderHistoricalDataPanels();
+    return;
+  }
+  if (historicalDataSummaryPromise) return historicalDataSummaryPromise;
+  historicalDataSummaryPromise = (async () => {
+    try {
+      const [inventory, summary, readiness] = await Promise.all([
+        safeFetch("/learning/completed-slates/inventory"),
+        safeFetch("/adaptive-dataset/summary", { optional: true }),
+        safeFetch("/learning/dataset-readiness", { optional: true }),
+      ]);
+      historicalDataSummary = renderHistoricalDataSummary(inventory, summary, readiness);
+    } catch (_err) {
+      historicalDataSummary = renderHistoricalDataSummary(null, null, null);
+    } finally {
+      historicalDataSummaryPromise = null;
+      renderHistoricalDataPanels();
+    }
+  })();
+  return historicalDataSummaryPromise;
 }
 
 function attachStaticEvents() {
@@ -2542,13 +2578,19 @@ async function boot() {
 function ensureLiveTrackingStarted() {
   if (liveTrackingStarted || !state.authenticated) return;
   liveTrackingStarted = true;
-  import("./live-tracking.js")
+  import("./live-tracking.js?v=history-ui-2")
     .then(({ initLiveTracking }) => {
-      initLiveTracking({
-        container: document.getElementById("live-tracking-panel"),
-        detailContainer: document.getElementById("live-tracking-detail"),
-        fetchJson: (path) => safeFetch(path, { optional: true }),
-      });
+      for (const [containerId, detailId] of [
+        ["live-tracking-panel", "live-tracking-detail"],
+        ["learning-history-browser", "learning-history-detail"],
+        ["diagnostic-history-browser", "diagnostic-history-detail"],
+      ]) {
+        initLiveTracking({
+          container: document.getElementById(containerId),
+          detailContainer: document.getElementById(detailId),
+          fetchJson: (path) => safeFetch(path, { optional: true }),
+        });
+      }
     })
     .catch((error) => {
       liveTrackingStarted = false;

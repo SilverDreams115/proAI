@@ -520,7 +520,7 @@ async def test_live_results_endpoint_404(client):
 
 
 @pytest.mark.anyio
-async def test_dashboard_selects_two_closed_two_open_without_mixing(client):
+async def test_dashboard_includes_complete_restored_inventory_without_mixing(client):
     from app.db.session import SessionLocal
 
     with SessionLocal() as session:
@@ -530,7 +530,8 @@ async def test_dashboard_selects_two_closed_two_open_without_mixing(client):
         _seed_slate(session, draw_code="PGM-CM", week_type="midweek", n=9, closes_at=_past())
         _seed_slate(session, draw_code="PG-OW", week_type="weekend", n=14, closes_at=_future())
         _seed_slate(session, draw_code="PGM-OM", week_type="midweek", n=9, closes_at=_future())
-        # A closed slate WITHOUT a snapshot must be excluded from the dashboard.
+        # A closed slate WITHOUT a snapshot remains visible and is labelled
+        # honestly instead of disappearing from the restored inventory.
         repo = SlateRepository(session)
         now = datetime.now(timezone.utc)
         repo.upsert_slate(
@@ -554,11 +555,11 @@ async def test_dashboard_selects_two_closed_two_open_without_mixing(client):
     body = resp.json()
     closed_codes = {e["draw_code"] for e in body["closed"]}
     open_codes = {e["draw_code"] for e in body["open"]}
-    assert len(body["closed"]) == 2
+    assert len(body["closed"]) == 3
     assert len(body["open"]) == 2
-    assert closed_codes == {"PG-CW", "PGM-CM"}
+    assert closed_codes == {"PG-CW", "PGM-CM", "PG-NOSNAP"}
     assert open_codes == {"PG-OW", "PGM-OM"}
-    assert "PG-NOSNAP" not in closed_codes  # filtered: no valid snapshot
+    assert "PG-NOSNAP" in closed_codes
     # Weekend / MS never mixed: each entry's week_type is intact.
     by_code = {e["draw_code"]: e for e in body["closed"] + body["open"]}
     assert by_code["PG-CW"]["week_type"] == "weekend"

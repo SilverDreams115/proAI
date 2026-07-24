@@ -469,16 +469,16 @@ export function renderLiveDashboard(data) {
   // No slate has any real/live result yet → show the explicit empty state
   // alongside the (still useful) slate list, not an error.
   const noResults = all.length > 0 && all.every((e) => (e.completed_count || 0) + (e.live_count || 0) === 0);
-  // Only real official concursos are tracked. Demo/synthetic slates never
-  // render here — they carried no actionable signal and only added noise.
-  const real = all.filter((e) => e.comparable === true);
+  // This is the restored historical browser: incomplete/unverified rows stay
+  // visible and are labelled instead of being silently filtered out.
+  const historical = all;
   return `
     <div class="live-tracking">
       <div class="lt-header"><h2>Seguimiento de quinielas</h2></div>
       ${renderSummaryBar(data)}
       ${noResults ? renderNoComparableResults() : ""}
       <div class="track-group">
-        <div class="track-grid">${real.map(renderDashboardEntry).join("") || '<p class="meta-copy">Sin quinielas.</p>'}</div>
+        <div class="track-grid">${historical.map(renderDashboardEntry).join("") || '<p class="meta-copy">Sin quinielas.</p>'}</div>
       </div>
     </div>`;
 }

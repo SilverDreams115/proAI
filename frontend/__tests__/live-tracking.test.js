@@ -173,7 +173,7 @@ describe("renderLiveDashboard", () => {
     ...over,
   });
 
-  it("renders only real concursos — demo/synthetic slates never appear", () => {
+  it("renders the complete restored inventory without hiding incomplete rows", () => {
     const data = {
       closed: [
         entry({ draw_code: "PG-2336", classification: "official_real", comparable: true }),
@@ -186,15 +186,11 @@ describe("renderLiveDashboard", () => {
     };
     const html = renderLiveDashboard(data);
     expect(html).toContain("Seguimiento de quinielas");
-    expect(html).not.toContain("Demo / no comparable");
-    for (const code of ["PG-2336", "PGM-800"]) {
+    for (const code of ["PG-2336", "PGM-799", "PG-2337", "PGM-800"]) {
       expect(html).toContain(code);
     }
-    for (const code of ["PGM-799", "PG-2337"]) {
-      expect(html).not.toContain(code);
-    }
-    expect((html.match(/track-card/g) || []).length).toBe(2);
-    expect((html.match(/Ver comparación/g) || []).length).toBe(2);
+    expect((html.match(/track-card/g) || []).length).toBe(4);
+    expect((html.match(/Ver comparación/g) || []).length).toBe(4);
   });
 
   it("shows empty copy when a group has no slates", () => {
