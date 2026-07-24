@@ -1,4 +1,5 @@
 import json
+import re
 from datetime import datetime, timezone
 
 from app.models.tables import PredictionModel
@@ -225,16 +226,31 @@ def _pdf_provenance(session: Session, slate: ProgolSlateModel) -> dict:
 def _discovery_info(
     session: Session, suspect_slates: list[dict] | None = None
 ) -> DiscoveryInfo:
-    """Latest observed/promoted proposal per week_type — surfaced so the
-    empty state explains discovery status instead of showing a blank UI."""
+    """Highest contest proposal per week_type for discovery diagnostics.
+
+    LN can keep serving a stale PDF after a newer contest has been promoted
+    from another official source.  Ordering only by ``last_seen_at`` would
+    then make the stale contest look like the next one on every worker poll.
+    Contest number is authoritative; observation time only breaks ties.
+    """
 
     def latest(week_type: str) -> ProgolSlateProposalModel | None:
-        return session.scalar(
+        proposals = session.scalars(
             select(ProgolSlateProposalModel)
             .where(ProgolSlateProposalModel.week_type == week_type)
-            .order_by(ProgolSlateProposalModel.last_seen_at.desc())
-            .limit(1)
-        )
+        ).all()
+        if not proposals:
+            return None
+
+        def proposal_key(proposal: ProgolSlateProposalModel) -> tuple[int, datetime]:
+            numbers = re.findall(r"\d+", proposal.draw_code or "")
+            draw_number = int(numbers[-1]) if numbers else -1
+            seen_at = proposal.last_seen_at
+            if seen_at.tzinfo is None:
+                seen_at = seen_at.replace(tzinfo=timezone.utc)
+            return draw_number, seen_at
+
+        return max(proposals, key=proposal_key)
 
     weekend = latest("weekend")
     midweek = latest("midweek")

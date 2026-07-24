@@ -55,6 +55,7 @@ import {
   snapshotLnResultsObserver,
 } from "./live-results-observer-panel.js";
 import { renderNeuralShadowPanel } from "./neural-shadow-panel.js";
+import { pickNextProposal } from "./proposal-selection.js";
 import {
   getCachedDiagnostics,
   setCachedDiagnostics,
@@ -2653,16 +2654,10 @@ function renderTransitionBanner() {
 }
 
 function pickPreviewProposal() {
-  // Show the most recent validated proposal that hasn't already been
-  // promoted into a slate. Observed (single-sighting) proposals are
-  // intentionally not surfaced — operators only get to act once the
-  // dual-time validation cleared.
-  const candidates = (state.proposals || [])
-    .filter((p) => p.status === "validated" && !p.promoted_slate_id);
-  if (candidates.length === 0) return null;
-  return candidates.slice().sort((a, b) =>
-    new Date(b.last_seen_at).getTime() - new Date(a.last_seen_at).getTime()
-  )[0];
+  // Never offer a stale proposal when an equal/newer contest of the same
+  // week type is already active. LN can keep re-validating an old PDF after
+  // TuLotero has published and promoted the next Media Semana contest.
+  return pickNextProposal(state.proposals || [], state.slates || []);
 }
 
 function renderNextContestCard() {

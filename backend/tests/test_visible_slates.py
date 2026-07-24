@@ -7,7 +7,8 @@ Pins the fallback contract surfaced by the "UI sin boletas" fix:
   * demo / non-official slates are excluded from both lists;
   * selected_default_slate uses an open slate first, a recent one otherwise;
   * Weekend and Media Semana stay separate (each entry keeps its week_type);
-  * discovery reports the latest observation per week_type.
+  * discovery reports the highest contest per week_type, even when an older
+    source is observed more recently.
 """
 from __future__ import annotations
 
@@ -264,3 +265,30 @@ def test_discovery_reports_latest_observation(db):
     assert res.discovery.last_weekend_draw_code == "2339"
     assert res.discovery.last_weekend_status == "observed"
     assert res.discovery.last_observed_at is not None
+
+
+def test_discovery_does_not_let_stale_ms_observation_displace_newer_active_draw(db):
+    active = _seed_slate(
+        db,
+        draw_code="PGM-805",
+        week_type="midweek",
+        n=9,
+        closes_at=_future(),
+    )
+    _make_official(db, active)
+    db.add(
+        ProgolSlateProposalModel(
+            draw_code="804",
+            week_type="midweek",
+            source_name="progol-guia-ln-ms",
+            source_url="https://www.loterianacional.gob.mx/Documentos/guiamedia.pdf",
+            status="observed",
+            last_seen_at=_future(),
+        )
+    )
+    db.flush()
+
+    res = _visible(db)
+
+    assert res.discovery.last_midweek_draw_code == "PGM-805"
+    assert res.discovery.last_midweek_status == "promoted"
