@@ -19,3 +19,10 @@ async def test_index_served_with_no_store(client):
     assert "no-store" in cache_control
     # The asset-version placeholder must be substituted, not served raw.
     assert "__ASSET_VERSION__" not in resp.text
+
+
+@pytest.mark.anyio
+async def test_javascript_modules_are_served_with_no_store(client):
+    resp = await client.get("/learning-dashboard.js")
+    assert resp.status_code == 200
+    assert "no-store" in resp.headers.get("cache-control", "")

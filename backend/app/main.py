@@ -360,6 +360,16 @@ if frontend_dir.exists():
 
     from fastapi.responses import HTMLResponse
 
+    class _FrontendStaticFiles(StaticFiles):
+        async def get_response(self, path: str, scope):
+            response = await super().get_response(path, scope)
+            # ES-module imports such as ``./learning-dashboard.js`` do not
+            # inherit app.js's version query string. Prevent a deploy from
+            # linking a new entrypoint against an old cached dependency.
+            if path.endswith(".js"):
+                response.headers["Cache-Control"] = "no-store, must-revalidate"
+            return response
+
     @app.get("/", include_in_schema=False, response_class=HTMLResponse)
     async def serve_index() -> HTMLResponse:
         # index.html must never be cached: it carries the asset-version
@@ -373,4 +383,4 @@ if frontend_dir.exists():
             headers={"Cache-Control": "no-store, must-revalidate"},
         )
 
-    app.mount("/", StaticFiles(directory=frontend_dir, html=False), name="frontend")
+    app.mount("/", _FrontendStaticFiles(directory=frontend_dir, html=False), name="frontend")
