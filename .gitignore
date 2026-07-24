@@ -35,3 +35,6 @@ artifacts/
 
 # Timestamped local snapshots of the progol context export
 data/progol_context/*.bak
+
+# WSL "mark of the web" artifacts created when files are downloaded on Windows
+*:Zone.Identifier
