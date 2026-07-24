@@ -98,6 +98,10 @@ class ModelTrainingService(ModelTrainingArtifactsMixin):
         "usa": "usa",
         "mls": "usa",
         "major-league-soccer": "usa",
+        "arg": "arg",
+        "argentinian-primera-division": "arg",
+        "argentina-primera-division": "arg",
+        "primera-division-argentina": "arg",
         "progol-media-semana": "progol-media-semana",
         "progol-1-2-semana": "progol-media-semana",
         "conference": "conference",
@@ -205,6 +209,17 @@ class ModelTrainingService(ModelTrainingArtifactsMixin):
             "policy_reason": "Operator-forced ready policy: TheSportsDB Brasileirao history is loaded; no audited walk-forward benchmark yet, treat picks with caution.",
             "blend_weights": {"elo": 0.32, "poisson": 0.23, "profile": 0.45},
             "draw_bias": 0.015,
+        },
+        "arg": {
+            "competition_readiness": "ready",
+            "live_pick_allowed": True,
+            "policy_reason": (
+                "Operator-forced ready policy: TheSportsDB Argentinian Primera "
+                "history (2024-2026) is loaded; no audited walk-forward benchmark "
+                "yet, treat picks with caution."
+            ),
+            "blend_weights": {"elo": 0.32, "poisson": 0.23, "profile": 0.45},
+            "draw_bias": 0.025,
         },
         "chi": {
             "competition_readiness": "ready",
