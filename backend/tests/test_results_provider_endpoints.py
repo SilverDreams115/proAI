@@ -6,7 +6,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.models.tables import MatchResultModel, PredictionModel, ProgolSlateModel
-from backend.tests.test_ticket_canary_dry_run_service import DRAW, seed_canary_slate
+from backend.tests.slate_fixtures import DRAW, seed_slate
 
 
 def _counts(engine):
@@ -23,7 +23,7 @@ async def test_slate_provider_dry_run_endpoint(client):
     from app.db import session as db_mod
 
     with Session(db_mod.engine) as session:
-        seed_canary_slate(session)
+        seed_slate(session)
         slate_id = session.query(ProgolSlateModel).filter_by(draw_code=DRAW).one().id
 
     before = _counts(db_mod.engine)
@@ -44,7 +44,7 @@ async def test_active_slates_provider_dry_run(client):
     from app.db import session as db_mod
 
     with Session(db_mod.engine) as session:
-        slate = seed_canary_slate(session)
+        slate = seed_slate(session)
         slate.registration_closes_at = datetime.now(timezone.utc) + timedelta(days=3)
         session.commit()
 
@@ -71,7 +71,7 @@ async def test_dashboard_fast_endpoint(client):
     from app.db import session as db_mod
 
     with Session(db_mod.engine) as session:
-        slate = seed_canary_slate(session)
+        slate = seed_slate(session)
         slate.registration_closes_at = datetime.now(timezone.utc) + timedelta(days=3)
         session.commit()
 

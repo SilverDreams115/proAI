@@ -64,9 +64,9 @@ sanity_audit_json with:
   model_artifact_id  OR  fallback_used (model lineage)
 ```
 
-`effective_probabilities` (canary) is **optional**: it is not required because it only exists
-when the canary serves the prediction live; in normal persisted predictions
-it is absent by design (documented, not a lineage gap).
+Historical audit rows may also carry an `effective_probabilities` key, written by
+the team-rating canary before that subsystem was removed. It was always optional
+and nothing reads it any more; its presence or absence is not a lineage gap.
 
 ## 5. Where it was integrated
 

@@ -1,5 +1,11 @@
 # Money Mode Release Candidate (R6.0)
 
+> **Historical record.** This report describes the run as observed on the date
+> below. The team-rating canary and the ticket canary dry-run it references have
+> since been removed in full, together with the `team_rating_*` tables; the
+> canary sections and those two table counts no longer correspond to anything in
+> the codebase. Everything else (decision, tickets, write-safety) still holds.
+
 **Date/time:** 2026-06-24 04:30 UTC
 **HEAD (pre-commit):** `2a0a22a` — _Add ticket canary dry-run_
 **Branch:** `chore/production-polish`

@@ -35,7 +35,6 @@ import {
   probBarWidthClass,
 } from "./helpers.js";
 import { presentationGuardOf, SIGNAL_LABEL } from "./presentation-guard.js";
-import { renderTicketCanaryDryRunPanel } from "./ticket-canary-dry-run.js";
 import { renderMoneyModePanel } from "./money-mode.js";
 import { renderOperationalMoneyModeStatusPanel } from "./operational-money-mode-status.js";
 import { renderExternalResultsPanel } from "./external-results.js";
@@ -719,7 +718,6 @@ function buildMatchCard(match) {
           <span class="badge-risk tone-${riskTone(riskLevel)}" title="Riesgo del partido para la quiniela">Riesgo ${escapeHtml(riskLevelLabel(riskLevel))}</span>
           ${decision.source === "manual" ? `<span class="badge-muted">Manual</span>` : ""}
           ${pred.is_knockout ? `<span class="badge-muted" title="Eliminatoria: empate descartado">Eliminatoria</span>` : ""}
-          ${renderCanaryBadge(pred)}
         </div>
         ${reasonMarkup ? `<div class="reason-row">${reasonMarkup}</div>` : ""}
         ${detailsToggle}
@@ -1601,13 +1599,6 @@ function renderSidebar() {
     `;
 }
 
-function renderCanaryBadge(pred) {
-  const c = pred && pred.canary;
-  if (!c || !c.active) return "";
-  const delta = typeof c.max_abs_delta === "number" ? c.max_abs_delta.toFixed(3) : "";
-  return `<span class="badge-canary" title="Team Rating Canary activo · Δ prob máx ${escapeHtml(delta)} · El ticket aún NO usa canary (motor: ${escapeHtml(c.engine || "")})">CANARY</span>`;
-}
-
 // R6.3: a deferred diagnostic panel shows a lightweight skeleton while its
 // (lazy) payload is still loading, instead of an empty/"sin datos" state.
 function _diagBody(id, renderFn, data) {
@@ -1618,10 +1609,6 @@ function _diagBody(id, renderFn, data) {
     return;
   }
   node.innerHTML = renderFn(data);
-}
-
-function renderTicketCanaryDryRun() {
-  _diagBody("ticket-canary-dry-run-body", renderTicketCanaryDryRunPanel, state.ticketCanaryDryRun);
 }
 
 function renderMoneyMode() {
@@ -1689,7 +1676,6 @@ function renderDiagnosticsPanels() {
   renderMoneyMode();
   renderSlateOptions();
   renderTrackingResultsValidation();
-  renderTicketCanaryDryRun();
   renderExternalResults();
   renderLiveResultsObserver();
   renderNeuralShadow();
@@ -2258,8 +2244,8 @@ function renderLoadingRows() {
 async function loadSlateDetails(slateId) {
   // R6.3 performance: the prediction board only awaits the CORE fetches it needs
   // to render (predictions, features, ticket, quality + the three batch context
-  // maps). The heavy diagnostics (Money Mode, ticket canary dry-run,
-  // external results) are deferred to loadSlateDiagnostics
+  // maps). The heavy diagnostics (Money Mode, external results) are
+  // deferred to loadSlateDiagnostics
   // so they never block first paint of the board.
   //
   // Stale-response guard: every switch bumps the sequence; if a newer switch
@@ -2353,8 +2339,7 @@ function writeLnResultsSnapshot(report) {
 }
 
 function _applyDiagnostics(payload) {
-  const [ticketCanaryDryRun, moneyMode, opsStatus, operationalPredictionAudit, slateReadinessReport, externalResults, slateOptions, resultsValidation, liveResultsObserver] = payload;
-  state.ticketCanaryDryRun = (ticketCanaryDryRun && !Array.isArray(ticketCanaryDryRun)) ? ticketCanaryDryRun : null;
+  const [moneyMode, opsStatus, operationalPredictionAudit, slateReadinessReport, externalResults, slateOptions, resultsValidation, liveResultsObserver] = payload;
   state.moneyMode = (moneyMode && !Array.isArray(moneyMode)) ? moneyMode : null;
   state.moneyModeOpsStatus = (opsStatus && !Array.isArray(opsStatus)) ? opsStatus : null;
   state.operationalPredictionAudit = (operationalPredictionAudit && !Array.isArray(operationalPredictionAudit)) ? operationalPredictionAudit : null;
@@ -2410,9 +2395,8 @@ async function loadSlateDiagnostics(slateId) {
   state.diagnosticsLoading = true;
   state.diagnosticsSlateId = null;
   renderDiagnosticsPanels(); // immediate skeleton
-  const payload = Array(9).fill(null);
+  const payload = Array(8).fill(null);
   const requests = [
-    { path: `/predictions/slates/${slateId}/ticket-canary-dry-run` },
     { path: `/predictions/slates/${slateId}/money-mode` },
     { path: `/operations/money-mode/status`, deferred: true },
     { path: `/tracking/operational-prediction-audit?slate_id=${encodeURIComponent(slateId)}`, deferred: true },

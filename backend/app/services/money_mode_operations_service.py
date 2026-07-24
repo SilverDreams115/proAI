@@ -2,11 +2,11 @@
 
 The single operational layer used for daily Progol review of every active/
 upcoming slate. It orchestrates the existing read-only building blocks in a
-fixed order — active-slate scope -> slate validation -> ticket canary dry-run ->
-Money Mode -> write-safety audit -> counts before/after — and emits one
-self-describing payload per slate plus a compact operational status.
+fixed order — active-slate scope -> slate validation -> Money Mode ->
+write-safety audit -> counts before/after — and emits one self-describing
+payload per slate plus a compact operational status.
 
-It writes nothing: it reuses the Money Mode / dry-run / validation services
+It writes nothing: it reuses the Money Mode / validation services
 (all ``persist=False`` / ``build_read_only``) and is always invoked inside a
 ``read_only_transaction`` by its callers (CLI + endpoint). The counts
 before/after are captured around the run to *prove* delta-zero.
@@ -29,16 +29,14 @@ from app.models.tables import (
     ProgolSlateModel,
     TicketRecommendationSnapshotModel,
 )
-from app.models.team_rating import TeamRatingRunModel, TeamRatingSnapshotModel
 from app.repositories.slate_repository import SlateRepository
 from app.services.active_slate_scope import build_active_slate_scope
 from app.services.diagnostic_ttl_cache import cached_diagnostic_report
 from app.services.money_mode_service import build_money_mode
 from app.services.money_mode_validation_service import validate_slate_for_money_mode
 from app.services.slate_service import SlateService
-from app.services.ticket_canary_dry_run_service import build_ticket_canary_dry_run
 
-# The ten tracked tables whose counts must never move during a read-only run.
+# The tracked tables whose counts must never move during a read-only run.
 _COUNT_TABLES: dict[str, Any] = {
     "match_results": MatchResultModel,
     "predictions": PredictionModel,
@@ -46,8 +44,6 @@ _COUNT_TABLES: dict[str, Any] = {
     "progol_slate_matches": ProgolSlateMatchModel,
     "match_feature_snapshots": MatchFeatureSnapshotModel,
     "ticket_recommendation_snapshots": TicketRecommendationSnapshotModel,
-    "team_rating_runs": TeamRatingRunModel,
-    "team_rating_snapshots": TeamRatingSnapshotModel,
     "model_training_runs": ModelTrainingRunModel,
     "progol_slates": ProgolSlateModel,
 }
@@ -64,7 +60,7 @@ _PLAYABLE_STATUSES = frozenset(
 
 
 def count_tracked_tables(session: Session) -> dict[str, int]:
-    """Read-only count of the ten tracked tables."""
+    """Read-only count of the tracked tables."""
     return {
         name: int(session.scalar(select(func.count()).select_from(model)) or 0)
         for name, model in _COUNT_TABLES.items()
@@ -89,7 +85,7 @@ def _slate_status(report: dict[str, Any]) -> dict[str, Any]:
     # Presentation-only fields (R6.2): a count of the critical matches the most
     # protective ticket still cannot cover, and a plain operator action. These
     # derive entirely from the existing decision/ticket data — they change no
-    # model, prediction, canary or ticket logic.
+    # model, prediction or ticket logic.
     conservative = report.get("tickets", {}).get("conservative", {})
     critical_uncovered = len(conservative.get("uncovered_no_simple_positions", []))
     if playable and decision["recommended_ticket"]:
@@ -217,8 +213,8 @@ def run_operational_money_mode(
 ) -> dict[str, Any]:
     """Full operational orchestration for the CLI (read-only).
 
-    Order: active_slate_scope -> money_mode_validation -> ticket_canary_dry_run
-    -> money_mode -> write-safety audit -> counts before/after. Includes a cheap
+    Order: active_slate_scope -> money_mode_validation -> money_mode ->
+    write-safety audit -> counts before/after. Includes a cheap
     readiness rollup always; the (free) results-provider status is attached only
     when ``with_results_provider`` is set so the default run stays fast.
     """
@@ -252,21 +248,17 @@ def run_operational_money_mode(
     playable = 0
     for slate in targets:
         validation = validate_slate_for_money_mode(session, slate)
-        dry_run = build_ticket_canary_dry_run(session, slate)
         money_mode = build_money_mode(session, slate)
         ws = money_mode.get("write_safety", {})
-        ws_dry = dry_run.get("write_safety", {})
         slate_ws_ok = (
             ws.get("writes_performed") is False
             and ws.get("snapshots_created") is False
-            and ws_dry.get("writes_performed") is False
         )
         write_safety_ok = write_safety_ok and slate_ws_ok
         if money_mode["decision"]["status"] in _PLAYABLE_STATUSES:
             playable += 1
         slate_entry: dict[str, Any] = {
             "validation": validation,
-            "ticket_canary_dry_run": dry_run,
             "money_mode": money_mode,
             "status": _slate_status(money_mode),
             "readiness_summary": _readiness_summary(money_mode),

@@ -132,7 +132,7 @@ export function renderLearningDashboard(inventory, readiness, scores = null) {
   if (!inventory || !Array.isArray(inventory.slates)) {
     return `<div class="empty-state">Sin inventario de aprendizaje.</div>`;
   }
-  const badge = `<span class="shadow-badge badge-canary">SEGUIMIENTO Y APRENDIZAJE · SOLO LECTURA</span>`;
+  const badge = `<span class="shadow-badge badge-readonly">SEGUIMIENTO Y APRENDIZAJE · SOLO LECTURA</span>`;
   const trainingReady = readiness && readiness.training_ready ? "sí" : "no";
   const reason = readiness && readiness.reason ? readiness.reason : "—";
   const cards = inventory.slates.map(slateCard).join("");

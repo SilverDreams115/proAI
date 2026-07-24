@@ -12,9 +12,6 @@ Design contract (all enforced here):
   (persist_audit=False)``, ``FeatureService.build_match_features(persist=False)``
   and ``TicketRecommendationService.build_read_only`` (no snapshot row). Opens
   its DB transaction ``READ ONLY`` and rolls back in ``finally``.
-* **Canary-aware.** For canary-active positions it consumes the
-  ``effective_decision_probabilities`` (same copy the ticket canary dry-run
-  uses); everything else stays on the current display/decision vector.
 * **Guardrailed.** The presentation guard is authoritative: a position with
   ``simple_allowed=False`` can NEVER surface as a confident simple. A forced
   single on such a position is reported as ``no_simple`` (uncovered risk), so a
@@ -47,8 +44,6 @@ from app.services.model_training_service import ModelTrainingService
 from app.services.money_mode_validation_service import validate_slate_for_money_mode
 from app.services.prediction_service import PredictionService
 from app.services.slate_service import SlateService
-from app.services.team_rating_canary_service import apply_canary_to_predictions
-from app.services.ticket_canary_dry_run_service import _canary_probability_copy
 from app.services.ticket_recommendation_service import TicketRecommendationService
 
 MODE = "money_mode_release_candidate"
@@ -238,7 +233,6 @@ def _match_justification(pred: Any, mode_key: str, rec_by_match: dict[str, Any])
     guard = pred.presentation_guard
     simple_allowed = bool(guard.simple_allowed) if guard else False
     reasons = list(guard.reason) if guard else []
-    canary_active = bool(pred.canary and pred.canary.active)
 
     rec = rec_by_match.get(pred.match_id)
     decision = None
@@ -263,7 +257,6 @@ def _match_justification(pred: Any, mode_key: str, rec_by_match: dict[str, Any])
         "money_mode_pick": money_pick,
         "money_mode_pick_type": pick_kind,
         "reason": reasons,
-        "canary_active": canary_active,
         "risk": guard.risk_level if guard else "unknown",
         "simple_allowed": simple_allowed,
     }
@@ -291,11 +284,7 @@ def _build_money_mode_uncached(session: Session, slate: ProgolSlateModel) -> dic
         TrainingRepository(session), EntityRepository(session), ResultRepository(session)
     )
     prediction_service = PredictionService(training_service)
-    predictions = prediction_service.build_slate_predictions(slate, persist_audit=False)
-    plan = apply_canary_to_predictions(session, slate, predictions)
-
-    # Use canary effective probabilities for canary-active positions only.
-    money_predictions = [_canary_probability_copy(p) for p in predictions]
+    money_predictions = prediction_service.build_slate_predictions(slate, persist_audit=False)
 
     feature_service = FeatureService(FeatureRepository(session), ResultRepository(session))
     feature_payloads_by_match: dict[str, dict[str, Any]] = {}
@@ -369,7 +358,6 @@ def _build_money_mode_uncached(session: Session, slate: ProgolSlateModel) -> dic
         "tickets": tickets,
         "do_not_simple_positions": do_not_simple,
         "must_review_positions": must_review,
-        "canary_influence_positions": list(plan.active_positions),
         "matches": matches,
         "write_safety": {"writes_performed": False, "snapshots_created": False},
     }

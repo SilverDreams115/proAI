@@ -48,7 +48,7 @@ slates because there are no official results to compare against.
 Not classifiable yet for PG-2337/PGM-800 (no results). The error
 attribution layer (`learning_error_attribution_service`) is ready and
 classifies: `wrong_favorite`, `draw_underestimated`, `favorite_overestimated`,
-`away_overestimated`, `guardrail_saved`, `guardrail_missed`, `canary_*`,
+`away_overestimated`, `guardrail_saved`, `guardrail_missed`,
 `money_mode_*`, `data_quality_issue`, `result_conflict`, etc.
 
 ---

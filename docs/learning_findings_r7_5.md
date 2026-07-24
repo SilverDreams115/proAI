@@ -112,5 +112,5 @@ start persisting sanity-audit on new predictions. Only then **propose**
 - ❌ Do not train (3 slates / 37 matches << 8/112).
 - ❌ Do not recalibrate `decision` yet (no sufficient dataset).
 - ❌ Do not lower guardrails, no NO_SIMPLE→SIMPLE, no more aggressive Money Mode.
-- ❌ Do not touch canary, pricing, optimizer, thresholds.
+- ❌ Do not touch pricing, optimizer, thresholds.
 - ❌ Do not backfill sanity_audit/slate_id in this phase.

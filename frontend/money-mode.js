@@ -135,7 +135,7 @@ export function renderMoneyModePanel(report) {
   const tone = DECISION_TONE[d.status] || "muted";
   const label = DECISION_LABEL[d.status] || d.status;
   const noPlay = d.status === "NO_JUGAR";
-  const badge = `<span class="shadow-badge badge-canary">MONEY MODE · SOLO LECTURA</span>`;
+  const badge = `<span class="shadow-badge badge-readonly">MONEY MODE · SOLO LECTURA</span>`;
 
   const validation = report.validation || {};
   const livePredictions =
@@ -184,11 +184,10 @@ export function renderMoneyModePanel(report) {
       const noSimple = !m.simple_allowed
         ? `<span class="badge-risk tone-danger">Sin cobertura</span>`
         : `<span class="badge-muted">simple ok</span>`;
-      const canary = m.canary_active ? `<span class="badge-canary">canary</span>` : "";
       return `<tr${!m.simple_allowed ? ' class="row-changed"' : ""}>
         <td>${escapeHtml(m.position)}</td>
         <td>${escapeHtml(m.match)}</td>
-        <td>${noSimple} ${canary}</td>
+        <td>${noSimple}</td>
         <td>${escapeHtml(PICK_TYPE_LABEL[m.money_mode_pick_type] || m.money_mode_pick_type)} <span class="mono">${escapeHtml(pick)}</span></td>
         <td>${escapeHtml(m.risk)}</td>
         <td class="meta-copy">${escapeHtml(reason)}</td>
@@ -202,7 +201,6 @@ export function renderMoneyModePanel(report) {
       <div class="shadow-positions">
         <div class="shadow-positions-item"><span class="shadow-card-label">Partidos sin cobertura permitida</span><span class="shadow-positions-value">${escapeHtml((report.do_not_simple_positions || []).join(", ") || "ninguno")}</span></div>
         <div class="shadow-positions-item"><span class="shadow-card-label">Revisión obligatoria</span><span class="shadow-positions-value">${escapeHtml((report.must_review_positions || []).join(", ") || "ninguna")}</span></div>
-        <div class="shadow-positions-item"><span class="shadow-card-label">Canary influye en</span><span class="shadow-positions-value">${escapeHtml((report.canary_influence_positions || []).join(", ") || "ninguna")}</span></div>
         <div class="shadow-positions-item"><span class="shadow-card-label">Warnings</span><span class="shadow-positions-value">${escapeHtml((validation.warnings || []).join(", ") || "ninguno")}</span></div>
       </div>
       <table class="dryrun-table mm-tech-table">

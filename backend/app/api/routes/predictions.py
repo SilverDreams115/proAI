@@ -41,12 +41,10 @@ async def get_slate_predictions(
     )
     prediction_service = PredictionService(training_service)
     predictions = prediction_service.build_slate_predictions(slate, persist_audit=False)
-    # R5.6-B: additive controlled-canary post-processing. No-op when the canary
-    # flag is OFF; never writes the DB and never touches the ticket optimizer.
-    from app.services.team_rating_canary_service import apply_canary_to_predictions
+    # Additive read-only shadow diagnostics. Never writes the DB and never
+    # touches the ticket optimizer.
     from app.services.neural_baseline_service import NeuralShadowService
 
-    apply_canary_to_predictions(session, slate, predictions)
     NeuralShadowService(TrainingRepository(session)).apply_to_predictions(
         predictions,
         week_type=slate.week_type,
@@ -128,43 +126,6 @@ async def get_slate_feature_snapshots(
     return responses
 
 
-@router.get("/active-slates/ticket-canary-dry-run")
-async def get_active_slates_ticket_canary_dry_run(
-    session: Session = Depends(get_db_session),
-) -> dict:
-    """R5.7 read-only ticket/optimizer dry-run for every active/upcoming slate.
-
-    Compares the current ticket against the ticket the optimizer *would* produce
-    from the canary effective probabilities. In-memory only: never activates the
-    real ticket, never integrates the optimizer, never writes a row.
-    """
-    from app.services.ticket_canary_dry_run_service import (
-        build_active_slates_ticket_canary_dry_run,
-    )
-
-    return build_active_slates_ticket_canary_dry_run(session)
-
-
-@router.get("/slates/{slate_id}/ticket-canary-dry-run")
-async def get_slate_ticket_canary_dry_run(
-    slate_id: str,
-    session: Session = Depends(get_db_session),
-) -> dict:
-    """R5.7 read-only ticket/optimizer dry-run for one slate (current vs canary).
-
-    Reuses the pure ticket builder (no snapshot) and the canary effective
-    probabilities. Strictly read-only: no ticket activation, no snapshot writes,
-    no prediction regeneration.
-    """
-    from app.services.ticket_canary_dry_run_service import build_ticket_canary_dry_run
-
-    slate_service = SlateService(SlateRepository(session))
-    slate = slate_service.get_slate(slate_id)
-    if slate is None:
-        raise HTTPException(status_code=404, detail="Slate not found.")
-    return build_ticket_canary_dry_run(session, slate)
-
-
 @router.get("/active-slates/options")
 async def get_active_slates_options(
     session: Session = Depends(get_db_session),
@@ -224,7 +185,7 @@ async def get_slate_money_mode(
 ) -> dict:
     """R6.0 read-only Money Mode RC for one slate (play/don't-play + tickets).
 
-    Reuses the canary effective probabilities and the presentation guard so a
+    Reuses the decision probabilities and the presentation guard so a
     NO-SIMPLE / risk_high / review / blocked match never reads as a simple. No
     snapshot writes, no ticket activation, no prediction regeneration.
     """

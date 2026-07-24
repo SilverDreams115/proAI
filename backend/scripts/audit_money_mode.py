@@ -67,7 +67,6 @@ def _print_slate(report: dict[str, Any]) -> None:
     print(f"  boleto recomendado: {d['recommended_ticket']}")
     print(f"  NO SIMPLE: {report['do_not_simple_positions']}")
     print(f"  revision obligatoria: {report['must_review_positions']}")
-    print(f"  canary influye en: {report['canary_influence_positions']}")
     for label in ("aggressive", "balanced", "conservative"):
         _print_ticket(label, report["tickets"][label])
     print("  --- justificacion por partido ---")
@@ -75,7 +74,7 @@ def _print_slate(report: dict[str, Any]) -> None:
         print(
             f"    pos{m['position']:>2} {m['match'][:32]:32} {m['recommendation']:<10} "
             f"pick={'/'.join(m['money_mode_pick']) or '-':<5}({m['money_mode_pick_type']}) "
-            f"canary={m['canary_active']} riesgo={m['risk']} motivos={m['reason']}"
+            f"riesgo={m['risk']} motivos={m['reason']}"
         )
     ws = report["write_safety"]
     print(f"  write_safety: writes={ws['writes_performed']} snapshots={ws['snapshots_created']}")

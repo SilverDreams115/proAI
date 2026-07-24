@@ -49,7 +49,6 @@ const PG_REPORT = {
   },
   do_not_simple_positions: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14],
   must_review_positions: [4, 6, 7],
-  canary_influence_positions: [1, 2, 3, 5, 8, 11],
   matches: [
     {
       position: 7,
@@ -59,7 +58,6 @@ const PG_REPORT = {
       money_mode_pick: ["V", "E"],
       money_mode_pick_type: "double",
       reason: ["risk_high", "no_dejar_simple", "suspicious_class"],
-      canary_active: false,
       risk: "high",
       simple_allowed: false,
     },

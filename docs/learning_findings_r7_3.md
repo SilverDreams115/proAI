@@ -192,7 +192,7 @@ Excluded: the other slates for non-official lineage or incomplete results
   are a signal, not proof, with n this small).
 - ❌ Do not make Money Mode more aggressive (it blocked 14 hits, but avoided 9 misses;
   insufficient to reopen the trade-off).
-- ❌ Do not touch canary, pricing, optimizer or thresholds.
+- ❌ Do not touch pricing, optimizer or thresholds.
 - ❌ Do not recalibrate `decision` yet (no dataset).
 
 ---

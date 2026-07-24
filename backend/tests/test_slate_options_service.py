@@ -10,11 +10,10 @@ from app.models.tables import (
     TicketRecommendationSnapshotModel,
 )
 from app.services.slate_options_service import build_slate_options
-from backend.tests.test_ticket_canary_dry_run_service import (
+from backend.tests.slate_fixtures import (
     DRAW,
     db,  # noqa: F401 — pytest fixture
-    enable_canary,
-    seed_canary_slate,
+    seed_slate,
 )
 
 
@@ -35,8 +34,7 @@ def test_options_always_present_and_no_writes(db, monkeypatch):  # noqa: F811
     """6 + 11 — always returns the 3 named options (+manual); writes nothing."""
     from app.db import session as db_mod
 
-    enable_canary(monkeypatch)
-    seed_canary_slate(db)
+    seed_slate(db)
 
     before = _counts(db_mod.SessionLocal)
     report = build_slate_options(db, _slate(db))
@@ -53,8 +51,7 @@ def test_options_always_present_and_no_writes(db, monkeypatch):  # noqa: F811
 
 def test_no_jugar_marks_no_option_recommended(db, monkeypatch):  # noqa: F811
     """7 — when NO_JUGAR, no option is recommended and action is NO_COMPRAR."""
-    enable_canary(monkeypatch)
-    seed_canary_slate(db)
+    seed_slate(db)
     report = build_slate_options(db, _slate(db))
 
     # The seed (friendlies, low evidence) resolves to NO_JUGAR.
@@ -66,8 +63,7 @@ def test_no_jugar_marks_no_option_recommended(db, monkeypatch):  # noqa: F811
 
 def test_options_carry_pricing_unverified(db, monkeypatch):  # noqa: F811
     """Options carry combinations + unverified cost (None, not $0)."""
-    enable_canary(monkeypatch)
-    seed_canary_slate(db)
+    seed_slate(db)
     report = build_slate_options(db, _slate(db))
     for opt in report["options"]:
         assert opt["combinations"] == (2 ** opt["double_count"]) * (3 ** opt["triple_count"])

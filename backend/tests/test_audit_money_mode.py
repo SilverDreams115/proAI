@@ -10,11 +10,10 @@ from app.models.tables import (
     PredictionModel,
     TicketRecommendationSnapshotModel,
 )
-from backend.tests.test_ticket_canary_dry_run_service import (
+from backend.tests.slate_fixtures import (
     DRAW,
     db,  # noqa: F401 — pytest fixture
-    enable_canary,
-    seed_canary_slate,
+    seed_slate,
 )
 
 
@@ -32,8 +31,7 @@ def test_cli_json_output_and_no_writes(db, monkeypatch, capsys):  # noqa: F811
     from app.db import session as db_mod
     from scripts.audit_money_mode import main
 
-    enable_canary(monkeypatch)
-    seed_canary_slate(db)
+    seed_slate(db)
 
     before = _counts(db_mod.SessionLocal)
     rc = main(["--draw-code", DRAW, "--json"])
@@ -52,8 +50,7 @@ def test_cli_json_output_and_no_writes(db, monkeypatch, capsys):  # noqa: F811
 def test_cli_human_output(db, monkeypatch, capsys):  # noqa: F811
     from scripts.audit_money_mode import main
 
-    enable_canary(monkeypatch)
-    seed_canary_slate(db)
+    seed_slate(db)
     rc = main(["--draw-code", DRAW])
     assert rc == 0
     out = capsys.readouterr().out
@@ -66,8 +63,7 @@ def test_cli_human_output(db, monkeypatch, capsys):  # noqa: F811
 def test_cli_unknown_draw_code_exits(db, monkeypatch):  # noqa: F811
     from scripts.audit_money_mode import main
 
-    enable_canary(monkeypatch)
-    seed_canary_slate(db)
+    seed_slate(db)
     try:
         main(["--draw-code", "PG-DOES-NOT-EXIST"])
     except SystemExit as exc:

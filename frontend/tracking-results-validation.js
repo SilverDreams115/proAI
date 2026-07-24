@@ -52,7 +52,7 @@ export function renderTrackingResultsValidationPanel(report) {
   if (!report || !Array.isArray(report.slates)) {
     return `<div class="empty-state">Sin validación de resultados de slates terminadas.</div>`;
   }
-  const badge = `<span class="shadow-badge badge-canary">VALIDACIÓN DE RESULTADOS · SOLO LECTURA</span>`;
+  const badge = `<span class="shadow-badge badge-readonly">VALIDACIÓN DE RESULTADOS · SOLO LECTURA</span>`;
   if (report.slates.length === 0) {
     return `
       <div class="shadow-panel trv-panel">

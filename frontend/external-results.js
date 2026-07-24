@@ -37,7 +37,7 @@ export function renderExternalResultsPanel(report) {
   }
   const status = report.status || (report.enabled ? "ok" : "disabled");
   const tone = STATUS_TONE[status] || "muted";
-  const badge = `<span class="shadow-badge badge-canary">RESULTADOS EXTERNOS · SOLO LECTURA</span>`;
+  const badge = `<span class="shadow-badge badge-readonly">RESULTADOS EXTERNOS · SOLO LECTURA</span>`;
 
   // Provider not usable (disabled / missing key): clear call-to-config, no table.
   if (status === "disabled" || status === "unavailable_missing_key") {

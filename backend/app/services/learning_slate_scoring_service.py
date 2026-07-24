@@ -107,7 +107,6 @@ class LearningSlateScoringService:
             pred_sign = _sign(pred.recommended_outcome) if pred is not None else None
 
             decision = _decision_probs(pred) if pred is not None else None
-            effective = _audit_probs(pred, "effective_probabilities") if pred is not None else None
             final_status = _audit_value(pred, "final_status") if pred is not None else None
             evidence_level = _audit_value(pred, "evidence_level") if pred is not None else None
 
@@ -138,7 +137,6 @@ class LearningSlateScoringService:
                 prediction_sign=pred_sign,
                 actual_sign=actual_sign,
                 decision_probs=decision,
-                effective_probs=effective,
                 final_status=final_status,
                 evidence_level=evidence_level,
                 money_blocked=money_blocked,
@@ -157,7 +155,6 @@ class LearningSlateScoringService:
                     "hit": hit,
                     "probability_assigned_to_actual": round(p_actual, 4) if p_actual is not None else None,
                     "decision_probabilities": {k: round(v, 4) for k, v in decision.items()} if decision else None,
-                    "effective_probabilities": {k: round(v, 4) for k, v in effective.items()} if effective else None,
                     "error_type": attribution["error_type"],
                     "reason": attribution["reason"],
                     "should_have_blocked": attribution["should_have_blocked"],

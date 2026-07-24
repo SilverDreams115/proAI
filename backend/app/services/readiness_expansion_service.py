@@ -35,13 +35,12 @@ _REASON_CATEGORY = {
 # Blocker category -> the real datum that would unblock it.
 _IMPROVED_BY = {
     "low_evidence": "more_result_history",
-    "fallback_used": "no_rating",
+    "fallback_used": "more_result_history",
     "suspicious_class": "better_calibration",
     "stale_metadata": "fix_metadata_or_mapping",
     "friendly_context": "friendly_specific_calibrator",
     "placeholder_team": "resolve_fixture_team",
     "provider_unmatched": "provider_finished_result",
-    "canary_not_active": "partial_rating",
     "no_result_history": "more_result_history",
 }
 
@@ -91,8 +90,6 @@ def build_ready_expansion(session: Session, slate: ProgolSlateModel) -> dict[str
         if pv.get("confidence") != "high" or pv.get("status") != "finished":
             if "provider_unmatched" not in blocked_by:
                 blocked_by.append("provider_unmatched")
-        if not bool(mm.get("canary_active")) and "canary_not_active" not in blocked_by:
-            blocked_by.append("canary_not_active")
 
         improvements: list[str] = []
         for category in blocked_by:

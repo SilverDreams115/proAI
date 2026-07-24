@@ -27,10 +27,6 @@ ERROR_TYPES = (
     "low_evidence_correctly_blocked",
     "guardrail_saved",
     "guardrail_missed",
-    "rating_helped",
-    "rating_hurt",
-    "canary_helped",
-    "canary_hurt",
     "money_mode_correctly_blocked",
     "money_mode_too_conservative",
     "data_quality_issue",
@@ -56,7 +52,6 @@ def classify_position(
     prediction_sign: str | None,
     actual_sign: str | None,
     decision_probs: dict[str, float] | None,
-    effective_probs: dict[str, float] | None = None,
     final_status: str | None = None,
     evidence_level: str | None = None,
     money_blocked: bool | None = False,
@@ -88,15 +83,6 @@ def classify_position(
     favorite = max(decision_probs, key=lambda k: decision_probs[k])
     p_pred = decision_probs.get(prediction_sign or "", 0.0)
 
-    canary_label: str | None = None
-    if effective_probs:
-        eff_pred = max(effective_probs, key=lambda k: effective_probs[k])
-        eff_hit = eff_pred == actual_sign
-        if eff_hit and not hit:
-            canary_label = "canary_helped"
-        elif hit and not eff_hit:
-            canary_label = "canary_hurt"
-
     # --- Money Mode dimension (independent of the signal-level error_type). A
     # NO-JUGAR slate blocks every pick, so this is tracked separately so the
     # underlying model/guardrail error is never masked. ---
@@ -115,8 +101,6 @@ def classify_position(
                 "guardrail_missed",
                 f"acierto que el guardrail marcó como no-simple ({guardrail_status(status)})",
             )
-        elif canary_label == "canary_helped":
-            error_type, reason = "canary_helped", "acierto gracias al ajuste canary"
         else:
             error_type, reason = "correct", "acierto"
         return _result(
@@ -135,11 +119,6 @@ def classify_position(
         error_type, reason = (
             "guardrail_saved",
             f"fallo en pick no-simple que el guardrail degradó ({guardrail_status(status)})",
-        )
-        should_blocked = True
-    elif canary_label == "canary_hurt":
-        error_type, reason = (
-            "canary_hurt", "el ajuste canary empeoró un pick que habría acertado",
         )
         should_blocked = True
     elif actual_sign == "E":

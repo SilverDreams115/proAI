@@ -74,7 +74,7 @@ export function renderLiveResultsObserverPanel(report, alert = null) {
     </tr>`).join("");
   return `
     <div class="shadow-panel ln-results-panel">
-      <div class="shadow-toprow"><span class="shadow-badge badge-canary">LN RESULTADOS · TIEMPO REAL</span></div>
+      <div class="shadow-toprow"><span class="shadow-badge badge-readonly">LN RESULTADOS · TIEMPO REAL</span></div>
       ${alertHtml}
       <div class="ext-results-head">
         <span class="ext-results-provider">Lotería Nacional</span>

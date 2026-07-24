@@ -39,8 +39,8 @@ def main(argv: list[str] | None = None) -> int:
           f"({', '.join(report['comparable_slates']) or 'none'})")
     print(f"  comparable matches: {report['comparable_match_count']} "
           f"(conflicts={report['conflict_match_count']}, ratio={report['conflict_ratio']})")
-    print(f"  with features={report['matches_with_features']} rating={report['matches_with_rating']} "
-          f"canary={report['matches_with_canary']} money_mode={report['matches_with_money_mode']}")
+    print(f"  with features={report['matches_with_features']} "
+          f"money_mode={report['matches_with_money_mode']}")
     if report["minimum_missing"]:
         print(f"  minimum_missing: {report['minimum_missing']}")
     print(f"  recommended next: {report['recommended_next_data_action']}")

@@ -65,7 +65,7 @@ describe("deferred panels render independently of the board", () => {
     validation: { prediction_status: "persisted", warnings: [], data_blockers: [] },
     decision: { status: "NO_JUGAR", reason: "x", confidence: "cautious", recommended_ticket: null },
     tickets: { aggressive: t(), balanced: t(), conservative: t() },
-    do_not_simple_positions: [1], must_review_positions: [], canary_influence_positions: [],
+    do_not_simple_positions: [1], must_review_positions: [],
     matches: [], write_safety: { writes_performed: false, snapshots_created: false },
   };
   function t() {
