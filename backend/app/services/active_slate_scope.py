@@ -1,7 +1,7 @@
 """Active/upcoming slate scope (R5.6-D).
 
 Single source of truth for "which slates are active/upcoming right now". Used
-to generalize served behaviour (canary scope, multi-slate UI) so it operates by
+to generalize served behaviour (multi-slate UI) so it operates by
 rule on every active/upcoming slate — weekend, midweek/MS and any future one —
 instead of being hardcoded to a single draw_code.
 

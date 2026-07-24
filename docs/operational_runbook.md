@@ -95,20 +95,6 @@ JUGAR / NO JUGAR per slate, Money Mode ready, last validation and write-safety. 
 
 ---
 
-## How to roll back the local canary
-
-The canary is local and reversible by flag (it does not touch the real ticket). To turn it off:
-```bash
-# in .env
-PROAI_TEAM_RATING_CANARY_ENABLED=false
-docker compose up -d proai     # recreates only proai
-```
-To reduce the scope without turning it off, adjust `PROAI_TEAM_RATING_CANARY_POSITIONS` /
-`PROAI_TEAM_RATING_CANARY_SCOPE` and recreate `proai`. The canary must never expand
-beyond `active_upcoming` + gated positions.
-
----
-
 ## How to detect stale metadata
 
 `money_mode_validation` (included in `operate_money_mode` and in the endpoint) reports:
@@ -161,7 +147,7 @@ attempt to write the production DB or activate the real ticket is an **immediate
 
 ### Fast UI load
 - The prediction dashboard loads **without waiting** for the heavy panels. Money
-  Mode, the canary dry-runs, the operational status and the external results load
+  Mode, the operational status and the external results load
   **lazily** when the **Diagnóstico** tab is opened, with **per-slate cache**
   (re-opening a slate is instant) and **cancellation** of stale responses.
 - Lightweight endpoint for first paint: `GET /api/operations/dashboard-fast`

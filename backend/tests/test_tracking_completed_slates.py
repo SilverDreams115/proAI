@@ -8,7 +8,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.models.tables import MatchResultModel, ProgolSlateModel
-from backend.tests.test_ticket_canary_dry_run_service import DRAW, enable_canary, seed_canary_slate
+from backend.tests.slate_fixtures import DRAW, seed_slate
 
 
 def _result_count(engine):
@@ -21,9 +21,8 @@ async def test_slate_options_endpoint(client, monkeypatch):
     """8 — PG-2338/PGM-801-style slate options endpoint responds."""
     from app.db import session as db_mod
 
-    enable_canary(monkeypatch)
     with Session(db_mod.engine) as session:
-        seed_canary_slate(session)
+        seed_slate(session)
         slate_id = session.query(ProgolSlateModel).filter_by(draw_code=DRAW).one().id
 
     resp = await client.get(f"/api/predictions/slates/{slate_id}/options")
@@ -40,9 +39,8 @@ async def test_slate_options_endpoint(client, monkeypatch):
 async def test_active_slates_options_endpoint(client, monkeypatch):
     from app.db import session as db_mod
 
-    enable_canary(monkeypatch)
     with Session(db_mod.engine) as session:
-        slate = seed_canary_slate(session)
+        slate = seed_slate(session)
         slate.registration_closes_at = datetime.now(timezone.utc) + timedelta(days=3)
         session.commit()
 
@@ -59,7 +57,7 @@ async def test_results_validation_endpoints(client):
     from app.db import session as db_mod
 
     with Session(db_mod.engine) as session:
-        seed_canary_slate(session)
+        seed_slate(session)
         slate_id = session.query(ProgolSlateModel).filter_by(draw_code=DRAW).one().id
 
     before = _result_count(db_mod.engine)
@@ -85,7 +83,7 @@ def test_apply_completed_results_blocked_without_confirm(db, monkeypatch):  # no
     """12 — apply is blocked without the typed confirmation."""
     from scripts.apply_completed_slate_results import main
 
-    seed_canary_slate(db)
+    seed_slate(db)
     rc = main(["--draw-code", DRAW])  # no --apply/--confirm
     assert rc == 2  # BLOCKED
 
@@ -95,7 +93,7 @@ def test_apply_completed_results_not_ready_with_confirm(db, monkeypatch):  # noq
     from app.db import session as db_mod
     from scripts.apply_completed_slate_results import main
 
-    seed_canary_slate(db)
+    seed_slate(db)
     before = _result_count(db_mod.engine)
     rc = main(["--draw-code", DRAW, "--apply", "--confirm", "APPLY-COMPLETED-SLATE-RESULTS"])
     assert rc == 4  # NOT READY (coverage 0)
@@ -103,4 +101,4 @@ def test_apply_completed_results_not_ready_with_confirm(db, monkeypatch):  # noq
 
 
 # pull in the db fixture for the two CLI tests
-from backend.tests.test_ticket_canary_dry_run_service import db  # noqa: E402,F401
+from backend.tests.slate_fixtures import db  # noqa: E402,F401

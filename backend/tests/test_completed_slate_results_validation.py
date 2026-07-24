@@ -14,10 +14,10 @@ from app.models.tables import (
 from app.services.completed_slate_results_validation_service import (
     build_completed_slate_validation,
 )
-from backend.tests.test_ticket_canary_dry_run_service import (
+from backend.tests.slate_fixtures import (
     DRAW,
     db,  # noqa: F401 — pytest fixture
-    seed_canary_slate,
+    seed_slate,
 )
 
 
@@ -34,7 +34,7 @@ def test_validation_reports_missing_results_and_no_writes(db):  # noqa: F811
     """9/10 + 11 + 13 — validation responds, flags missing results, writes nothing."""
     from app.db import session as db_mod
 
-    seed_canary_slate(db)
+    seed_slate(db)
 
     before = _result_count(db_mod.SessionLocal)
     report = build_completed_slate_validation(db, _slate(db))
@@ -55,7 +55,7 @@ def test_validation_reports_missing_results_and_no_writes(db):  # noqa: F811
 
 def test_validation_compares_hits_when_results_present(db):  # noqa: F811
     """14 — with complete local results, coverage=100% and hits are compared."""
-    seed_canary_slate(db)
+    seed_slate(db)
     slate = _slate(db)
 
     source = SourceModel(name="test-results", base_url="http://x", kind="manual")
@@ -103,7 +103,7 @@ def test_validation_skips_provider_network_when_local_coverage_full(db, monkeypa
     must not be reached at all."""
     import app.services.completed_slate_results_validation_service as mod
 
-    seed_canary_slate(db)
+    seed_slate(db)
     slate = _slate(db)
     source = SourceModel(name="test-results-2", base_url="http://x", kind="manual")
     db.add(source)
@@ -139,7 +139,7 @@ def test_validation_all_slates_endpoint_is_pure_db(db, monkeypatch):  # noqa: F8
         build_completed_slates_validation,
     )
 
-    seed_canary_slate(db)
+    seed_slate(db)
     slate = _slate(db)
     slate.is_archived = True
     db.commit()
@@ -158,7 +158,7 @@ def test_validation_list_mode_never_reaches_the_provider(db, monkeypatch):  # no
     results are missing — list endpoints must not fan out HTTP per slate."""
     import app.services.completed_slate_results_validation_service as mod
 
-    seed_canary_slate(db)
+    seed_slate(db)
 
     def _boom(*args, **kwargs):
         raise AssertionError("list mode must never consult the provider")

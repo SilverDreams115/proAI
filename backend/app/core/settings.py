@@ -101,7 +101,7 @@ class Settings(BaseModel):
     # the last successful prune. 0 disables the maintenance entirely.
     source_documents_prune_interval_hours: int = Field(default=24)
     source_documents_retention_days: int = Field(default=90)
-    # Periodic retrain of the production scoring artifact so team ratings,
+    # Periodic retrain of the production scoring artifact so Elo ratings,
     # scoring lambdas and calibration curves never go stale (the May->July
     # gap skewed confidence on fresh-form matches). Gated on the DB's latest
     # run timestamp, so restarts never retrigger. 0 disables it.
@@ -138,48 +138,6 @@ class Settings(BaseModel):
     sentry_dsn: str | None = Field(default=None)
     sentry_traces_sample_rate: float = Field(default=0.0)
     sentry_profiles_sample_rate: float = Field(default=0.0)
-    # Team-rating feature read-only adapter (R3). OFF by default: with this
-    # flag false the rating helper returns nothing and NOTHING in the
-    # prediction/feature path consults a rating. Flipping it on only lets a
-    # future, explicitly-wired feature layer READ the latest active rating
-    # snapshot — it never changes predictions on its own. See
-    # docs/team_rating_activation_protocol.md.
-    team_rating_feature_enabled: bool = Field(default=False)
-    # Team-rating controlled gate (R5.0). INACTIVE by default and NOT wired
-    # into PredictionService: these flags only configure the pure gate
-    # predicate / dry-run auditor. With team_rating_gate_enabled false the
-    # gate always returns eligible=false (flag_disabled), so probabilities are
-    # never affected. See docs/team_rating_gate_calibration_metadata.md.
-    team_rating_gate_enabled: bool = Field(default=False)
-    team_rating_gate_competitions: list[str] = Field(
-        default_factory=lambda: ["International Friendlies"]
-    )
-    team_rating_gate_require_both_medium_plus: bool = Field(default=True)
-    team_rating_gate_require_calibrator: bool = Field(default=True)
-    team_rating_gate_min_test_rows: int = Field(default=150)
-
-    # Team-rating controlled canary (R5.6-B). OFF by default. When enabled it
-    # only post-processes the prediction API response for the configured
-    # draw-codes/positions/competition: it recalibrates the *served* effective
-    # probabilities via the approved temperature candidate. It never writes the
-    # DB, never regenerates predictions, and never touches the ticket optimizer.
-    team_rating_canary_enabled: bool = Field(default=False)
-    # Scope policy (R5.6-D). "draw_code_allowlist" (default) limits the canary
-    # to the configured draw_codes. "active_upcoming" applies it to every
-    # active/upcoming slate by rule (and, if draw_codes is non-empty, still
-    # restricted to those). In every case blockers/gating are never ignored.
-    team_rating_canary_scope: str = Field(default="draw_code_allowlist")
-    team_rating_canary_draw_codes: list[str] = Field(default_factory=list)
-    team_rating_canary_positions: list[int] = Field(default_factory=list)
-    team_rating_canary_calibrator_id: str = Field(
-        default="international_friendlies_temperature_v1"
-    )
-    team_rating_canary_routing_policy: str = Field(
-        default="rating_replaces_fallback"
-    )
-    team_rating_canary_competition_allowlist: list[str] = Field(
-        default_factory=lambda: ["International Friendlies"]
-    )
 
     @property
     def docs_url(self) -> str | None:
@@ -344,42 +302,6 @@ def load_settings() -> Settings:
         ),
         economic_shadow_unit_cost=float(os.getenv("PROAI_ECONOMIC_SHADOW_UNIT_COST", "1.0")),
         economic_shadow_payout_units=_get_optional_float("PROAI_ECONOMIC_SHADOW_PAYOUT_UNITS"),
-        team_rating_feature_enabled=_get_bool("PROAI_TEAM_RATING_FEATURE_ENABLED", False),
-        team_rating_gate_enabled=_get_bool("PROAI_TEAM_RATING_GATE_ENABLED", False),
-        team_rating_gate_competitions=_get_csv(
-            "PROAI_TEAM_RATING_GATE_COMPETITIONS", ["International Friendlies"]
-        ),
-        team_rating_gate_require_both_medium_plus=_get_bool(
-            "PROAI_TEAM_RATING_GATE_REQUIRE_BOTH_MEDIUM_PLUS", True
-        ),
-        team_rating_gate_require_calibrator=_get_bool(
-            "PROAI_TEAM_RATING_GATE_REQUIRE_CALIBRATOR", True
-        ),
-        team_rating_gate_min_test_rows=int(
-            os.getenv("PROAI_TEAM_RATING_GATE_MIN_TEST_ROWS", "150")
-        ),
-        team_rating_canary_enabled=_get_bool("PROAI_TEAM_RATING_CANARY_ENABLED", False),
-        team_rating_canary_scope=os.getenv(
-            "PROAI_TEAM_RATING_CANARY_SCOPE", "draw_code_allowlist"
-        ),
-        team_rating_canary_draw_codes=_get_csv(
-            "PROAI_TEAM_RATING_CANARY_DRAW_CODES", []
-        ),
-        team_rating_canary_positions=[
-            int(pos)
-            for pos in _get_csv("PROAI_TEAM_RATING_CANARY_POSITIONS", [])
-            if pos.lstrip("-").isdigit()
-        ],
-        team_rating_canary_calibrator_id=os.getenv(
-            "PROAI_TEAM_RATING_CANARY_CALIBRATOR_ID",
-            "international_friendlies_temperature_v1",
-        ),
-        team_rating_canary_routing_policy=os.getenv(
-            "PROAI_TEAM_RATING_CANARY_ROUTING_POLICY", "rating_replaces_fallback"
-        ),
-        team_rating_canary_competition_allowlist=_get_csv(
-            "PROAI_TEAM_RATING_CANARY_COMPETITION_ALLOWLIST", ["International Friendlies"]
-        ),
         rate_limit_window_seconds=int(
             os.getenv("PROAI_RATE_LIMIT_WINDOW_SECONDS", "60")
         ),

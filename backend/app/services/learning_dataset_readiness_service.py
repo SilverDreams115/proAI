@@ -2,9 +2,9 @@
 
 Answers the single gating question of the learning loop: *is there enough clean,
 comparable evidence to justify training or adjusting a model?* It counts the
-comparable slates and matches, how many carry full features / a rating / a canary
-adjustment / a money-mode decision, and how many are excluded and why — then
-returns a conservative ``training_ready`` verdict.
+comparable slates and matches, how many carry full features / a money-mode
+decision, and how many are excluded and why — then returns a conservative
+``training_ready`` verdict.
 
 It NEVER trains and NEVER marks ``training_ready=true`` while results are
 missing, conflicts are high, or there are too few labelled rows.
@@ -22,9 +22,7 @@ from app.models.tables import (
     ProgolJornadaScoreModel,
     ProgolSlateModel,
 )
-from app.models.team_rating import TeamRatingSnapshotModel
 from app.repositories.canonical_result_repository import CanonicalResultRepository
-from app.services.learning_slate_scoring_service import _audit_probs
 from app.services.slate_classification_service import classify_slate
 
 # Conservative minimums before training/adjustment is even worth proposing.
@@ -32,10 +30,6 @@ MIN_COMPARABLE_SLATES = 8
 MIN_COMPARABLE_MATCHES = 112  # ~8 weekend jornadas
 MAX_CONFLICT_RATIO = 0.05
 MIN_CLASSIFICATION_MATCHES = 20
-
-
-def _teams_with_rating(session: Session) -> set[str]:
-    return set(session.scalars(select(TeamRatingSnapshotModel.team_id).distinct()).all())
 
 
 def _matches_with_features(session: Session, match_ids: list[str]) -> set[str]:
@@ -118,13 +112,10 @@ def _classification_row_count_from_score(
 
 def build_dataset_readiness(session: Session) -> dict[str, Any]:
     from app.repositories.slate_repository import SlateRepository
-    from app.services.learning_slate_scoring_service import LearningSlateScoringService
     from app.services.slate_service import SlateService
 
     service = SlateService(SlateRepository(session))
     slates: list[ProgolSlateModel] = service.list_slates(include_closed=True)
-    scorer = LearningSlateScoringService(session)
-    rated_teams = _teams_with_rating(session)
     latest_scores = _latest_scores_by_slate(session)
 
     comparable_slates: list[str] = []
@@ -134,8 +125,6 @@ def build_dataset_readiness(session: Session) -> dict[str, Any]:
     classification_matches = 0
     conflict_matches = 0
     with_features = 0
-    with_rating = 0
-    with_canary = 0
     with_money_mode = 0
     by_competition: dict[str, int] = {}
 
@@ -183,7 +172,6 @@ def build_dataset_readiness(session: Session) -> dict[str, Any]:
 
         # Comparable slate confirmed.
         comparable_slates.append(slate.draw_code)
-        predictions = scorer._latest_predictions(slate, match_ids)
         feature_matches = _matches_with_features(session, match_ids)
         # Historical behavior counted every comparable match as having a
         # money-mode decision because _money_mode_blocked always returns bool.
@@ -196,13 +184,6 @@ def build_dataset_readiness(session: Session) -> dict[str, Any]:
             by_competition[comp] = by_competition.get(comp, 0) + 1
             if sm.match_id in feature_matches:
                 with_features += 1
-            home = sm.match.home_team_id
-            away = sm.match.away_team_id
-            if home in rated_teams and away in rated_teams:
-                with_rating += 1
-            pred = predictions.get(sm.match_id)
-            if pred is not None and _audit_probs(pred, "effective_probabilities"):
-                with_canary += 1
 
     conflict_ratio = round(conflict_matches / comparable_matches, 4) if comparable_matches else 0.0
 
@@ -256,8 +237,6 @@ def build_dataset_readiness(session: Session) -> dict[str, Any]:
         "conflict_match_count": conflict_matches,
         "conflict_ratio": conflict_ratio,
         "matches_with_features": with_features,
-        "matches_with_rating": with_rating,
-        "matches_with_canary": with_canary,
         "matches_with_money_mode": with_money_mode,
         "by_competition": by_competition,
         "excluded": excluded,

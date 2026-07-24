@@ -30,7 +30,7 @@ export function renderNeuralShadowPanel(matches) {
   }).join("");
   return `
     <div class="shadow-panel neural-shadow-panel">
-      <div class="shadow-toprow"><span class="shadow-badge badge-canary">NEURAL SHADOW · SOLO LECTURA</span></div>
+      <div class="shadow-toprow"><span class="shadow-badge badge-readonly">NEURAL SHADOW · SOLO LECTURA</span></div>
       <div class="shadow-positions">
         <div class="shadow-positions-item"><span class="shadow-card-label">Activo</span><span class="shadow-positions-value">${escapeHtml(active)} / ${escapeHtml(rows.length)}</span></div>
         <div class="shadow-positions-item"><span class="shadow-card-label">Pick cambiado</span><span class="shadow-positions-value">${escapeHtml(changed)}</span></div>

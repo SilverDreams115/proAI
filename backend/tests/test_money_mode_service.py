@@ -12,12 +12,11 @@ from app.models.tables import (
     TicketRecommendationSnapshotModel,
 )
 
-# Reuse the canary slate seed + canary toggle from the dry-run test module.
-from backend.tests.test_ticket_canary_dry_run_service import (  # noqa: E402
+# Reuse the shared slate seed.
+from backend.tests.slate_fixtures import (  # noqa: E402
     DRAW,
     db,  # noqa: F401  (pytest fixture)
-    enable_canary,
-    seed_canary_slate,
+    seed_slate,
 )
 
 
@@ -38,8 +37,7 @@ def test_money_mode_structure_and_no_writes(db, monkeypatch):  # noqa: F811
     from app.db import session as db_mod
     from app.services.money_mode_service import build_money_mode
 
-    enable_canary(monkeypatch)
-    seed_canary_slate(db)
+    seed_slate(db)
 
     before = _counts(db_mod.SessionLocal)
     report = build_money_mode(db, _slate(db))
@@ -76,8 +74,7 @@ def test_no_simple_never_renders_as_simple(db, monkeypatch):  # noqa: F811
     simple in any of the three tickets, and Norway vs France never goes simple."""
     from app.services.money_mode_service import build_money_mode
 
-    enable_canary(monkeypatch)
-    seed_canary_slate(db)
+    seed_slate(db)
     report = build_money_mode(db, _slate(db))
 
     blocked_positions = set(report["do_not_simple_positions"])
@@ -95,8 +92,7 @@ def test_combinations_are_product_of_pick_widths(db, monkeypatch):  # noqa: F811
     """8 — estimated_combinations == product(1 simple/no_simple, 2 double, 3 triple)."""
     from app.services.money_mode_service import build_money_mode
 
-    enable_canary(monkeypatch)
-    seed_canary_slate(db)
+    seed_slate(db)
     report = build_money_mode(db, _slate(db))
 
     width = {"simple": 1, "no_simple": 1, "double": 2, "triple": 3}
@@ -106,23 +102,12 @@ def test_combinations_are_product_of_pick_widths(db, monkeypatch):  # noqa: F811
         assert ticket["estimated_cost"] is None  # costo unitario no configurado
 
 
-def test_canary_off_reports_no_canary_influence(db, monkeypatch):  # noqa: F811
-    from app.core import settings as settings_module
-    from app.services.money_mode_service import build_money_mode
-
-    monkeypatch.setattr(settings_module.settings, "team_rating_canary_enabled", False)
-    seed_canary_slate(db)
-    report = build_money_mode(db, _slate(db))
-    assert report["canary_influence_positions"] == []
-
-
 def test_active_upcoming_includes_seeded_slate(db, monkeypatch):  # noqa: F811
     from datetime import datetime, timedelta, timezone
 
     from app.services.money_mode_service import build_active_slates_money_mode
 
-    enable_canary(monkeypatch)
-    seed_canary_slate(db)
+    seed_slate(db)
     # Mark the slate active/upcoming so it enters the active_upcoming scope.
     slate = _slate(db)
     slate.registration_closes_at = datetime.now(timezone.utc) + timedelta(days=3)

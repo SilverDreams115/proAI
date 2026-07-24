@@ -1,37 +1,55 @@
-"""Team rating persistence (R2) — team_rating_runs / team_rating_snapshots.
+"""Drop team rating persistence — team_rating_runs / team_rating_snapshots.
 
-Revision ID: 0019
-Revises: 0018
-Create Date: 2026-06-20
+Revision ID: 0020
+Revises: 0019
+Create Date: 2026-07-24
 
-SUPERSEDED by revision 0020, which drops both tables: the team-rating
-subsystem was removed in full and no code owns this schema any more. The file
-is kept so the revision chain and any database still stamped at 0019 stay
-valid — do not apply it on a fresh database.
+The team-rating subsystem (ratings, feature adapter, approval gate, shadow mode
+and the controlled canary) was removed in full: no model, service, script or
+setting reads these tables any more. Keeping them would leave two orphan tables
+whose schema no code owns, so this revision drops them and the runtime schema
+goes back to matching ``Base.metadata`` exactly.
 
-Activated R2 persistence: this revision was promoted from
-``alembic/drafts/`` into ``alembic/versions/``. The runtime migrator
-(``app/db/migrations.py``) is the real apply path; this alembic file mirrors
-that DDL for review parity.
+Snapshots are dropped before runs because ``team_rating_snapshots.run_id``
+carries the FK to ``team_rating_runs.id``.
 
-Schema-only: inserts NO ratings and touches NO existing table.
+The runtime migrator (``app/db/migrations.py``) is the real apply path —
+``SCHEMA_VERSION`` is bumped to 20 and ``_migrate_to_v20`` drops the same two
+tables idempotently (DROP TABLE IF EXISTS). This file mirrors that DDL for
+review parity; ``migration_audit_errors`` requires
+``max(versions/) == SCHEMA_VERSION``.
 
-DDL parity: JSON is stored as ``Text`` (json string), matching every other
-JSON column in this codebase (``payload_json``, ``anchors_json``,
-``sanity_audit_json`` …), so the identical DDL runs on SQLite (tests) and
-PostgreSQL (production). The SQLAlchemy models in
-``app/models/team_rating.py`` mirror this file column-for-column.
+DESTRUCTIVE: applying this revision deletes every stored rating run and
+snapshot. ``downgrade()`` restores the 0019 schema (tables, indexes and
+constraints) but cannot restore the rows — take a dump first if the historical
+ratings matter.
 """
 from alembic import op
 import sqlalchemy as sa
 
-revision = "0019"
-down_revision = "0018"
+revision = "0020"
+down_revision = "0019"
 branch_labels = None
 depends_on = None
 
 
 def upgrade() -> None:
+    op.drop_index(
+        "ix_team_rating_snapshots_team_namespace", table_name="team_rating_snapshots"
+    )
+    op.drop_index("ix_team_rating_snapshots_run_id", table_name="team_rating_snapshots")
+    op.drop_table("team_rating_snapshots")
+    op.drop_index(
+        "ix_team_rating_runs_algorithm_version", table_name="team_rating_runs"
+    )
+    op.drop_index(
+        "ix_team_rating_runs_status_created_at", table_name="team_rating_runs"
+    )
+    op.drop_table("team_rating_runs")
+
+
+def downgrade() -> None:
+    """Recreate the 0019 schema (structure only — the rows are gone)."""
     op.create_table(
         "team_rating_runs",
         sa.Column("id", sa.String(36), primary_key=True),
@@ -107,18 +125,3 @@ def upgrade() -> None:
         "team_rating_snapshots",
         ["team_id", "namespace"],
     )
-
-
-def downgrade() -> None:
-    op.drop_index(
-        "ix_team_rating_snapshots_team_namespace", table_name="team_rating_snapshots"
-    )
-    op.drop_index("ix_team_rating_snapshots_run_id", table_name="team_rating_snapshots")
-    op.drop_table("team_rating_snapshots")
-    op.drop_index(
-        "ix_team_rating_runs_algorithm_version", table_name="team_rating_runs"
-    )
-    op.drop_index(
-        "ix_team_rating_runs_status_created_at", table_name="team_rating_runs"
-    )
-    op.drop_table("team_rating_runs")

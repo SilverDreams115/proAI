@@ -74,7 +74,7 @@ export function renderOperationalMoneyModeStatusPanel(status) {
   if (!status || !Array.isArray(status.slates)) {
     return `<div class="empty-state">Sin estado operativo de Money Mode.</div>`;
   }
-  const badge = `<span class="shadow-badge badge-canary">OPERATIVO · SOLO LECTURA</span>`;
+  const badge = `<span class="shadow-badge badge-readonly">OPERATIVO · SOLO LECTURA</span>`;
 
   if (status.active_slate_count === 0) {
     return `

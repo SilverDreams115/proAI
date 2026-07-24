@@ -7,11 +7,10 @@ from sqlalchemy import func, select
 
 from app.models.tables import MatchResultModel, PredictionModel, ProgolSlateModel
 from app.services.readiness_expansion_service import build_ready_expansion
-from backend.tests.test_ticket_canary_dry_run_service import (
+from backend.tests.slate_fixtures import (
     DRAW,
     db,  # noqa: F401 — pytest fixture
-    enable_canary,
-    seed_canary_slate,
+    seed_slate,
 )
 
 
@@ -31,8 +30,7 @@ def test_audit_explains_blockers_and_no_writes(db, monkeypatch):  # noqa: F811
     """8 + 6 + 7 — every NOT_READY match has blockers + improvements; no writes."""
     from app.db import session as db_mod
 
-    enable_canary(monkeypatch)
-    seed_canary_slate(db)
+    seed_slate(db)
 
     before = _counts(db_mod.SessionLocal)
     report = build_ready_expansion(db, _slate(db))
@@ -49,8 +47,7 @@ def test_audit_explains_blockers_and_no_writes(db, monkeypatch):  # noqa: F811
 
 def test_audit_does_not_invent_ready(db, monkeypatch):  # noqa: F811
     """9 — a match is only safe_to_promote when already defensible (no false READY)."""
-    enable_canary(monkeypatch)
-    seed_canary_slate(db)
+    seed_slate(db)
     report = build_ready_expansion(db, _slate(db))
     for m in report["matches"]:
         if not m["simple_allowed"] if "simple_allowed" in m else (m["current_status"] == "NOT_READY"):
@@ -61,8 +58,7 @@ def test_audit_does_not_invent_ready(db, monkeypatch):  # noqa: F811
 
 
 def test_audit_json_serialisable(db, monkeypatch):  # noqa: F811
-    enable_canary(monkeypatch)
-    seed_canary_slate(db)
+    seed_slate(db)
     report = build_ready_expansion(db, _slate(db))
     json.dumps(report)  # must not raise
     assert "no_promote_reason" in report

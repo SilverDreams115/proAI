@@ -27,7 +27,7 @@ from app.services.learning_slate_scoring_service import (
 from app.repositories.canonical_result_repository import CanonicalResultRepository
 from app.services.slate_classification_service import classify_slate
 
-_VECTORS = ("raw_probabilities", "display_probabilities", "decision_probabilities", "effective_probabilities")
+_VECTORS = ("raw_probabilities", "display_probabilities", "decision_probabilities")
 _LOGLOSS_EPS = 1e-12
 _ECE_BINS = 10
 
@@ -127,7 +127,6 @@ def _collect_samples(session: Session) -> dict[str, list[_Sample]]:
                 "raw_probabilities": _audit_probs(pred, "raw_probabilities"),
                 "display_probabilities": _audit_probs(pred, "display_probabilities"),
                 "decision_probabilities": _decision_probs(pred),
-                "effective_probabilities": _audit_probs(pred, "effective_probabilities"),
             }
             for vname, probs in vectors.items():
                 if probs:

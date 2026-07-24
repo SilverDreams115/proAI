@@ -12,7 +12,7 @@ from app.models.tables import (
     PredictionModel,
     TicketRecommendationSnapshotModel,
 )
-from backend.tests.test_ticket_canary_dry_run_service import DRAW, enable_canary, seed_canary_slate
+from backend.tests.slate_fixtures import DRAW, seed_slate
 
 
 def _counts(engine):
@@ -29,9 +29,8 @@ async def test_status_endpoint_reports_active_slate(client, monkeypatch):
     """5 + 7 + 8 — endpoint responds, surfaces the slate decision, writes nothing."""
     from app.db import session as db_mod
 
-    enable_canary(monkeypatch)
     with Session(db_mod.engine) as session:
-        slate = seed_canary_slate(session)
+        slate = seed_slate(session)
         slate.registration_closes_at = datetime.now(timezone.utc) + timedelta(days=3)
         session.commit()
 
@@ -59,10 +58,9 @@ async def test_status_endpoint_empty_when_no_active_slates(client, monkeypatch):
     """9 — empty/zero state when there are no active/upcoming slates."""
     from app.db import session as db_mod
 
-    enable_canary(monkeypatch)
     with Session(db_mod.engine) as session:
         # seed leaves past kickoffs and no registration cierre -> closed/not active.
-        seed_canary_slate(session)
+        seed_slate(session)
 
     resp = await client.get("/api/operations/money-mode/status")
     assert resp.status_code == 200

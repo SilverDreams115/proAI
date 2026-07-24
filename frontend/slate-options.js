@@ -49,7 +49,7 @@ export function renderSlateOptionsPanel(report) {
   }
   const noPlay = report.money_mode_decision === "NO_JUGAR";
   const action = ACTION_COPY[report.recommended_action] || report.recommended_action;
-  const badge = `<span class="shadow-badge badge-canary">OPCIONES · SOLO LECTURA</span>`;
+  const badge = `<span class="shadow-badge badge-readonly">OPCIONES · SOLO LECTURA</span>`;
   const actionTone = noPlay ? "danger" : "ok";
 
   const cards = report.options.map((o) => optionCard(o, noPlay)).join("");

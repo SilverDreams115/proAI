@@ -4,12 +4,12 @@ The one command an operator runs to review every active/upcoming Progol slate
 and get a clear JUGAR / NO JUGAR per slate. It orchestrates, in a strict order,
 the existing read-only services:
 
-    active_slate_scope -> money_mode_validation -> ticket_canary_dry_run
-    -> money_mode -> write-safety audit -> counts before/after
+    active_slate_scope -> money_mode_validation -> money_mode
+    -> write-safety audit -> counts before/after
 
 It activates nothing, integrates no optimizer, never touches the real ticket
 and writes no row. The session is set ``READ ONLY`` on PostgreSQL and always
-rolled back, and the run captures the ten tracked counts before/after to prove
+rolled back, and the run captures the tracked counts before/after to prove
 delta-zero.
 
 Usage::

@@ -30,15 +30,14 @@ Per match it reports: `position`, `match`, `current_status`, `blocked_by`,
 
 `low_evidence`, `fallback_used`, `suspicious_class`, `stale_metadata`,
 `friendly_context`, `placeholder_team`, `provider_unmatched`,
-`canary_not_active`, `no_result_history`, `partial_rating`, `no_rating`,
-`calibrator_missing`.
+`no_result_history`, `calibrator_missing`.
 
 ## What each thing unblocks (`can_be_improved_by`)
 
 | blocker | real data that improves it |
 |---|---|
 | low_evidence | more result history for the teams |
-| fallback_used | rating available for both teams |
+| fallback_used | more result history for the teams |
 | suspicious_class | better calibration |
 | stale_metadata | fix metadata/mapping |
 | friendly_context | friendlies-specific calibrator |
@@ -50,7 +49,6 @@ Per match it reports: `position`, `match`, `current_status`, `blocked_by`,
 Allowed (safe changes, only if there is real evidence):
 - fix team/fixture **mapping**,
 - fix **stale metadata**,
-- use **existing ratings** when they are available for both teams,
 - use the **provider dry-run** as secondary result evidence.
 
 Forbidden:

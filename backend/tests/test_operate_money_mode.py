@@ -12,11 +12,10 @@ from app.models.tables import (
     ProgolSlateModel,
     TicketRecommendationSnapshotModel,
 )
-from backend.tests.test_ticket_canary_dry_run_service import (
+from backend.tests.slate_fixtures import (
     DRAW,
     db,  # noqa: F401 — pytest fixture
-    enable_canary,
-    seed_canary_slate,
+    seed_slate,
 )
 
 
@@ -39,8 +38,7 @@ def test_active_upcoming_human_output(db, monkeypatch, capsys):  # noqa: F811
     from app.db import session as db_mod
     from scripts.operate_money_mode import main
 
-    enable_canary(monkeypatch)
-    seed_canary_slate(db)
+    seed_slate(db)
     _activate(db)
 
     before = _counts(db_mod.SessionLocal)
@@ -60,8 +58,7 @@ def test_active_upcoming_human_output(db, monkeypatch, capsys):  # noqa: F811
 def test_active_upcoming_json_valid_and_delta_zero(db, monkeypatch, capsys):  # noqa: F811
     from scripts.operate_money_mode import main
 
-    enable_canary(monkeypatch)
-    seed_canary_slate(db)
+    seed_slate(db)
     _activate(db)
 
     rc = main(["--active-upcoming", "--json"])
@@ -76,8 +73,7 @@ def test_active_upcoming_json_valid_and_delta_zero(db, monkeypatch, capsys):  # 
 def test_markdown_report_written(db, monkeypatch, tmp_path, capsys):  # noqa: F811
     from scripts.operate_money_mode import main
 
-    enable_canary(monkeypatch)
-    seed_canary_slate(db)
+    seed_slate(db)
     _activate(db)
 
     out_path = tmp_path / "operate_money_mode.md"
@@ -93,8 +89,7 @@ def test_markdown_report_written(db, monkeypatch, tmp_path, capsys):  # noqa: F8
 def test_draw_code_scope(db, monkeypatch, capsys):  # noqa: F811
     from scripts.operate_money_mode import main
 
-    enable_canary(monkeypatch)
-    seed_canary_slate(db)
+    seed_slate(db)
 
     rc = main(["--draw-code", DRAW])
     assert rc == 0
@@ -106,8 +101,7 @@ def test_draw_code_scope(db, monkeypatch, capsys):  # noqa: F811
 def test_unknown_draw_code_returns_error(db, monkeypatch, capsys):  # noqa: F811
     from scripts.operate_money_mode import main
 
-    enable_canary(monkeypatch)
-    seed_canary_slate(db)
+    seed_slate(db)
 
     rc = main(["--draw-code", "PG-DOES-NOT-EXIST"])
     assert rc == 1
@@ -118,8 +112,7 @@ def test_default_run_does_not_check_results_provider(db, monkeypatch, capsys):  
     """10 — default run includes readiness but does NOT call the provider."""
     from scripts.operate_money_mode import main
 
-    enable_canary(monkeypatch)
-    seed_canary_slate(db)
+    seed_slate(db)
 
     rc = main(["--draw-code", DRAW, "--json"])
     assert rc == 0
@@ -134,9 +127,8 @@ def test_with_results_provider_flag_attaches_status(db, monkeypatch, capsys):  #
     from app.core import settings as settings_module
     from scripts.operate_money_mode import main
 
-    enable_canary(monkeypatch)
     monkeypatch.setattr(settings_module.settings, "results_provider_enabled", False)
-    seed_canary_slate(db)
+    seed_slate(db)
 
     rc = main(["--draw-code", DRAW, "--with-results-provider", "--json"])
     assert rc == 0

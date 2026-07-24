@@ -54,7 +54,6 @@ const MM_REPORT = {
   tickets: { aggressive: mmTicket(), balanced: mmTicket(), conservative: mmTicket() },
   do_not_simple_positions: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14],
   must_review_positions: [4, 6, 7],
-  canary_influence_positions: [1, 2, 3, 5, 8, 11],
   matches: [],
   write_safety: { writes_performed: false, snapshots_created: false },
 };

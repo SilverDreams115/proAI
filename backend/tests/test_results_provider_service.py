@@ -17,10 +17,10 @@ from app.services.results_provider_service import (
     probe_provider,
     provider_configured,
 )
-from backend.tests.test_ticket_canary_dry_run_service import (
+from backend.tests.slate_fixtures import (
     DRAW,
     db,  # noqa: F401 — pytest fixture
-    seed_canary_slate,
+    seed_slate,
 )
 
 
@@ -41,7 +41,7 @@ def test_disabled_provider_makes_no_writes(db, monkeypatch):  # noqa: F811
     from app.db import session as db_mod
 
     monkeypatch.setattr(settings_module.settings, "results_provider_enabled", False)
-    seed_canary_slate(db)
+    seed_slate(db)
 
     before = _counts(db_mod.SessionLocal)
     report = build_slate_results_dry_run(_slate(db))
@@ -57,7 +57,7 @@ def test_missing_api_key_is_non_fatal(db, monkeypatch):  # noqa: F811
     """1 — enabled but no key -> missing_key status, never an exception."""
     monkeypatch.setattr(settings_module.settings, "results_provider_enabled", True)
     monkeypatch.setattr(settings_module.settings, "football_data_api_key", None)
-    seed_canary_slate(db)
+    seed_slate(db)
 
     report = build_slate_results_dry_run(_slate(db))
     assert report["status"] == STATUS_MISSING_KEY
@@ -69,7 +69,7 @@ def test_injected_provider_data_yields_coverage(db, monkeypatch):  # noqa: F811
     """3 + 5 — with provider data the matcher resolves aliased names; no writes."""
     monkeypatch.setattr(settings_module.settings, "results_provider_enabled", True)
     monkeypatch.setattr(settings_module.settings, "football_data_api_key", "test-key")
-    seed_canary_slate(db)
+    seed_slate(db)
 
     # Position 2 of the seed slate is "Czech Republic vs Mexico". Provider uses
     # the Spanish/aliased forms — must still resolve via NormalizationService.
@@ -92,7 +92,7 @@ def test_slate_window_covers_the_playing_week_despite_synthetic_kickoffs(db):  #
 
     from app.services.results_provider_service import _slate_window
 
-    seed_canary_slate(db)
+    seed_slate(db)
     slate = _slate(db)
     # Synthetic kickoffs are Jan 1-3; the (provisional) cierre lands Jan 5.
     slate.registration_closes_at = datetime(2026, 1, 5, 3, 0, tzinfo=timezone.utc)
@@ -120,7 +120,7 @@ def test_matcher_normalizes_aliases():
 
 
 def test_match_slate_unmatched_when_no_provider_data(db):  # noqa: F811
-    seed_canary_slate(db)
+    seed_slate(db)
     cov = match_slate(_slate(db), [])
     assert cov["matched"] == 0
     assert all(row["confidence"] == "none" for row in cov["rows"])

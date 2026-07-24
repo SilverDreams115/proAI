@@ -478,7 +478,7 @@ class SchedulerWorker:
     def _maybe_retrain_model(self, session, polled_at: datetime) -> None:
         """Keep the scoring artifact fresh without operator intervention.
 
-        Team ratings, scoring lambdas and calibration curves decay as new
+        Elo ratings, scoring lambdas and calibration curves decay as new
         results arrive: the May->July gap surfaced as stale-form overconfidence
         in the market comparison audit. Retrains when the DB's latest run for
         the production model is older than the configured interval — the DB

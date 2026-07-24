@@ -22,7 +22,6 @@ default answer is **NO JUGAR** that slate. It is read-only: verifying changes no
 - [ ] predictions persisted **or** live available (`prediction_status`)
 - [ ] `money_mode_validation` pass (no `data_blockers`)
 - [ ] no stale metadata (no `placeholder_teams_*`, no `non_contiguous_positions`)
-- [ ] `ticket_canary_dry_run` runs without error
 
 ## Money Mode decision
 

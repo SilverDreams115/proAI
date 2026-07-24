@@ -127,4 +127,4 @@ and link `slate_id` when generating slate predictions.
 - ❌ Do not lower guardrails or convert NO_SIMPLE into SIMPLE.
 - ❌ Do not backfill sanity_audit or slate_id in this phase (that is pipeline work,
   with its own review).
-- ❌ Do not touch canary, pricing or optimizer.
+- ❌ Do not touch pricing or optimizer.
