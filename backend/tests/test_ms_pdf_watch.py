@@ -81,8 +81,15 @@ def _svc(db, connector):
     return SlateProposalService(db, connector_factory=lambda: connector)
 
 
-def _seed_ms_802(db, *, closes_at):
-    slate = _seed_slate(db, draw_code="PGM-802", week_type="midweek", n=9, closes_at=closes_at)
+def _seed_ms_802(db, *, closes_at, kickoff_at=None):
+    slate = _seed_slate(
+        db,
+        draw_code="PGM-802",
+        week_type="midweek",
+        n=9,
+        closes_at=closes_at,
+        kickoff_at=kickoff_at,
+    )
     _make_official(db, slate)
     return slate
 
@@ -108,7 +115,11 @@ def test_unchanged_sha_not_reprocessed(db):
 
 
 def test_stale_invalid_activates_existing_slate_with_provisional_close(db):
-    slate = _seed_ms_802(db, closes_at=_past())
+    # Genuine provisional-window scenario: the concurso has NOT started yet
+    # (kickoffs in the future) but LN's PDF carries a stale/past cierre block.
+    slate = _seed_ms_802(
+        db, closes_at=_past(), kickoff_at=datetime.now(timezone.utc) + timedelta(days=1)
+    )
     conn = _FakeMsConnector(sha="aaa", closes_at=None, accepted=False, rejected_block="800")
 
     res = run_ms_pdf_watch(db, proposal_service=_svc(db, conn), generate_prediction=False)
@@ -125,8 +136,31 @@ def test_stale_invalid_activates_existing_slate_with_provisional_close(db):
     assert closes > datetime.now(timezone.utc)
 
 
+def test_started_slate_not_reactivated_by_provisional_window(db):
+    # A concurso whose matches already kicked off must NOT be reopened with a
+    # provisional future cierre — you cannot bet a match already in progress.
+    slate = _seed_ms_802(
+        db, closes_at=_past(), kickoff_at=datetime.now(timezone.utc) - timedelta(hours=2)
+    )
+    conn = _FakeMsConnector(sha="aaa", closes_at=None, accepted=False, rejected_block="800")
+
+    res = run_ms_pdf_watch(db, proposal_service=_svc(db, conn), generate_prediction=False)
+
+    assert res["activated"] is False
+    assert "ya inició" in res["reason"]
+    db.refresh(slate)
+    closes = slate.registration_closes_at
+    if closes is not None and closes.tzinfo is None:
+        closes = closes.replace(tzinfo=timezone.utc)
+    # Cierre stays in the past; the slate is not pushed forward.
+    assert closes <= datetime.now(timezone.utc)
+
+
 def test_corrected_valid_activates_existing_slate(db):
-    slate = _seed_ms_802(db, closes_at=_past())  # existing blocked slate (cierre past)
+    # Not-yet-started concurso (future kickoffs) whose cierre LN later corrects.
+    slate = _seed_ms_802(
+        db, closes_at=_past(), kickoff_at=datetime.now(timezone.utc) + timedelta(days=1)
+    )
     # Simulate a slate WITHOUT a pre-close snapshot so generation is exercised.
     from app.models.tables import TicketRecommendationSnapshotModel
     db.query(TicketRecommendationSnapshotModel).filter_by(slate_id=slate.id).delete()

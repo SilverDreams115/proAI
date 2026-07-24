@@ -87,16 +87,18 @@ def _seed_slate(
     closes_at: datetime,
     outcomes: list[str] | None = None,
     draw_probs: list[float] | None = None,
+    kickoff_at: datetime | None = None,
 ) -> Any:
     repo = SlateRepository(session)
     now = datetime.now(timezone.utc)
+    kickoff = kickoff_at if kickoff_at is not None else now - timedelta(hours=2)
     matches = [
         MatchReferencePayload(
             position=i,
             competition=CompetitionPayload(name="International Friendlies"),
             home_team=TeamPayload(name=f"{draw_code}-H{i}"),
             away_team=TeamPayload(name=f"{draw_code}-A{i}"),
-            kickoff_at=now - timedelta(hours=2),
+            kickoff_at=kickoff,
         )
         for i in range(1, n + 1)
     ]

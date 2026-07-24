@@ -25,7 +25,12 @@ from typing import Any
 from sqlalchemy import select
 
 from app.core.settings import settings
-from app.models.tables import ProgolSlateModel, ProgolSlateProposalModel
+from app.models.tables import (
+    MatchLiveResultModel,
+    ProgolSlateMatchModel,
+    ProgolSlateModel,
+    ProgolSlateProposalModel,
+)
 from app.repositories.slate_repository import SlateRepository
 from app.services.slate_proposal_service import SlateProposalService
 
@@ -170,7 +175,16 @@ def run_ms_pdf_watch(
 
     if activation_closes_at is not None and activation_closes_at > now:
         slate = _find_ms_slate(session, draw_code)
-        if slate is not None:
+        if slate is not None and _slate_has_started(session, slate, now):
+            # The concurso has already kicked off / has observed results. A
+            # started contest must not have its cierre pushed forward or be
+            # un-archived by a provisional MS window (mirrors the
+            # ``_has_observed_result`` guard in ``SlateService.is_closed``).
+            activation_reason = (
+                f"MS {slate.draw_code} ya inició (kickoff pasado o resultados "
+                "observados); no se reactiva ni se mueve el cierre provisional"
+            )
+        elif slate is not None:
             slate.registration_closes_at = activation_closes_at
             if slate.is_archived:
                 slate.is_archived = False
@@ -222,6 +236,33 @@ def run_ms_pdf_watch(
     session.flush()
     logger.info("ms_pdf_watch", extra={"event": "ms_pdf_watch", **result})
     return result
+
+
+def _slate_has_started(session: Any, slate: ProgolSlateModel, now: datetime) -> bool:
+    """True once the concurso has begun: a match has kicked off or any live/
+    final result has been observed for its fixtures. A started concurso must
+    not be reactivated with a future provisional cierre."""
+    for link in slate.matches:
+        match = getattr(link, "match", None)
+        kickoff = getattr(match, "kickoff_at", None) if match is not None else None
+        if kickoff is None:
+            continue
+        if kickoff.tzinfo is None:
+            kickoff = kickoff.replace(tzinfo=timezone.utc)
+        if kickoff <= now:
+            return True
+    if not slate.id:
+        return False
+    stmt = (
+        select(MatchLiveResultModel.id)
+        .join(
+            ProgolSlateMatchModel,
+            ProgolSlateMatchModel.match_id == MatchLiveResultModel.match_id,
+        )
+        .where(ProgolSlateMatchModel.slate_id == slate.id)
+        .limit(1)
+    )
+    return session.scalar(stmt) is not None
 
 
 def _find_ms_slate(session: Any, draw_code: Any) -> ProgolSlateModel | None:

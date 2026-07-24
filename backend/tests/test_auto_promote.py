@@ -431,3 +431,71 @@ def test_promote_does_not_create_duplicate_slate_same_hash(tmp_path) -> None:
         assert count == 1, f"Expected 1 slate, found {count}"
     finally:
         session.close()
+
+
+def test_promote_does_not_clobber_a_started_slate(tmp_path) -> None:
+    """A re-scrape must never recompose a concurso that already started
+    (a match kicked off or a result was observed), even when its raw fixture
+    signature differs — otherwise inferred fixtures overwrite the real ones
+    and orphan the recorded results."""
+    import json
+
+    from app.db import session as db_session
+    from app.db.migrations import run_migrations
+    from app.db.session import configure_session
+    from app.domain.entities import MatchResultStatus
+    from app.models.tables import SourceModel
+    from app.services.live_result_service import LiveResultService
+    from app.services.slate_proposal_service import SlateProposalService
+
+    configure_session(f"sqlite:///{tmp_path / 'started.db'}")
+    run_migrations(db_session.engine)
+    session = db_session.SessionLocal()
+    try:
+        cierre = datetime(2026, 6, 1, 3, 0, tzinfo=timezone.utc)
+        svc_a = SlateProposalService(
+            session,
+            connector_factory=lambda: _StubConnector(cierre=cierre, source_url="https://a.test/guia.pdf"),
+        )
+        svc_a.observe()
+        prop_a = svc_a.observe()
+        result_a = svc_a.promote_proposal(prop_a, actor="test")
+        session.commit()
+        slate = result_a.slate
+        original_hash = slate.composition_hash
+
+        # Mark the concurso as started via an observed result.
+        src = SourceModel(
+            name="test-results", base_url="x", kind="test",
+            parser_profile="generic", is_active=True, result_source_priority=40,
+        )
+        session.add(src)
+        session.flush()
+        first_match_id = sorted(slate.matches, key=lambda link: link.position)[0].match_id
+        LiveResultService(session).record_observation(
+            match_id=first_match_id, source_id=src.id,
+            status=MatchResultStatus.FULL_TIME, result_code="1", is_final=True,
+        )
+        session.commit()
+
+        # Re-scrape with a DIFFERENT fixture signature — the signature guard
+        # would NOT skip this; only the started-guard prevents the clobber.
+        svc_b = SlateProposalService(
+            session,
+            connector_factory=lambda: _StubConnector(cierre=cierre, source_url="https://b.test/guia.pdf"),
+        )
+        svc_b.observe()
+        prop_b = svc_b.observe()
+        payload = json.loads(prop_b.payload_json)
+        payload["fixtures"][0]["home"] = "TOTALLY DIFFERENT TEAM"
+        prop_b.payload_json = json.dumps(payload)
+        session.flush()
+        result_b = svc_b.promote_proposal(prop_b, actor="test")
+        session.commit()
+
+        assert result_b.already_active is True
+        assert result_b.slate.id == slate.id
+        session.refresh(slate)
+        assert slate.composition_hash == original_hash
+    finally:
+        session.close()

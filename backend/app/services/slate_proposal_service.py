@@ -29,6 +29,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db.session import managed_transaction
+from app.models.tables import MatchLiveResultModel
+from app.models.tables import MatchModel
+from app.models.tables import ProgolSlateMatchModel
 from app.models.tables import ProgolSlateModel
 from app.models.tables import ProgolSlateProposalModel
 from app.repositories.slate_repository import SlateRepository
@@ -48,6 +51,35 @@ _WEEK_TYPE_PREFIX: dict[str, str] = {
     "midweek": "PGM",
     "revancha": "PGR",
 }
+
+
+def _slate_has_started(session: Session, slate: ProgolSlateModel, now: datetime) -> bool:
+    """True once the concurso has begun: a fixture kicked off or any live/final
+    result has been observed. A started concurso must not be recomposed."""
+    observed = session.scalar(
+        select(MatchLiveResultModel.id)
+        .join(
+            ProgolSlateMatchModel,
+            ProgolSlateMatchModel.match_id == MatchLiveResultModel.match_id,
+        )
+        .where(ProgolSlateMatchModel.slate_id == slate.id)
+        .limit(1)
+    )
+    if observed is not None:
+        return True
+    kickoffs = session.execute(
+        select(MatchModel.kickoff_at)
+        .join(ProgolSlateMatchModel, ProgolSlateMatchModel.match_id == MatchModel.id)
+        .where(ProgolSlateMatchModel.slate_id == slate.id)
+    )
+    for (kickoff,) in kickoffs:
+        if kickoff is None:
+            continue
+        if kickoff.tzinfo is None:
+            kickoff = kickoff.replace(tzinfo=timezone.utc)
+        if kickoff <= now:
+            return True
+    return False
 
 
 @dataclass
@@ -317,6 +349,31 @@ class SlateProposalService:
         # differences in fixture resolver output across calls.
         slate_repo = SlateRepository(self.session)
         existing_slate = slate_repo.find_by_draw_code(formatted_draw_code)
+        # Hard guard: a concurso that has already started (a match kicked off
+        # or any result was observed) must never be recomposed by a
+        # re-promotion. Its real fixtures/results are authoritative, and a
+        # re-scrape whose fixtures are inferred would otherwise clobber them
+        # and orphan the recorded results. Skip idempotently, keeping the
+        # proposal linked to the existing slate.
+        if existing_slate is not None and _slate_has_started(
+            self.session, existing_slate, datetime.now(timezone.utc)
+        ):
+            proposal.status = "promoted"
+            proposal.promoted_slate_id = existing_slate.id
+            self.session.flush()
+            logger.info(
+                "progol proposal promote skipped: slate already started",
+                extra={
+                    "event": "progol_proposal_already_started",
+                    "draw_code": proposal.draw_code,
+                    "actor": actor,
+                    "slate_id": existing_slate.id,
+                },
+            )
+            return PromotionResult(
+                slate=slate_repo.get_slate(existing_slate.id),  # type: ignore[arg-type]
+                already_active=True,
+            )
         if existing_slate is not None and not existing_slate.is_archived:
             current_sig = self._signature(payload)
             existing_promoter = self.session.scalar(
