@@ -1736,7 +1736,12 @@ function renderBoard() {
   const validationSummaryNode = getById("validation-summary");
   const activeSlate = currentSlate();
   renderProductionStatus();
-  renderDiagnosticsPanels();
+  // The 14 Diagnóstico panels render into DOM that only the Diagnóstico tab
+  // shows. Building them on every board render (boot, login, slate switch,
+  // match select, ticket-mode toggle) while the operator sits on Predicción is
+  // wasted work. Render them only when that tab is visible; activateView and
+  // loadSlateDiagnostics render them when it is opened or its data arrives.
+  if (_isDiagnosticoActive()) renderDiagnosticsPanels();
 
   if (!state.authenticated) {
     if (labelNode) labelNode.textContent = "Acceso requerido";
@@ -2039,8 +2044,13 @@ function activateView(view) {
   }
   // R6.3: the heavy Diagnóstico panels load only when this tab is opened, and
   // only if not already loaded for the active slate (cache makes re-open free).
-  if (view === "diagnostico" && state.activeSlateId && state.diagnosticsSlateId !== state.activeSlateId) {
-    loadSlateDiagnostics(state.activeSlateId);
+  if (view === "diagnostico") {
+    // Paint whatever is already in state (preheated/cached) the instant the tab
+    // opens — renderBoard no longer renders these while the tab is hidden.
+    renderDiagnosticsPanels();
+    if (state.activeSlateId && state.diagnosticsSlateId !== state.activeSlateId) {
+      loadSlateDiagnostics(state.activeSlateId);
+    }
   }
 }
 
@@ -2489,10 +2499,26 @@ async function boot() {
   loadExportStatusFromStorage();
   updateAuthControls();
   renderProductionStatus();
-  const [health, ready] = await Promise.all([
+  // Auth is already resolved (checkSession runs before boot), so when the
+  // session is active we fetch health/ready AND the slate/provider/worker set
+  // in a single round-trip instead of two serial ones — nothing in the second
+  // group depends on the health/ready values. The unauthenticated path only
+  // needs health/ready.
+  const bootRequests = [
     safeFetch("/health", {optional: true}),
     safeFetch("/ready", {optional: true}),
-  ]);
+  ];
+  if (state.authenticated) {
+    bootRequests.push(
+      // Selector source of truth: open official slates only — the current-
+      // prediction tab never lists archived/closed boletas (those live in
+      // Seguimiento). Demo/unverified are excluded server-side.
+      safeFetch("/slates/visible", {optional: true}),
+      safeFetch("/sources/providers"),
+      safeFetch("/worker/scheduler/status", {optional: true}),
+    );
+  }
+  const [health, ready, visible, providers, worker] = await Promise.all(bootRequests);
 
   state.health = health && !Array.isArray(health) ? health : null;
   state.ready = ready && !Array.isArray(ready) ? ready : null;
@@ -2512,15 +2538,6 @@ async function boot() {
     attachEvents();
     return;
   }
-
-  const [visible, providers, worker] = await Promise.all([
-    // Selector source of truth: open official slates only — the current-
-    // prediction tab never lists archived/closed boletas (those live in
-    // Seguimiento). Demo/unverified are excluded server-side.
-    safeFetch("/slates/visible", {optional: true}),
-    safeFetch("/sources/providers"),
-    safeFetch("/worker/scheduler/status", {optional: true}),
-  ]);
 
   state.providers = Array.isArray(providers) ? providers : [];
   state.worker = worker && !Array.isArray(worker) ? worker : null;
