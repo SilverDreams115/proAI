@@ -1,17 +1,17 @@
 # Progol Pricing & Slate Options (R6.4)
 
-## Pricing — estado: NO verificado
+## Pricing — state: NOT verified
 
-El precio base por boleto **no está validado** contra una fuente oficial en este
-entorno. Por política, el sistema **no inventa precios**: mientras el precio sea
-`unverified`, el costo estimado se muestra como **"precio no verificado"**
-(nunca `$0`, nunca un número inventado).
+The base price per ticket **is not validated** against an official source in this
+environment. By policy, the system **does not invent prices**: while the price is
+`unverified`, the estimated cost is shown as **"precio no verificado"**
+(never `$0`, never an invented number).
 
-### Lo que sí es factual (no es precio)
-- Progol (weekend) = **14 partidos**.
-- Progol Media Semana (midweek) = **9 partidos**.
-- Límites de combinaciones (del optimizer existente): weekend ≤8 dobles /
-  2 dobles+4 triples; midweek ≤3 dobles / 3 dobles+2 triples.
+### What is factual (not a price)
+- Progol (weekend) = **14 matches**.
+- Progol Media Semana (midweek) = **9 matches**.
+- Combination limits (from the existing optimizer): weekend ≤8 doubles /
+  2 doubles+4 triples; midweek ≤3 doubles / 3 doubles+2 triples.
 
 ### Config
 `backend/app/domain/progol_pricing.py`:
@@ -24,20 +24,20 @@ entorno. Por política, el sistema **no inventa precios**: mientras el precio se
   "max_triples": 2, "source": "pending_validation" } }
 ```
 
-### Matemática
+### Math
 ```
-combinations  = 2^dobles * 3^triples
-estimated_cost = base_price * combinations   (solo si base_price_verified)
-               = null                          (si no verificado)
+combinations  = 2^doubles * 3^triples
+estimated_cost = base_price * combinations   (only if base_price_verified)
+               = null                          (if not verified)
 ```
 
-### Cómo verificar el precio (manual)
-Valida contra una fuente oficial/pública y actualiza la config:
-1. TuLotero — https://tulotero.mx/progol/ y https://tulotero.mx/progol-media-semana/
-2. Pronósticos para la Asistencia Pública (boleto físico)
+### How to verify the price (manual)
+Validate against an official/public source and update the config:
+1. TuLotero — https://tulotero.mx/progol/ and https://tulotero.mx/progol-media-semana/
+2. Pronósticos para la Asistencia Pública (physical ticket)
 
-Luego en `progol_pricing.py`: set `base_price_mxn`, `base_price_verified=true`,
-`source` = origen validado. **No se acepta precio sin fuente.**
+Then in `progol_pricing.py`: set `base_price_mxn`, `base_price_verified=true`,
+`source` = validated origin. **No price is accepted without a source.**
 
 ### Probe
 ```bash
@@ -45,20 +45,20 @@ python -m scripts.probe_progol_pricing
 python -m scripts.probe_progol_pricing --week-type weekend --doubles 8 --triples 0
 ```
 
-## Slate options — siempre presentes
+## Slate options — always present
 
 `GET /api/predictions/slates/{id}/options` · `/active-slates/options` ·
 `scripts/audit_slate_options.py`.
 
-Cada slate devuelve **siempre** 4 opciones: Agresiva, Balanceada, Conservadora,
-Manual — con combinaciones y costo (o "precio no verificado").
+Each slate **always** returns 4 options: Agresiva, Balanceada, Conservadora,
+Manual — with combinations and cost (or "precio no verificado").
 
-**Respeta Money Mode:**
-- `NO_JUGAR` → ninguna opción `recommended`, ninguna `playable`,
-  `recommended_action = NO_COMPRAR`; se muestran como "simulaciones no
-  recomendadas".
-- `JUGAR_*` → la opción correspondiente se marca `recommended`; las otras son
-  alternativas.
+**Respects Money Mode:**
+- `NO_JUGAR` → no option `recommended`, none `playable`,
+  `recommended_action = NO_COMPRAR`; they are shown as "non-recommended
+  simulations".
+- `JUGAR_*` → the corresponding option is marked `recommended`; the others are
+  alternatives.
 
-Estado actual: PG-2338 y PGM-801 → **NO_JUGAR** → opciones visibles pero no
-recomendadas, costo "no verificado".
+Current state: PG-2338 and PGM-801 → **NO_JUGAR** → options visible but not
+recommended, cost "not verified".

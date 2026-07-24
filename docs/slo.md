@@ -36,7 +36,7 @@ references it. Don't add code that silently changes a threshold.
   costs minutes; manufacturing tighter availability targets would just
   push toward false reds.
 - **Prediction freshness 24h**: the Progol contest cycle is weekly. As
-  long as we re-rank within a day of any new evidence, the boleta stays
+  long as we re-rank within a day of any new evidence, the ticket stays
   honest.
 - **Ingest freshness 36h**: TSDB has occasional 12h gaps for less-active
   leagues; 36h catches a stuck connector without paging on a normal lull.

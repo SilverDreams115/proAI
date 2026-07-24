@@ -2,94 +2,94 @@
 
 Read-only integration with a **free** results source so the operator can see
 external scores without paying for a live feed and without ever writing the
-productive `match_results` table.
+production `match_results` table.
 
-## Proveedor elegido: football-data.org
+## Chosen provider: football-data.org
 
-- API v4 estructurada, plan gratuito, consulta de `matches` por fecha/competencia/estado.
-- **Limitaciones del plan gratuito:**
-  - **Scores delayed**, no live real.
-  - Requiere **API key** (`X-Auth-Token`).
-  - **~10 llamadas/min** (rate limit del free tier).
-  - Cobertura de competencias **limitada** (el plan gratis no cubre todo; p. ej.
-    amistosos internacionales / mundial pueden no estar).
+- Structured API v4, free plan, `matches` query by date/competition/status.
+- **Free-plan limitations:**
+  - **Delayed scores**, not real live.
+  - Requires an **API key** (`X-Auth-Token`).
+  - **~10 calls/min** (free-tier rate limit).
+  - **Limited** competition coverage (the free plan does not cover everything; e.g.
+    international/world-cup friendlies may not be present).
 
 ### Backup / cross-check
-- **TheSportsDB** — respaldo/contraste. No se usa como primario porque los
-  livescores que necesitamos están en su plan premium. El probe lo reporta como
+- **TheSportsDB** — backup/cross-check. Not used as primary because the
+  livescores we need are on its premium plan. The probe reports it as
   `cross_check_only`.
-- **Reuters World Cup page** — solo contraste humano/manual, nunca scraper
-  principal.
+- **Reuters World Cup page** — human/manual cross-check only, never the
+  primary scraper.
 
-## Configuración (env)
+## Configuration (env)
 
 ```bash
-PROAI_RESULTS_PROVIDER_ENABLED=false          # default: deshabilitado
+PROAI_RESULTS_PROVIDER_ENABLED=false          # default: disabled
 PROAI_RESULTS_PROVIDER_PRIMARY=football_data_org
-PROAI_RESULTS_PROVIDER_DRY_RUN_ONLY=true       # default: solo dry-run
-PROAI_FOOTBALL_DATA_API_KEY=                    # tu key (NO se hardcodea)
+PROAI_RESULTS_PROVIDER_DRY_RUN_ONLY=true       # default: dry-run only
+PROAI_FOOTBALL_DATA_API_KEY=                    # your key (NOT hardcoded)
 PROAI_FOOTBALL_DATA_BASE_URL=https://api.football-data.org/v4
 ```
 
-Defaults seguros: **deshabilitado + dry-run-only + sin escrituras**. Con
-`ENABLED=false` no se hace ninguna llamada de red.
+Safe defaults: **disabled + dry-run-only + no writes**. With
+`ENABLED=false` no network call is made.
 
-## Cómo correr el probe
+## How to run the probe
 
 ```bash
 docker compose exec --workdir /app/backend proai \
   python -m scripts.probe_free_results_source --provider football_data_org
-# por slate:
+# per slate:
 ... --provider football_data_org --draw-code PG-2338
 ... --provider football_data_org --active-upcoming --json
 ```
 
-El probe valida: presencia de API key, accesibilidad del proveedor,
-competencias cubiertas, matches/finished encontrados, y cobertura contra la
-slate. **Estados posibles:**
+The probe validates: presence of the API key, provider accessibility,
+covered competitions, matches/finished found, and coverage against the
+slate. **Possible states:**
 
-| status | significado |
+| status | meaning |
 |---|---|
-| `ok` | proveedor disponible y con cobertura |
-| `disabled` | `PROAI_RESULTS_PROVIDER_ENABLED=false` (no se llama a la red) |
-| `unavailable_missing_key` | falta `PROAI_FOOTBALL_DATA_API_KEY` (no fatal) |
-| `insufficient_coverage` | el proveedor no cubre esta competencia/slate |
-| `provider_error` | fallo de red/proveedor (no fatal) |
-| `cross_check_only` | proveedor de respaldo (TheSportsDB / manual) |
+| `ok` | provider available and with coverage |
+| `disabled` | `PROAI_RESULTS_PROVIDER_ENABLED=false` (no network call) |
+| `unavailable_missing_key` | `PROAI_FOOTBALL_DATA_API_KEY` missing (not fatal) |
+| `insufficient_coverage` | the provider does not cover this competition/slate |
+| `provider_error` | network/provider failure (not fatal) |
+| `cross_check_only` | backup provider (TheSportsDB / manual) |
 
-## Dry-run por slate (read-only)
+## Per-slate dry-run (read-only)
 
 ```bash
 curl -s http://127.0.0.1:8000/api/results/slates/<id>/provider-dry-run
 curl -s http://127.0.0.1:8000/api/results/active-slates/provider-dry-run
 ```
 
-Salida: `provider`, `enabled`, `status`, `coverage {matched,total,rate}` y por
-partido `{position, local_match, provider_match, status, score, confidence}`.
-Siempre `write_safety.writes_performed = false`.
+Output: `provider`, `enabled`, `status`, `coverage {matched,total,rate}` and per
+match `{position, local_match, provider_match, status, score, confidence}`.
+Always `write_safety.writes_performed = false`.
 
-### Matching de nombres
-Reutiliza `NormalizationService`: resuelve aliases y acentos, p. ej.
+### Name matching
+Reuses `NormalizationService`: resolves aliases and accents, e.g.
 **México/Mexico**, **E.U.A./USA/Estados Unidos**, **Chequia/Czech Republic**.
-`confidence`: `high` (ambos equipos casan), `low` (uno), `none` (sin emparejar).
+`confidence`: `high` (both teams match), `low` (one), `none` (unmatched).
 
-## Cómo interpretar coverage
+## How to interpret coverage
 
-- `matched/total` = partidos de la slate que el proveedor emparejó con
-  confianza alta. Para las slates actuales (amistosos internacionales) el plan
-  gratuito típicamente da **cobertura baja o nula** → `insufficient_coverage`.
-  Es el resultado honesto, no un error.
+- `matched/total` = slate matches the provider matched with
+  high confidence. For the current slates (international friendlies) the free
+  plan typically gives **low or no coverage** → `insufficient_coverage`.
+  It is the honest result, not an error.
 
-## Cómo NO aplicar resultados automáticamente
+## How NOT to apply results automatically
 
-- **Nunca** hay apply automático. El dry-run y la UI son solo lectura.
-- El apply manual está **bloqueado por diseño** en esta fase:
+- There is **never** an automatic apply. The dry-run and the UI are read-only.
+- The manual apply is **blocked by design** in this phase:
 
 ```bash
 python -m scripts.apply_provider_results --draw-code PG-2338 \
     --apply --confirm APPLY-PROVIDER-RESULTS-ONLY
 ```
 
-Aun con el token correcto, exige `PROAI_RESULTS_PROVIDER_ENABLED=true` y
-`PROAI_RESULTS_PROVIDER_DRY_RUN_ONLY=false`, y en R6.3 responde
-`NOT IMPLEMENTED` sin escribir nada. No se aplican resultados en esta fase.
+Even with the correct token, it requires `PROAI_RESULTS_PROVIDER_ENABLED=true` and
+`PROAI_RESULTS_PROVIDER_DRY_RUN_ONLY=false`, and in R6.3 it responds
+`NOT IMPLEMENTED` without writing anything. No results are applied in this phase.

@@ -1,53 +1,53 @@
-# R7.0 — Reporte post-jornada de aprendizaje
+# R7.0 — Post-jornada learning report
 
-**Fecha:** 2026-06-24
-**Rama:** `chore/production-polish`
-**Alcance:** loop de aprendizaje sobre quinielas terminadas (read-only, sin entrenamiento automático).
+**Date:** 2026-06-24
+**Branch:** `chore/production-polish`
+**Scope:** learning loop over finished quinielas (read-only, no automatic training).
 
-> El sistema de aprendizaje post-jornada está **completo y operativo**, pero el
-> aprendizaje real está **bloqueado por falta de resultados oficiales** para las
-> slates objetivo. El loop quedará listo para aprender en el momento en que se
-> carguen resultados oficiales validados.
+> The post-jornada learning system is **complete and operational**, but the
+> actual learning is **blocked by the lack of official results** for the
+> target slates. The loop will be ready to learn the moment
+> validated official results are loaded.
 
 ---
 
-## 1. Estado de las slates objetivo
+## 1. State of the target slates
 
-| Slate    | Estado inventario        | Lineage                       | Predicciones | Resultados canónicos | Comparable | Bloqueo |
+| Slate    | Inventory state          | Lineage                       | Predictions  | Canonical results    | Comparable | Blocker |
 |----------|--------------------------|-------------------------------|--------------|----------------------|------------|---------|
-| PG-2337  | `closed_pending_results` | `official_but_no_results_yet` | 14/14        | 0/14                 | ❌ No      | Sin resultados oficiales |
-| PGM-800  | `closed_pending_results` | `official_but_no_results_yet` | 9/9          | 0/9                  | ❌ No      | Sin resultados oficiales |
+| PG-2337  | `closed_pending_results` | `official_but_no_results_yet` | 14/14        | 0/14                 | ❌ No      | No official results |
+| PGM-800  | `closed_pending_results` | `official_but_no_results_yet` | 9/9          | 0/9                  | ❌ No      | No official results |
 
-Ambas slates tienen lineage oficial (promovidas desde guía LN) y predicciones
-completas, pero **ningún resultado oficial ingerido todavía**. No son
-comparables y no entran al dataset de aprendizaje.
+Both slates have official lineage (promoted from the LN guide) and complete
+predictions, but **no official result ingested yet**. They are not
+comparable and do not enter the learning dataset.
 
-Las slates activas actuales **PG-2338** y **PGM-801** permanecen en `NO JUGAR`
-(Money Mode) y tampoco tienen resultados — no participan del aprendizaje.
+The current active slates **PG-2338** and **PGM-801** remain in `NO JUGAR`
+(Money Mode) and also have no results — they do not take part in learning.
 
 ---
 
 ## 2. Comparables
 
-**Slates comparables: 0.** Ningún slate tiene cobertura canónica completa con
-lineage oficial. (PG-2335 tiene lineage oficial pero solo 10/14 resultados →
-`closed_partial_results`, no comparable.)
+**Comparable slates: 0.** No slate has full canonical coverage with
+official lineage. (PG-2335 has official lineage but only 10/14 results →
+`closed_partial_results`, not comparable.)
 
 ---
 
-## 3. Aciertos
+## 3. Hits
 
-No hay aciertos comparables a reportar: 0 partidos comparables. El scoring
-post-jornada existe y se ejecuta, pero devuelve `total=0` para las slates
-objetivo porque no hay resultados oficiales contra los cuales comparar.
+There are no comparable hits to report: 0 comparable matches. Post-jornada
+scoring exists and runs, but returns `total=0` for the target
+slates because there are no official results to compare against.
 
 ---
 
-## 4. Errores principales
+## 4. Main errors
 
-No clasificables todavía para PG-2337/PGM-800 (sin resultados). La capa de
-atribución de errores (`learning_error_attribution_service`) está lista y
-clasifica: `wrong_favorite`, `draw_underestimated`, `favorite_overestimated`,
+Not classifiable yet for PG-2337/PGM-800 (no results). The error
+attribution layer (`learning_error_attribution_service`) is ready and
+classifies: `wrong_favorite`, `draw_underestimated`, `favorite_overestimated`,
 `away_overestimated`, `guardrail_saved`, `guardrail_missed`, `canary_*`,
 `money_mode_*`, `data_quality_issue`, `result_conflict`, etc.
 
@@ -55,22 +55,22 @@ clasifica: `wrong_favorite`, `draw_underestimated`, `favorite_overestimated`,
 
 ## 5. Guardrails
 
-- **Que salvaron:** N/A sin resultados comparables. La métrica `guardrail_saved`
-  se calcula cuando un pick degradado (REVISAR/BLOQUEADO) coincide con un fallo.
-- **Que fallaron:** N/A sin resultados comparables.
-- **Money Mode:** PG-2338/PGM-801 en `NO JUGAR`; la corrección de esa decisión
-  (`money_mode_correctly_blocked` vs `money_mode_too_conservative`) solo es
-  evaluable una vez existan resultados.
+- **That saved us:** N/A without comparable results. The `guardrail_saved` metric
+  is computed when a downgraded pick (REVISAR/BLOQUEADO) coincides with a miss.
+- **That failed:** N/A without comparable results.
+- **Money Mode:** PG-2338/PGM-801 in `NO JUGAR`; the correctness of that decision
+  (`money_mode_correctly_blocked` vs `money_mode_too_conservative`) is only
+  evaluable once results exist.
 
 ---
 
-## 6. Calibración
+## 6. Calibration
 
-`audit_learning_calibration`: **bloqueada** — 0 muestras comparables. Mide
-Brier / log-loss / ECE / top-1 / top-2 por banda de confianza, estado de
-guardrail (ready / revisar / NO_SIMPLE), amistosos vs competición y por
-competición, separando los vectores `raw` / `display` / `decision` / `effective`.
-No entrena.
+`audit_learning_calibration`: **blocked** — 0 comparable samples. It measures
+Brier / log-loss / ECE / top-1 / top-2 by confidence band, guardrail
+state (ready / revisar / NO_SIMPLE), friendlies vs competition and by
+competition, separating the `raw` / `display` / `decision` / `effective` vectors.
+Does not train.
 
 ---
 
@@ -79,59 +79,59 @@ No entrena.
 `audit_learning_dataset_readiness`:
 
 - **training_ready = false**
-- **Razón:** no comparable matches — no official results applied yet.
-- **Mínimos faltantes:** ≥8 slates comparables (hay 0); ≥112 partidos
-  comparables (hay 0).
-- **Próxima acción de datos:** cargar resultados oficiales de una slate
-  terminada (p.ej. PG-2337 / PGM-800) vía el CLI manual guardado, y re-ejecutar
-  la auditoría.
+- **Reason:** no comparable matches — no official results applied yet.
+- **Missing minimums:** ≥8 comparable slates (there are 0); ≥112 comparable
+  matches (there are 0).
+- **Next data action:** load official results for a finished
+  slate (e.g. PG-2337 / PGM-800) via the saved manual CLI, and re-run
+  the audit.
 
 ---
 
-## 8. ¿Se recomienda entrenar?
+## 8. Is training recommended?
 
-**No.** No hay evidencia comparable suficiente ni resultados oficiales. El
-sistema **no entrena automáticamente** y no se marcará `training_ready=true`
-mientras falten resultados, haya conflictos altos o pocas filas etiquetadas.
+**No.** There is neither enough comparable evidence nor official results. The
+system **does not train automatically** and will not be marked `training_ready=true`
+while results are missing, conflicts are high, or there are few labeled rows.
 
 ---
 
-## 9. Próxima acción
+## 9. Next action
 
-1. Obtener resultados oficiales de PG-2337 y/o PGM-800 de una fuente confiable
+1. Obtain official results for PG-2337 and/or PGM-800 from a reliable source
    (TuLotero / Pronósticos / Lotería Nacional).
-2. Construir el archivo manual seguro (`source: manual_official`, score por
-   posición) y correr el dry-run:
+2. Build the safe manual file (`source: manual_official`, score per
+   position) and run the dry-run:
    `python -m scripts.validate_completed_slate_results --manual-file results.json --dry-run`
-3. Si `ready_to_apply=true` (cobertura 100 %, 0 conflictos, fuente high), aplicar
-   con confirmación explícita:
+3. If `ready_to_apply=true` (100% coverage, 0 conflicts, high source), apply
+   with explicit confirmation:
    `--apply --confirm APPLY-COMPLETED-SLATE-RESULTS`
-4. Re-ejecutar inventory → score → attribution → calibration → dataset readiness.
-5. Solo entonces, si la readiness lo permite, **proponer** (no ejecutar) un
-   experimento de entrenamiento en shadow para revisión manual.
+4. Re-run inventory → score → attribution → calibration → dataset readiness.
+5. Only then, if readiness allows, **propose** (not execute) a
+   training experiment in shadow for manual review.
 
 ---
 
-## Cómo correr el loop (read-only)
+## How to run the loop (read-only)
 
 ```bash
-# Inventario de slates terminadas
+# Inventory of finished slates
 python -m scripts.learning_inventory --all
 
-# Validación de resultados (local + provider + manual)
+# Results validation (local + provider + manual)
 python -m scripts.validate_completed_slate_results --draw-code PG-2337
 python -m scripts.validate_completed_slate_results --manual-file results.json --dry-run
 
-# Scoring post-jornada y atribución de errores
+# Post-jornada scoring and error attribution
 python -m scripts.score_completed_slate --draw-code PG-2337 --attribution
 python -m scripts.score_completed_slate --all-comparable --json
 
-# Auditorías
+# Audits
 python -m scripts.audit_learning_calibration
 python -m scripts.audit_learning_dataset_readiness
 ```
 
-Endpoints read-only equivalentes bajo `/api/learning/…`:
+Equivalent read-only endpoints under `/api/learning/…`:
 `completed-slates/inventory`, `completed-slates/scores`, `slates/{id}/score`,
 `slates/{id}/attribution`, `calibration`, `dataset-readiness`.
 

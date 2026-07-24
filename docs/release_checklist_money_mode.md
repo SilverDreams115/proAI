@@ -1,63 +1,63 @@
 # Release Checklist — Money Mode (R6.1)
 
-Checklist a correr **antes de jugar** cualquier quiniela. Si un solo ítem falla, la
-respuesta por defecto es **NO JUGAR** esa slate. Es read-only: verificar no cambia nada.
+Checklist to run **before playing** any quiniela. If a single item fails, the
+default answer is **NO JUGAR** that slate. It is read-only: verifying changes nothing.
 
-> Comando único que cubre la mayoría de los ítems:
+> Single command that covers most of the items:
 > `docker compose exec --workdir /app/backend proai python -m scripts.operate_money_mode --active-upcoming`
 
 ---
 
-## Pre-flight (infraestructura)
+## Pre-flight (infrastructure)
 
 - [ ] `/api/ready` → `ready:true`, `database_ok:true`, `schema_up_to_date:true`
 - [ ] `docker compose ps` → `proai` healthy
-- [ ] worker healthy (o detenido a propósito durante la revisión)
-- [ ] `/api/slates` responde con las slates correctas
-- [ ] slates activas correctas (las que esperas, con su `match_count`)
-- [ ] no archivadas mezcladas en la lista activa
+- [ ] worker healthy (or intentionally stopped during the review)
+- [ ] `/api/slates` responds with the correct slates
+- [ ] correct active slates (the ones you expect, with their `match_count`)
+- [ ] no archived ones mixed into the active list
 
-## Datos por slate
+## Per-slate data
 
-- [ ] predictions persistidas **o** live disponibles (`prediction_status`)
-- [ ] `money_mode_validation` pass (sin `data_blockers`)
-- [ ] no stale metadata (sin `placeholder_teams_*`, sin `non_contiguous_positions`)
-- [ ] `ticket_canary_dry_run` corre sin error
+- [ ] predictions persisted **or** live available (`prediction_status`)
+- [ ] `money_mode_validation` pass (no `data_blockers`)
+- [ ] no stale metadata (no `placeholder_teams_*`, no `non_contiguous_positions`)
+- [ ] `ticket_canary_dry_run` runs without error
 
-## Decisión Money Mode
+## Money Mode decision
 
-- [ ] Money Mode genera una decisión por slate (JUGAR / NO JUGAR, sin ambigüedad)
-- [ ] `NO SIMPLE` respetado: ninguna posición bloqueada aparece como simple
-- [ ] boleto recomendado presente **si** la decisión es JUGAR
-- [ ] riesgos principales revisados (`must_review_positions`)
+- [ ] Money Mode produces one decision per slate (JUGAR / NO JUGAR, unambiguous)
+- [ ] `NO SIMPLE` respected: no blocked position appears as a simple
+- [ ] recommended ticket present **if** the decision is JUGAR
+- [ ] main risks reviewed (`must_review_positions`)
 
-## Seguridad / estabilidad
+## Safety / stability
 
-- [ ] counts delta cero (`COUNTS_DELTA : ZERO` en el reporte, o verificación SQL)
+- [ ] zero counts delta (`COUNTS_DELTA : ZERO` in the report, or SQL check)
 - [ ] `write_safety.audit_passed = true`
-- [ ] sin escrituras inesperadas (predictions / ticket / feature snapshots sin cambios)
-- [ ] UI estable: panel **Operational Money Mode Status** muestra el estado correcto
-- [ ] sin auto-switch de slate en la UI
-- [ ] ticket real intacto (snapshots sin cambios)
+- [ ] no unexpected writes (predictions / ticket / feature snapshots unchanged)
+- [ ] stable UI: **Operational Money Mode Status** panel shows the correct state
+- [ ] no slate auto-switch in the UI
+- [ ] real ticket intact (snapshots unchanged)
 
-## Reglas de decisión finales
+## Final decision rules
 
-- [ ] **Si Money Mode dice `NO JUGAR` → NO se juega.** (no se relaja por ningún motivo)
-- [ ] Si JUGAR → se usa exactamente el boleto recomendado, respetando todos los `NO SIMPLE`
-- [ ] Ningún `NO SIMPLE` se convierte en simple
-- [ ] Ninguna slate con metadata stale se juega
-- [ ] No se confía en predicciones live si `validation` bloquea la slate
+- [ ] **If Money Mode says `NO JUGAR` → do NOT play.** (not relaxed for any reason)
+- [ ] If JUGAR → use exactly the recommended ticket, respecting every `NO SIMPLE`
+- [ ] No `NO SIMPLE` is converted into a simple
+- [ ] No slate with stale metadata is played
+- [ ] Live predictions are not trusted if `validation` blocks the slate
 
 ---
 
-## Estado de referencia (R6.1, al cierre)
+## Reference state (R6.1, at close)
 
-| slate | decisión | predicción | money_mode_ready |
+| slate | decision | prediction | money_mode_ready |
 |---|---|---|---|
-| PG-2338 (weekend, 14) | **NO JUGAR** | persisted | sí |
-| PGM-801 (midweek, 9) | **NO JUGAR** | live_available | sí |
+| PG-2338 (weekend, 14) | **NO JUGAR** | persisted | yes |
+| PGM-801 (midweek, 9) | **NO JUGAR** | live_available | yes |
 
 `active_slate_count=2 · playable_slate_count=0 · blocked_slate_count=2`.
 
-Ambas slates son amistosos internacionales de baja evidencia; ni el boleto de máxima
-cobertura permitido cubre el riesgo. La decisión correcta y honesta es **no jugar**.
+Both slates are low-evidence international friendlies; not even the maximum-coverage
+ticket allowed covers the risk. The correct and honest decision is **not to play**.

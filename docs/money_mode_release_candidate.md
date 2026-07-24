@@ -1,22 +1,22 @@
 # Money Mode Release Candidate (R6.0)
 
-**Fecha/hora:** 2026-06-24 04:30 UTC
+**Date/time:** 2026-06-24 04:30 UTC
 **HEAD (pre-commit):** `2a0a22a` — _Add ticket canary dry-run_
-**Rama:** `chore/production-polish`
-**Modo:** `money_mode_release_candidate` · **read-only** · full activation OFF · ticket
-integration OFF · optimizer productivo OFF.
+**Branch:** `chore/production-polish`
+**Mode:** `money_mode_release_candidate` · **read-only** · full activation OFF · ticket
+integration OFF · productive optimizer OFF.
 
-Money Mode es la capa operativa final antes de usar el sistema para decisiones de
-dinero real en Progol. Para cada slate activa/próxima responde una sola pregunta —
-**jugar / no jugar** — y construye **en memoria** tres boletos (agresivo, balanceado,
-conservador) con su justificación por partido. No activa ni cambia el ticket real y
-no escribe ninguna fila.
+Money Mode is the final operational layer before using the system for real-money
+decisions in Progol. For each active/upcoming slate it answers a single question —
+**play / don't play** — and builds **in memory** three tickets (aggressive, balanced,
+conservative) with per-match justification. It does not activate or change the real ticket and
+does not write any row.
 
 ---
 
-## Counts baseline (worker detenido)
+## Baseline counts (worker stopped)
 
-| tabla | baseline | final | delta |
+| table | baseline | final | delta |
 |---|---:|---:|---:|
 | match_results | 15150 | 15150 | 0 |
 | predictions | 2177 | 2177 | 0 |
@@ -29,123 +29,123 @@ no escribe ninguna fila.
 | model_training_runs | 28 | 28 | 0 |
 | progol_slates | 10 | 10 | 0 |
 
-**Delta cero** tras construir Money Mode para ambas slates y repetir los endpoints
-5× con el worker detenido. Ningún GET escribió predicciones, snapshots de feature ni
-snapshots de ticket.
+**Zero delta** after building Money Mode for both slates and repeating the endpoints
+5× with the worker stopped. No GET wrote predictions, feature snapshots or
+ticket snapshots.
 
 ---
 
-## Política Money Mode
+## Money Mode policy
 
-- **Scope:** `active_upcoming`. Hoy cubre **PG-2338** (weekend) + **PGM-801** (midweek);
-  cualquier slate futura entra automáticamente por la misma regla (`active_slate_scope`).
-- **Canary:** en posiciones canary-activas se consumen las
-  `effective_decision_probabilities`; el resto usa la vista decisión/display actual.
-- **Guardrail (autoritativo):** una posición con `presentation_guard.simple_allowed=false`
-  **nunca** aparece como simple. Un fijo forzado sobre una posición NO SIMPLE se reporta
-  como `no_simple` (riesgo descubierto), de modo que un partido `no_dejar_simple` /
-  `risk_high` / `review` / `blocked` jamás se lee como fijo.
-- **Boletos = modos del optimizer** (respetan las reglas de boleto Progol):
-  - **agresivo** = modo `simple` (más fijos, más barato).
-  - **balanceado** = modo `doubles` (plan acotado de dobles, recomendado por defecto).
-  - **conservador** = modo `full` (máxima cobertura dobles+triples permitida).
-- **Costo:** no existe tarifa por combinación configurada en el sistema →
-  `estimated_cost = null` y se documenta. Se reporta `estimated_combinations`
-  (producto de 1 simple · 2 doble · 3 triple).
-- **Regla de decisión:** si incluso el boleto **conservador** deja más del 34 % de las
-  posiciones NO SIMPLE como fijo forzado → **NO JUGAR** (riesgo no cubrible). Si el
-  balanceado cubre todos los NO SIMPLE → JUGAR BALANCEADO. Casos intermedios →
+- **Scope:** `active_upcoming`. Today it covers **PG-2338** (weekend) + **PGM-801** (midweek);
+  any future slate enters automatically under the same rule (`active_slate_scope`).
+- **Canary:** on canary-active positions the `effective_decision_probabilities` are
+  consumed; the rest uses the current decision/display view.
+- **Guardrail (authoritative):** a position with `presentation_guard.simple_allowed=false`
+  **never** appears as a simple. A fixed pick forced onto a NO SIMPLE position is reported
+  as `no_simple` (uncovered risk), so that a `no_dejar_simple` /
+  `risk_high` / `review` / `blocked` match is never read as fixed.
+- **Tickets = optimizer modes** (respect the Progol ticket rules):
+  - **agresivo** = `simple` mode (more fixed picks, cheaper).
+  - **balanceado** = `doubles` mode (bounded doubles plan, recommended by default).
+  - **conservador** = `full` mode (maximum doubles+triples coverage allowed).
+- **Cost:** there is no per-combination tariff configured in the system →
+  `estimated_cost = null` and it is documented. `estimated_combinations` is reported
+  (product of 1 simple · 2 double · 3 triple).
+- **Decision rule:** if even the **conservative** ticket leaves more than 34% of the
+  positions NO SIMPLE as a forced fixed pick → **NO JUGAR** (risk not coverable). If the
+  balanced one covers all NO SIMPLE → JUGAR BALANCEADO. Intermediate cases →
   JUGAR SOLO CONSERVADOR.
 
 ---
 
-## PG-2338 · weekend · 14 partidos
+## PG-2338 · weekend · 14 matches
 
-- **DECISIÓN: `NO JUGAR`** (confianza: cautious) — boleto recomendado: **ninguno**.
-- **Motivo:** demasiados NO SIMPLE sin cobertura posible: **6/14** posiciones siguen
-  como fijo forzado incluso en el boleto conservador (máxima cobertura permitida por
-  las reglas del boleto). El riesgo no es cubrible y ningún modo alcanza el target de
-  cobertura.
-- **Predicciones:** persistidas. Sin data blockers.
+- **DECISION: `NO JUGAR`** (confidence: cautious) — recommended ticket: **none**.
+- **Reason:** too many NO SIMPLE with no possible coverage: **6/14** positions remain
+  as a forced fixed pick even in the conservative ticket (maximum coverage allowed by
+  the ticket rules). The risk is not coverable and no mode reaches the coverage
+  target.
+- **Predictions:** persisted. No data blockers.
 
-| boleto | S / NS / D / T | combinaciones | costo | E[aciertos] | jackpot | riesgo | cubre NO SIMPLE |
+| ticket | S / NS / D / T | combinations | cost | E[hits] | jackpot | risk | covers NO SIMPLE |
 |---|---|---:|---|---:|---:|---|---|
-| agresivo | 0 / 14 / 0 / 0 | 1 | n/d | 6.91 | 0.0000 | very_high | no (14 desc.) |
-| balanceado | 0 / 6 / 8 / 0 | 256 | n/d | 9.49 | 0.0040 | very_high | no (4,6,7,12,13,14) |
-| conservador | 0 / 6 / 4 / 4 | 1296 | n/d | 10.63 | 0.0153 | very_high | no (4,6,7,12,13,14) |
+| agresivo | 0 / 14 / 0 / 0 | 1 | n/a | 6.91 | 0.0000 | very_high | no (14 unc.) |
+| balanceado | 0 / 6 / 8 / 0 | 256 | n/a | 9.49 | 0.0040 | very_high | no (4,6,7,12,13,14) |
+| conservador | 0 / 6 / 4 / 4 | 1296 | n/a | 10.63 | 0.0153 | very_high | no (4,6,7,12,13,14) |
 
-- **Partidos NO SIMPLE:** **todos (1–14)** — son amistosos internacionales con
-  evidencia baja / clase sospechosa / bloqueados.
-- **Revisión obligatoria:** 1,3,4,5,6,7,8,9,10,11,12,13,14.
-- **Canary influye en:** 1,2,3,5,8,11.
-- **Riesgo principal:** ni el boleto de máxima cobertura cubre el riesgo; 6 partidos
-  quedan como volado forzado sobre el pick más probable y el target de cobertura no se
-  cumple en ningún modo.
+- **NO SIMPLE matches:** **all (1–14)** — they are international friendlies with
+  low evidence / suspicious class / blocked.
+- **Mandatory review:** 1,3,4,5,6,7,8,9,10,11,12,13,14.
+- **Canary influences:** 1,2,3,5,8,11.
+- **Main risk:** not even the maximum-coverage ticket covers the risk; 6 matches
+  remain as a forced coin-flip on the most likely pick and the coverage target is not
+  met in any mode.
 
-## PGM-801 · midweek · 9 partidos (predicción live)
+## PGM-801 · midweek · 9 matches (live prediction)
 
-- **DECISIÓN: `NO JUGAR`** (confianza: cautious) — boleto recomendado: **ninguno**.
-- **Motivo:** demasiados NO SIMPLE sin cobertura posible: **4/9** posiciones siguen
-  como fijo forzado incluso en el boleto conservador.
-- **Predicciones:** live (sin ticket persistido) — Money Mode calculado en vivo.
-  Warning: `live_predictions_only`. Sin data blockers.
+- **DECISION: `NO JUGAR`** (confidence: cautious) — recommended ticket: **none**.
+- **Reason:** too many NO SIMPLE with no possible coverage: **4/9** positions remain
+  as a forced fixed pick even in the conservative ticket.
+- **Predictions:** live (no persisted ticket) — Money Mode computed live.
+  Warning: `live_predictions_only`. No data blockers.
 
-| boleto | S / NS / D / T | combinaciones | costo | E[aciertos] | jackpot | riesgo | cubre NO SIMPLE |
+| ticket | S / NS / D / T | combinations | cost | E[hits] | jackpot | risk | covers NO SIMPLE |
 |---|---|---:|---|---:|---:|---|---|
-| agresivo | 0 / 9 / 0 / 0 | 1 | n/d | 4.11 | 0.0007 | very_high | no (1–9 desc.) |
-| balanceado | 0 / 6 / 3 / 0 | 8 | n/d | 5.12 | 0.0048 | very_high | no (2,4,5,6,7,9) |
-| conservador | 0 / 4 / 3 / 2 | 72 | n/d | 6.34 | 0.0296 | very_high | no (4,5,6,7) |
+| agresivo | 0 / 9 / 0 / 0 | 1 | n/a | 4.11 | 0.0007 | very_high | no (1–9 unc.) |
+| balanceado | 0 / 6 / 3 / 0 | 8 | n/a | 5.12 | 0.0048 | very_high | no (2,4,5,6,7,9) |
+| conservador | 0 / 4 / 3 / 2 | 72 | n/a | 6.34 | 0.0296 | very_high | no (4,5,6,7) |
 
-- **Partidos NO SIMPLE:** **todos (1–9)**.
-- **Revisión obligatoria:** 1,4,5,7,8,9.
-- **Canary influye en:** 1,2,3,5,8.
-- **Riesgo principal:** mismo patrón que PG-2338 — slate de amistosos de baja
-  evidencia; aun con la cobertura máxima quedan 4 volados forzados.
+- **NO SIMPLE matches:** **all (1–9)**.
+- **Mandatory review:** 1,4,5,7,8,9.
+- **Canary influences:** 1,2,3,5,8.
+- **Main risk:** same pattern as PG-2338 — a low-evidence friendlies slate;
+  even with maximum coverage 4 forced coin-flips remain.
 
 ---
 
 ## Active-upcoming summary
 
-- **2** slates en scope (`active_upcoming`): PG-2338 + PGM-801.
-- **0** slates jugables (`playable_slate_count = 0`): ambas → **NO JUGAR**.
-- Futuras slates heredan la política automáticamente.
+- **2** slates in scope (`active_upcoming`): PG-2338 + PGM-801.
+- **0** playable slates (`playable_slate_count = 0`): both → **NO JUGAR**.
+- Future slates inherit the policy automatically.
 
-## Norway vs France (caso guardrail)
+## Norway vs France (guardrail case)
 
-- PG-2338 pos 7 / PGM-801 pos 6: **NO SIMPLE** en ambas. El `money_mode_pick` es
-  cobertura (doble V/E en el plan conservador), nunca un fijo. Motivos:
-  `risk_high`, `no_dejar_simple`, `suspicious_class`. El guardrail se respeta en los
-  tres boletos y en la UI.
+- PG-2338 pos 7 / PGM-801 pos 6: **NO SIMPLE** in both. The `money_mode_pick` is
+  coverage (V/E double in the conservative plan), never a fixed pick. Reasons:
+  `risk_high`, `no_dejar_simple`, `suspicious_class`. The guardrail is respected across the
+  three tickets and in the UI.
 
 ---
 
-## Validación de no-escritura
+## No-write validation
 
-- `write_safety = { writes_performed: false, snapshots_created: false }` en todas las
-  respuestas (servicio, endpoint, CLI).
-- Transacción marcada `SET TRANSACTION READ ONLY` y siempre con rollback (helper
+- `write_safety = { writes_performed: false, snapshots_created: false }` in all
+  responses (service, endpoint, CLI).
+- Transaction marked `SET TRANSACTION READ ONLY` and always with rollback (helper
   `read_only_transaction`).
-- Endpoints repetidos 5× con worker detenido → **counts delta cero** (tabla arriba).
-- Ticket real de PG-2338 intacto (snapshots = 162, sin cambios).
+- Endpoints repeated 5× with the worker stopped → **zero counts delta** (table above).
+- PG-2338 real ticket intact (snapshots = 162, no changes).
 
-## Conclusión
+## Conclusion
 
 > **PG-2338 → NO JUGAR. PGM-801 → NO JUGAR.**
 
-El sistema produce salida accionable y la decisión honesta es **no jugar ninguna de
-las dos slates**: son jornadas de amistosos internacionales con evidencia baja donde
-todas las posiciones están marcadas NO SIMPLE, y ni el boleto de máxima cobertura
-permitido por las reglas de Progol cubre el riesgo (6/14 y 4/9 volados forzados,
-target de cobertura no alcanzado). Money Mode protege el dinero: no convierte ninguna
-señal peligrosa en simple y no recomienda un boleto que no cubre el riesgo principal.
+The system produces actionable output and the honest decision is **not to play either
+of the two slates**: they are international-friendlies jornadas with low evidence where
+all positions are marked NO SIMPLE, and not even the maximum-coverage ticket
+allowed by the Progol rules covers the risk (6/14 and 4/9 forced coin-flips,
+coverage target not met). Money Mode protects the money: it does not turn any
+dangerous signal into a simple and does not recommend a ticket that fails to cover the main risk.
 
 ---
 
-## Restricciones respetadas
+## Constraints respected
 
-no full activation · no training · no optimizer productivo · no ticket integration
-real · no ticket snapshot writes · no prediction writes · no match_feature_snapshot
-writes · no cambios a recommendations persistidas · no results apply · no API-Football
-online · no schema changes / migrations · no deletes/reverts · no push/remote sin
-autorización · no secrets · canary sin ampliar fuera de `active_upcoming` · guardrail
-NO SIMPLE respetado · ticket real intacto.
+no full activation · no training · no productive optimizer · no real ticket integration
+· no ticket snapshot writes · no prediction writes · no match_feature_snapshot
+writes · no changes to persisted recommendations · no results apply · no API-Football
+online · no schema changes / migrations · no deletes/reverts · no push/remote without
+authorization · no secrets · canary not expanded beyond `active_upcoming` · NO SIMPLE
+guardrail respected · real ticket intact.

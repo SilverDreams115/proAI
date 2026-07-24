@@ -1,26 +1,26 @@
-# proAI — Runbook de Operaciones
+# proAI — Operations Runbook
 
-## Stack local
+## Local stack
 
 ```bash
-# Levantar todo
+# Bring up everything
 make up                          # docker compose up -d (postgres + proai + worker)
 
-# Parar
+# Stop
 make down
 
 # Restart
 make restart
 
-# Rebuild + restart (obligatorio después de cambios de código)
+# Rebuild + restart (mandatory after code changes)
 docker compose build proai worker
 docker compose up -d proai worker
 
-# Estado
+# Status
 docker compose ps
 ```
 
-> **Importante:** el código está baked en la imagen Docker, no montado como volumen. Cualquier cambio de código requiere rebuild de **ambas** imágenes (`proai` y `worker`) antes de ser efectivo en el contenedor.
+> **Important:** the code is baked into the Docker image, not mounted as a volume. Any code change requires rebuilding **both** images (`proai` and `worker`) before it takes effect in the container.
 
 ---
 
@@ -35,14 +35,14 @@ make health
 curl http://localhost:8000/api/ready
 make ready
 
-# Métricas Prometheus
+# Prometheus metrics
 curl http://localhost:8000/api/metrics
 
-# Check completo de producción
+# Full production check
 make production-check
 ```
 
-`make production-check` valida: readiness, alineación de SCHEMA_VERSION con Alembic, fuentes activas, y configuración de producción.
+`make production-check` validates: readiness, SCHEMA_VERSION alignment with Alembic, active sources, and production configuration.
 
 ---
 
@@ -54,7 +54,7 @@ docker compose logs worker
 docker compose logs proai --tail=100 --follow
 ```
 
-Los logs son JSON estructurado en producción. Cada request incluye `X-Request-ID`.
+Logs are structured JSON in production. Each request includes `X-Request-ID`.
 
 ---
 
@@ -62,12 +62,12 @@ Los logs son JSON estructurado en producción. Cada request incluye `X-Request-I
 
 ```bash
 cd backend
-.venv/bin/python -m pytest tests/ -q          # suite completa
-.venv/bin/python -m pytest tests/ -q --tb=short  # con detalle en fallos
+.venv/bin/python -m pytest tests/ -q          # full suite
+.venv/bin/python -m pytest tests/ -q --tb=short  # with failure detail
 .venv/bin/ruff check app/ tests/              # linter
 .venv/bin/mypy app/                           # type checking
 
-# Desde el root
+# From the root
 make lint
 make typecheck
 make test
@@ -76,38 +76,38 @@ make check  # lint + typecheck + test
 
 ---
 
-## Actualizar contexto Progol
+## Update the Progol context
 
 ```bash
-# Actualizar current.json desde fuente externa
+# Update current.json from an external source
 make update-current-context
 
-# Reexportar current.json desde slates activas ya validadas en DB
+# Re-export current.json from active slates already validated in the DB
 make update-current-context-from-db
 
-# Auditar slates activas: gate, placeholders, bloqueos y frescura
+# Audit active slates: gate, placeholders, blocks and freshness
 make audit-current
 
-# Refrescar slate activa en el contenedor
+# Refresh the active slate in the container
 make refresh-current
 
-# Asegurar que el job de refresh existe en el scheduler
+# Ensure the refresh job exists in the scheduler
 make ensure-current-job
 ```
 
 ---
 
-## Ingestion y fuentes
+## Ingestion and sources
 
 ```bash
-# Bootstrap de fuentes (idempotente — seguro re-ejecutar)
+# Source bootstrap (idempotent — safe to re-run)
 docker compose exec -T proai bash -c "cd /app/backend && python3 -m scripts.bootstrap_thesportsdb_sources 2>&1"
 docker compose exec -T proai bash -c "cd /app/backend && python3 -m scripts.bootstrap_football_data_sources 2>&1"
 
-# Verificar fuentes registradas
+# Verify registered sources
 curl -H "X-API-Key: $PROAI_AUTH_API_KEY" http://localhost:8000/api/sources
 
-# Forzar ingestion manual de una fuente
+# Force a manual ingestion of a source
 curl -X POST -H "X-API-Key: $PROAI_AUTH_API_KEY" http://localhost:8000/api/ingestion/runs \
   -H "Content-Type: application/json" \
   -d '{"source_id": "<uuid>"}'
@@ -115,74 +115,74 @@ curl -X POST -H "X-API-Key: $PROAI_AUTH_API_KEY" http://localhost:8000/api/inges
 
 ---
 
-## Predicciones
+## Predictions
 
 ```bash
-# Obtener predicciones de la slate activa
+# Get the active slate's predictions
 SLATE_ID="<uuid>"
 curl -H "X-API-Key: $PROAI_AUTH_API_KEY" \
   http://localhost:8000/api/predictions/slates/$SLATE_ID
 
-# Refrescar predicciones
+# Refresh predictions
 curl -X POST -H "X-API-Key: $PROAI_AUTH_API_KEY" \
   http://localhost:8000/api/predictions/slates/$SLATE_ID/refresh
 
-# Quality report (anchor gap + confianza por partido)
+# Quality report (anchor gap + per-match confidence)
 curl -H "X-API-Key: $PROAI_AUTH_API_KEY" \
   http://localhost:8000/api/predictions/slates/$SLATE_ID/quality
 
-# Reporte de confianza completo
+# Full confidence report
 make confidence-report
 
-# Reporte desde el stack Docker, escribiendo en ./reports del host
+# Report from the Docker stack, writing to the host's ./reports
 make confidence-report-docker
 ```
 
 ---
 
-## Gate operativo unificado
+## Unified operational gate
 
-Antes de publicar, compartir o jugar una slate con dinero real, revisar el gate
-unificado. Es solo lectura y combina Money Mode, deuda de datos, placeholders,
-posiciones bloqueadas y readiness de aprendizaje.
+Before publishing, sharing or playing a slate with real money, review the unified
+gate. It is read-only and combines Money Mode, data debt, placeholders,
+blocked positions and learning readiness.
 
 ```bash
-# Todas las slates activas/próximas
+# All active/upcoming slates
 curl -H "X-API-Key: $PROAI_AUTH_API_KEY" \
   http://localhost:8000/api/operations/publication-gate
 
-# Una slate específica
+# A specific slate
 curl -H "X-API-Key: $PROAI_AUTH_API_KEY" \
   "http://localhost:8000/api/operations/publication-gate?slate_id=$SLATE_ID"
 ```
 
-Estados:
+States:
 
-- `DO_NOT_PLAY`: no jugar; resolver bloqueadores antes de publicar.
-- `PLAY_CONSERVATIVE_ONLY`: solo boleto conservador, con cautela.
-- `READY_TO_PLAY`: gate limpio para el boleto recomendado.
-- `REVIEW_REQUIRED`: falta revisión operativa antes de publicar.
+- `DO_NOT_PLAY`: do not play; resolve blockers before publishing.
+- `PLAY_CONSERVATIVE_ONLY`: conservative ticket only, with caution.
+- `READY_TO_PLAY`: clean gate for the recommended ticket.
+- `REVIEW_REQUIRED`: operational review needed before publishing.
 
-La activación de ML queda bloqueada mientras `learning_gate.training_ready` sea
-false, aunque existan candidatos experimentales.
+ML activation stays blocked while `learning_gate.training_ready` is
+false, even if experimental candidates exist.
 
 ---
 
 ## Scoring
 
-Solo ejecutar después de tener resultados canónicos de todos los partidos:
+Only run after having canonical results for all matches:
 
 ```bash
-# Computar scoring de una jornada
+# Compute scoring for a jornada
 curl -X POST -H "X-API-Key: $PROAI_AUTH_API_KEY" \
   http://localhost:8000/api/scoring/slates/$SLATE_ID/compute
 
-# Ver histórico de scoring
+# View scoring history
 curl -H "X-API-Key: $PROAI_AUTH_API_KEY" \
   http://localhost:8000/api/scoring/history
 
-# CLI equivalente
-make calibration   # evaluación de calibración
+# CLI equivalent
+make calibration   # calibration evaluation
 make evaluate      # walk-forward evaluation
 ```
 
@@ -190,30 +190,30 @@ make evaluate      # walk-forward evaluation
 
 ## Retraining
 
-Siempre seguir este flujo:
+Always follow this flow:
 
 ```bash
-# 1. Verificar readiness
+# 1. Check readiness
 curl -H "X-API-Key: $PROAI_AUTH_API_KEY" \
   http://localhost:8000/api/training/adaptive/readiness
 
-# 2. Dry-run (simula sin persistir)
+# 2. Dry-run (simulates without persisting)
 curl -X POST -H "X-API-Key: $PROAI_AUTH_API_KEY" \
   http://localhost:8000/api/training/adaptive/dry-run
 
-# 3. Ejecutar solo si los gates pasan
+# 3. Run only if the gates pass
 curl -X POST -H "X-API-Key: $PROAI_AUTH_API_KEY" \
   http://localhost:8000/api/training/adaptive/run
 ```
 
-El endpoint `/run` devuelve 409 si la readiness falla. No forzar el retraining ignorando el gate.
+The `/run` endpoint returns 409 if readiness fails. Do not force retraining ignoring the gate.
 
 ---
 
 ## Neural baseline (experimental)
 
 ```bash
-# Solo para introspección — nunca en producción
+# Introspection only — never in production
 curl -H "X-API-Key: $PROAI_AUTH_API_KEY" \
   http://localhost:8000/api/training/neural/readiness
 
@@ -221,15 +221,15 @@ curl -X POST -H "X-API-Key: $PROAI_AUTH_API_KEY" \
   http://localhost:8000/api/training/neural/dry-run
 ```
 
-Los artefactos generados tienen `is_production=False`. No afectan predicciones activas.
+The generated artifacts have `is_production=False`. They do not affect active predictions.
 
 ---
 
 ## Worker routes
 
 ```bash
-# Solo disponibles cuando PROAI_ENABLE_WORKER_ROUTES=true (dev)
-# Requieren auth cuando hay credenciales configuradas
+# Only available when PROAI_ENABLE_WORKER_ROUTES=true (dev)
+# Require auth when credentials are configured
 
 curl -H "X-API-Key: $PROAI_AUTH_API_KEY" \
   http://localhost:8000/api/worker/scheduler/status
@@ -238,38 +238,38 @@ curl -X POST -H "X-API-Key: $PROAI_AUTH_API_KEY" \
   http://localhost:8000/api/worker/scheduler/run-once
 ```
 
-En producción `PROAI_ENABLE_WORKER_ROUTES=false` y las rutas no están registradas.
+In production `PROAI_ENABLE_WORKER_ROUTES=false` and the routes are not registered.
 
 ---
 
-## Schema e integridad de datos
+## Schema and data integrity
 
 ```bash
-# Verificar alineación de SCHEMA_VERSION
+# Verify SCHEMA_VERSION alignment
 make production-check
 
-# Ver migraciones aplicadas
+# View applied migrations
 docker compose exec proai bash -c \
   "cd /app/backend && python3 -c 'from app.db.migrations import SCHEMA_VERSION; print(SCHEMA_VERSION)'"
 ```
 
-SCHEMA_VERSION actual: **19**. Si se añade una migración, el número debe incrementarse en `migrations.py` y añadirse la revisión Alembic correspondiente en `backend/alembic/versions/`.
+Current SCHEMA_VERSION: **19**. If a migration is added, the number must be incremented in `migrations.py` and the corresponding Alembic revision added under `backend/alembic/versions/`.
 
 ---
 
-## Autenticación local
+## Local authentication
 
 ```bash
-# Generar hash de contraseña
+# Generate a password hash
 .venv/bin/python backend/scripts/hash_password.py
-# → copiar el hash en .env como PROAI_AUTH_PASSWORD_HASH='<hash>'
+# → copy the hash into .env as PROAI_AUTH_PASSWORD_HASH='<hash>'
 
-# Login (obtiene cookie de sesión)
+# Login (gets a session cookie)
 curl -c cookies.txt -X POST http://localhost:8000/api/auth/login \
   -H "Content-Type: application/json" \
-  -d '{"password": "tu-password"}'
+  -d '{"password": "your-password"}'
 
-# Usar sesión en requests siguientes
+# Use the session on subsequent requests
 curl -b cookies.txt http://localhost:8000/api/slates
 ```
 
@@ -278,31 +278,31 @@ curl -b cookies.txt http://localhost:8000/api/slates
 ## Smoke tests
 
 ```bash
-make frontend-smoke    # valida que frontend assets se sirven
-make load-smoke        # prueba de carga básica (latencia por percentil)
+make frontend-smoke    # validates that frontend assets are served
+make load-smoke        # basic load test (per-percentile latency)
 ```
 
 ---
 
-## Boot automático
+## Automatic boot
 
-El stack usa `restart: unless-stopped`. Se reinicia tras un reboot si el daemon Docker arranca automáticamente:
+The stack uses `restart: unless-stopped`. It restarts after a reboot if the Docker daemon starts automatically:
 
 ```bash
 systemctl is-enabled docker
-sudo systemctl enable --now docker  # si no está habilitado
-make up                             # levantar el proyecto una vez
+sudo systemctl enable --now docker  # if not enabled
+make up                             # bring up the project once
 ```
 
 ---
 
-## Backup y restore
+## Backup and restore
 
 ```bash
-# Stack con Caddy + backups programados
+# Stack with Caddy + scheduled backups
 docker compose -f docker-compose.prod.yml up -d
 
-# Restore desde backup
+# Restore from backup
 docker compose -f docker-compose.prod.yml exec -T postgres sh -c \
   'gunzip -c /backups/proai-YYYYMMDDTHHMMSSZ.sql.gz | psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
 ```

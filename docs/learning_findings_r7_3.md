@@ -1,35 +1,35 @@
 # R7.3 — Learning Findings Review (PG-2337 + PGM-800)
 
-**Fecha:** 2026-06-24 · **Rama:** `chore/production-polish` · **HEAD:** `3150867`
-**Alcance:** análisis read-only de lo que el sistema aprendió tras aplicar
-resultados oficiales (R7.2). **No entrena, no cambia comportamiento productivo.**
+**Date:** 2026-06-24 · **Branch:** `chore/production-polish` · **HEAD:** `3150867`
+**Scope:** read-only analysis of what the system learned after applying
+official results (R7.2). **Does not train, does not change production behavior.**
 
 ---
 
-## 1. Resumen ejecutivo
+## 1. Executive summary
 
-> **Decisión: NO ENTRENAR todavía.**
-> **Motivo:** 2 slates / 23 partidos es muestra insuficiente (umbral ≥8 slates / ≥112 partidos).
+> **Decision: DO NOT TRAIN yet.**
+> **Reason:** 2 slates / 23 matches is an insufficient sample (threshold ≥8 slates / ≥112 matches).
 
-El sistema quedó por primera vez con datos comparables reales. Aciertos top-1
-globales **14/23 (60.9%)**, top-2 **78.3%**. Las decisiones de Money Mode (NO
-JUGAR en ambas) **evitaron 9 fallos** pero **bloquearon 14 aciertos** — señal de
-posible conservadurismo, pero NO accionable con 2 slates. Ningún fallo fue un
-pick "simple" perdedor sin protección (`should_have_blocked = 0`): los guardrails
-y Money Mode cubrieron el 100% de las pérdidas.
+For the first time the system had real comparable data. Global top-1 hits
+**14/23 (60.9%)**, top-2 **78.3%**. The Money Mode decisions (NO JUGAR on both)
+**avoided 9 misses** but **blocked 14 hits** — a signal of possible
+conservatism, but NOT actionable with 2 slates. No miss was an unprotected losing
+"simple" pick (`should_have_blocked = 0`): the guardrails and Money Mode covered
+100% of the losses.
 
-Caveat metodológico importante: las predicciones de **PGM-800 no persistieron
-`sanity_audit_json`** (sin `final_status`, sin vectores raw/display), por lo que
-la comparación display-vs-decision y el estado de guardrail solo son limpios
-dentro de PG-2337 (14 partidos). Esto es en sí un hallazgo (ver §10).
+Important methodological caveat: the **PGM-800 predictions did not persist
+`sanity_audit_json`** (no `final_status`, no raw/display vectors), so the
+display-vs-decision comparison and the guardrail state are only clean
+within PG-2337 (14 matches). This is itself a finding (see §10).
 
 ---
 
-## 2. PG-2337 — aciertos / fallos
+## 2. PG-2337 — hits / misses
 
 **hits 9/14 (0.643)** · top1 9 · top2_cov 11/14 · brier 0.536 · logloss 1.106 · Money Mode: NO JUGAR.
 
-| pos | partido | pred | real | hit | p(real) | error_type | guardrail |
+| pos | match | pred | real | hit | p(real) | error_type | guardrail |
 |----:|---------|:--:|:--:|:--:|:--:|------------|-----------|
 | 1 | México vs South Korea | L | L | ✓ | 0.55 | correct | ready |
 | 2 | Czech Republic vs South Africa | L | E | ✗ | 0.27 | low_evidence_correctly_blocked | blocked |
@@ -46,17 +46,17 @@ dentro de PG-2337 (14 partidos). Esto es en sí un hallazgo (ver §10).
 | 13 | Jordania vs Algeria | V | V | ✓ | 0.79 | guardrail_missed | blocked |
 | 14 | Panama vs Croatia | V | V | ✓ | 0.81 | guardrail_missed | no_simple |
 
-Lectura: 5 fallos. 4 fueron en picks que el guardrail ya había degradado
-(`low_evidence_correctly_blocked`) y 1 fue un favorito sobrestimado que SÍ estaba
-READY (pos12, Norway, p=0.03 al real). 6 aciertos fueron `guardrail_missed`
-(picks correctos con p(real) alto — 0.79–0.81 en cuatro — que el guardrail marcó
-como no-simple).
+Reading: 5 misses. 4 were on picks the guardrail had already downgraded
+(`low_evidence_correctly_blocked`) and 1 was an overestimated favorite that WAS
+READY (pos12, Norway, p=0.03 for the real outcome). 6 hits were `guardrail_missed`
+(correct picks with high p(real) — 0.79–0.81 in four — that the guardrail marked
+as no-simple).
 
-## 3. PGM-800 — aciertos / fallos
+## 3. PGM-800 — hits / misses
 
 **hits 5/9 (0.556)** · top1 5 · top2_cov 7/9 · brier 0.689 · logloss 1.420 · Money Mode: NO JUGAR.
 
-| pos | partido | pred | real | hit | p(real) | error_type | guardrail |
+| pos | match | pred | real | hit | p(real) | error_type | guardrail |
 |----:|---------|:--:|:--:|:--:|:--:|------------|-----------|
 | 1 | México vs South Korea | L | L | ✓ | 0.55 | correct | unknown |
 | 2 | France vs Senegal | L | L | ✓ | 0.45 | correct | unknown |
@@ -68,61 +68,61 @@ como no-simple).
 | 8 | Scotland vs Morocco | V | V | ✓ | 0.81 | correct | unknown |
 | 9 | Turkey vs Paraguay | L | V | ✗ | 0.32 | wrong_favorite | unknown |
 
-Lectura: 4 fallos, 2 por favorito sobrestimado con p(real) ínfimo (0.02–0.03),
-1 empate subestimado, 1 favorito equivocado. `guardrail=unknown` en todos porque
-estas predicciones no llevan metadata de sanity (ver §10).
+Reading: 4 misses, 2 from an overestimated favorite with a tiny p(real) (0.02–0.03),
+1 underestimated draw, 1 wrong favorite. `guardrail=unknown` for all because
+these predictions carry no sanity metadata (see §10).
 
-Nota: PG-2337 y PGM-800 **comparten 6 fixtures** (México-Corea, Chequia-Sudáfrica,
-Suiza-Bosnia, USA-Australia, Escocia-Marruecos, Turquía-Paraguay). El resultado
-del partido es único por `match_id`; lo que difiere entre slates es la predicción.
+Note: PG-2337 and PGM-800 **share 6 fixtures** (México-Korea, Czechia-South Africa,
+Switzerland-Bosnia, USA-Australia, Scotland-Morocco, Turkey-Paraguay). The match
+result is unique per `match_id`; what differs between slates is the prediction.
 
 ---
 
-## 4. Errores principales (global, 23 partidos)
+## 4. Main errors (global, 23 matches)
 
-| error_type | conteo |
+| error_type | count |
 |------------|-------:|
 | correct | 8 |
-| guardrail_missed (acierto degradado) | 6 |
-| low_evidence_correctly_blocked (fallo bien bloqueado) | 4 |
+| guardrail_missed (downgraded hit) | 6 |
+| low_evidence_correctly_blocked (miss correctly blocked) | 4 |
 | favorite_overestimated | 3 |
 | draw_underestimated | 1 |
 | wrong_favorite | 1 |
 
-- **Favorito mal estimado:** 3 (`favorite_overestimated`) + 1 (`wrong_favorite`) = 4 de 9 fallos. El patrón más fuerte: el modelo asignó p≈0.02–0.03 al resultado real en 3 casos (USA-Australia x2, England-Croatia, Norway-Senegal) → sobreconfianza en el favorito que no se cumplió.
-- **Empate subestimado:** 1 (Chequia-Sudáfrica, real E, p=0.27).
-- **Baja evidencia:** 4 fallos correctamente bloqueados por el guardrail en PG-2337.
+- **Mis-estimated favorite:** 3 (`favorite_overestimated`) + 1 (`wrong_favorite`) = 4 of 9 misses. The strongest pattern: the model assigned p≈0.02–0.03 to the real outcome in 3 cases (USA-Australia x2, England-Croatia, Norway-Senegal) → overconfidence in a favorite that did not deliver.
+- **Underestimated draw:** 1 (Czechia-South Africa, real E, p=0.27).
+- **Low evidence:** 4 misses correctly blocked by the guardrail in PG-2337.
 
 ---
 
-## 5. Guardrails que salvaron
+## 5. Guardrails that saved us
 
-- `low_evidence_correctly_blocked = 4` (PG-2337 pos 2,4,6,10): 4 fallos que el
-  guardrail degradó por baja evidencia → capital protegido.
-- En PGM-800 no hay metadata para acreditar guardrail (unknown), aunque varios de
-  sus fallos (p≈0.02–0.03) habrían sido degradados con la misma lógica.
-- **`should_have_blocked = 0`**: ningún fallo fue un pick simple sin protección.
+- `low_evidence_correctly_blocked = 4` (PG-2337 pos 2,4,6,10): 4 misses the
+  guardrail downgraded for low evidence → capital protected.
+- In PGM-800 there is no metadata to credit the guardrail (unknown), although several of
+  its misses (p≈0.02–0.03) would have been downgraded by the same logic.
+- **`should_have_blocked = 0`**: no miss was an unprotected simple pick.
 
-## 6. Guardrails demasiado conservadores
+## 6. Guardrails that were too conservative
 
-- `guardrail_missed = 6` (PG-2337 pos 3,5,7,9,13,14): 6 aciertos marcados como
-  no-simple. Cuatro tenían p(real) **0.79–0.81** (Scotland, Netherlands, Tunisia,
-  Panama) — alta confianza que igualmente se degradó.
-- Estos 6 son candidatos a revisar si pudieron ser READY sin romper evidencia,
-  **pero solo cuando haya ≥8 slates.** No tocar ahora.
+- `guardrail_missed = 6` (PG-2337 pos 3,5,7,9,13,14): 6 hits marked as
+  no-simple. Four had p(real) **0.79–0.81** (Scotland, Netherlands, Tunisia,
+  Panama) — high confidence that was downgraded anyway.
+- These 6 are candidates to review for whether they could have been READY without
+  breaking evidence, **but only once there are ≥8 slates.** Do not touch now.
 
 ## 7. Money Mode review
 
-| | conteo |
+| | count |
 |---|---:|
-| Fallos correctamente bloqueados (`money_mode_correctly_blocked`) | 9 |
-| Aciertos bloqueados de más (`money_mode_too_conservative`) | 14 |
+| Misses correctly blocked (`money_mode_correctly_blocked`) | 9 |
+| Hits over-blocked (`money_mode_too_conservative`) | 14 |
 
-Ambas slates fueron NO JUGAR. Money Mode acertó en **evitar los 9 fallos**, pero
-también bloqueó **14 aciertos top-1** (60.9% que sí pegaban). Con un boleto top-1
-hipotético habrías acertado 14/23. Esto sugiere **posible exceso de
-conservadurismo**, pero con 2 slates es ruido: NO es base para hacer Money Mode
-más agresivo. Revisar el trade-off cuando haya ≥8 slates.
+Both slates were NO JUGAR. Money Mode got it right in **avoiding the 9 misses**, but
+also blocked **14 top-1 hits** (60.9% that would have hit). With a hypothetical top-1
+ticket you would have hit 14/23. This suggests **possible excess
+conservatism**, but with 2 slates it is noise: it is NOT a basis to make Money Mode
+more aggressive. Review the trade-off once there are ≥8 slates.
 
 ---
 
@@ -136,85 +136,85 @@ más agresivo. Revisar el trade-off cuando haya ≥8 slates.
 | effective_probabilities | 0 | — | — | — | — | — |
 
 Bucket (decision): `medium` n=3 top1 1.0 · `high` n=4 top1 0.75 · `low` n=9 top1
-0.556 (ECE 0.42, mal calibrado) · `blocked` n=7 top1 0.43 (correctamente bajo).
-Por estado: `ready` n=4 top1 0.75 · `revisar` n=6 top1 0.67 · `no_simple` n=10 top1 0.60.
+0.556 (ECE 0.42, poorly calibrated) · `blocked` n=7 top1 0.43 (correctly low).
+By state: `ready` n=4 top1 0.75 · `revisar` n=6 top1 0.67 · `no_simple` n=10 top1 0.60.
 
-**Conclusiones obligatorias:**
-- **Mejor calibrado:** `display` (ECE 0.077, mejor logloss). *(caveat: solo 14 muestras de PG-2337).*
-- **Más agresivo / peor calibrado:** `decision` (ECE 0.18) — pero es el único que cubre los 23 partidos.
-- **Vector para UI:** `display` (ya en uso). Confirma la política actual.
-- **Vector para decisión:** `decision` (sin cambios). Es el menos calibrado y el candidato natural a recalibración futura — **no ahora**.
-- `effective` (canary) no es evaluable: no se persiste en predicciones archivadas.
+**Mandatory conclusions:**
+- **Best calibrated:** `display` (ECE 0.077, best logloss). *(caveat: only 14 samples from PG-2337).*
+- **Most aggressive / worst calibrated:** `decision` (ECE 0.18) — but it is the only one covering all 23 matches.
+- **Vector for the UI:** `display` (already in use). Confirms the current policy.
+- **Vector for the decision:** `decision` (no change). It is the least calibrated and the natural candidate for future recalibration — **not now**.
+- `effective` (canary) is not evaluable: it is not persisted in archived predictions.
 
 ---
 
 ## 9. Dataset readiness
 
-| métrica | valor |
+| metric | value |
 |---------|------:|
 | training_ready | **false** |
-| slates comparables | 2 (PG-2337, PGM-800) |
-| partidos comparables | 23 |
-| conflictos | 0 |
-| con features | 23/23 |
-| con rating | 20/23 |
-| con money_mode | 23/23 |
-| con canary | 0/23 |
-| mínimo faltante | ≥8 slates (hay 2); ≥112 partidos (hay 23) |
-| próxima acción | acumular más jornadas con resultados oficiales validados |
+| comparable slates | 2 (PG-2337, PGM-800) |
+| comparable matches | 23 |
+| conflicts | 0 |
+| with features | 23/23 |
+| with rating | 20/23 |
+| with money_mode | 23/23 |
+| with canary | 0/23 |
+| minimum missing | ≥8 slates (there are 2); ≥112 matches (there are 23) |
+| next action | accumulate more jornadas with validated official results |
 
-Excluidos: las demás slates por lineage no oficial o resultados incompletos
-(ej. PG-2335 = 10/14, PG-2336/2338/PGM-799/801 = 0 resultados).
-
----
-
-## 10. Recomendaciones técnicas
-
-1. **Persistir `sanity_audit_json` en TODAS las predicciones de slate** (PGM-800
-   no lo tiene → `guardrail=unknown`, sin vectores raw/display). Sin esto, la
-   atribución de errores y la calibración por estado quedan ciegas para la mitad
-   del dataset. *(requiere código, en el pipeline de predicción — futuro, no ahora.)*
-2. **Acumular resultados oficiales** de más jornadas (PG-2335 ya tiene 10/14;
-   completarla daría una 3ª slate comparable). *(sin código — intake manual.)*
-3. **Revisar el conservadurismo de Money Mode y los `guardrail_missed`** (6
-   aciertos de alta confianza degradados) — pero solo con ≥8 slates de evidencia.
-4. **Mantener `display` para UI y `decision` para decisión.** La evidencia confirma
-   la política; no invertirla.
-5. **Candidata a recalibración futura:** `decision` (ECE 0.18). Requeriría un
-   calibrador entrenado → fuera de alcance hasta tener dataset suficiente.
+Excluded: the other slates for non-official lineage or incomplete results
+(e.g. PG-2335 = 10/14, PG-2336/2338/PGM-799/801 = 0 results).
 
 ---
 
-## 11. Qué NO cambiar todavía
+## 10. Technical recommendations
 
-- ❌ No activar training (2 slates / 23 partidos << umbral).
-- ❌ No bajar guardrails ni convertir NO_SIMPLE en SIMPLE (los `guardrail_missed`
-  son señal, no prueba, con n tan chico).
-- ❌ No hacer Money Mode más agresivo (bloqueó 14 aciertos, pero evitó 9 fallos;
-  insuficiente para reabrir el trade-off).
-- ❌ No tocar canary, pricing, optimizer ni thresholds.
-- ❌ No recalibrar `decision` aún (sin dataset).
-
----
-
-## 12. Próxima acción
-
-Acumular resultados oficiales validados hasta ≥8 slates / ≥112 partidos
-comparables, persistiendo sanity-audit en todas las predicciones, y recién
-entonces **proponer** (no ejecutar) un experimento de calibración/entrenamiento
-en shadow para revisión manual.
+1. **Persist `sanity_audit_json` on ALL slate predictions** (PGM-800
+   does not have it → `guardrail=unknown`, no raw/display vectors). Without this,
+   error attribution and per-state calibration are blind for half
+   the dataset. *(requires code, in the prediction pipeline — future, not now.)*
+2. **Accumulate official results** from more jornadas (PG-2335 already has 10/14;
+   completing it would give a 3rd comparable slate). *(no code — manual intake.)*
+3. **Review Money Mode conservatism and the `guardrail_missed`** (6
+   high-confidence hits downgraded) — but only with ≥8 slates of evidence.
+4. **Keep `display` for the UI and `decision` for the decision.** The evidence confirms
+   the policy; do not invert it.
+5. **Future recalibration candidate:** `decision` (ECE 0.18). It would require a
+   trained calibrator → out of scope until there is enough dataset.
 
 ---
 
-## Hallazgos accionables
+## 11. What NOT to change yet
 
-| Hallazgo | Evidencia | Riesgo | Acción recomendada | ¿Requiere código? |
+- ❌ Do not enable training (2 slates / 23 matches << threshold).
+- ❌ Do not lower guardrails or convert NO_SIMPLE into SIMPLE (the `guardrail_missed`
+  are a signal, not proof, with n this small).
+- ❌ Do not make Money Mode more aggressive (it blocked 14 hits, but avoided 9 misses;
+  insufficient to reopen the trade-off).
+- ❌ Do not touch canary, pricing, optimizer or thresholds.
+- ❌ Do not recalibrate `decision` yet (no dataset).
+
+---
+
+## 12. Next action
+
+Accumulate validated official results up to ≥8 slates / ≥112 comparable
+matches, persisting sanity-audit on all predictions, and only
+then **propose** (not execute) a calibration/training experiment
+in shadow for manual review.
+
+---
+
+## Actionable findings
+
+| Finding | Evidence | Risk | Recommended action | Requires code? |
 |----------|-----------|--------|--------------------|:--:|
-| `display` mejor calibrado que `decision` | ECE 0.077 vs 0.18 | `decision` puede estar sobreconfiado | mantener `display` en UI, `decision` en decisión | no |
-| PGM-800 sin `sanity_audit_json` | guardrail=unknown en 9/9; sin raw/display | media calibración ciega | persistir sanity audit en todas las predicciones | **sí (futuro)** |
-| Money Mode bloqueó 14 aciertos top-1 | mm_too_conservative=14 vs correctly_blocked=9 | posible conservadurismo | revisar con ≥8 slates | no todavía |
-| 6 `guardrail_missed` con p(real) 0.79–0.81 | PG-2337 pos 5,7,9,14 | guardrail demasiado estricto | evaluar criterio READY con más datos | no todavía |
-| Favorito sobreconfiado en 3 fallos | p(real)≈0.02–0.03 | sobreajuste del favorito | candidato a recalibrar `decision` | no todavía |
-| top-2 coverage 78.3% | 18/23 | — | seguir usando cobertura/dobles | no |
-| `should_have_blocked = 0` | ningún simple perdedor sin protección | bajo | guardrails cubren pérdidas; mantener | no |
-| training_ready=false | 2 slates / 23 partidos | — | acumular resultados | no |
+| `display` better calibrated than `decision` | ECE 0.077 vs 0.18 | `decision` may be overconfident | keep `display` in UI, `decision` in decision | no |
+| PGM-800 without `sanity_audit_json` | guardrail=unknown in 9/9; no raw/display | calibration half-blind | persist sanity audit on all predictions | **yes (future)** |
+| Money Mode blocked 14 top-1 hits | mm_too_conservative=14 vs correctly_blocked=9 | possible conservatism | review with ≥8 slates | not yet |
+| 6 `guardrail_missed` with p(real) 0.79–0.81 | PG-2337 pos 5,7,9,14 | guardrail too strict | evaluate READY criteria with more data | not yet |
+| Overconfident favorite in 3 misses | p(real)≈0.02–0.03 | favorite overfit | candidate to recalibrate `decision` | not yet |
+| top-2 coverage 78.3% | 18/23 | — | keep using coverage/doubles | no |
+| `should_have_blocked = 0` | no unprotected losing simple | low | guardrails cover losses; keep | no |
+| training_ready=false | 2 slates / 23 matches | — | accumulate results | no |

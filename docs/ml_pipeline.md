@@ -1,119 +1,119 @@
 # proAI — ML Pipeline
 
-## Modelo de producción
+## Production model
 
-El modelo de producción es **XGBoost** (CPU-only). Es la única librería ML permitida en el runtime. scikit-learn está explícitamente excluido.
+The production model is **XGBoost** (CPU-only). It is the only ML library allowed in the runtime. scikit-learn is explicitly excluded.
 
-El modelo produce probabilidades `P(home) / P(draw) / P(away)` para cada partido de una slate Progol. Antes de XGBoost, se aplica un ajuste Poisson-Dixon para calibrar el peso del empate según el ritmo de goles del partido específico.
+The model produces `P(home) / P(draw) / P(away)` probabilities for each match of a Progol slate. Before XGBoost, a Poisson-Dixon adjustment is applied to calibrate the draw weight according to the specific match's goal pace.
 
-XGBoost solo se usa en las competiciones donde el veredicto walk-forward publicado (`/data/backtest_history/index.json`, campo `xgboost_beats_heuristic`) lo aprueba; el resto rutea al **blend heurístico**: Elo + Poisson Dixon-Coles + perfil de equipo. En ese blend, Elo y perfil votan solo el reparto local-vs-visitante y el grid Dixon-Coles es dueño de la masa del empate — mezclar sus masas completas y renormalizar diluía E sistemáticamente (~0.30 → ~0.23), el hallazgo de la comparación contra mercado de 2026-07-16.
+XGBoost is used only in the competitions where the published walk-forward verdict (`/data/backtest_history/index.json`, field `xgboost_beats_heuristic`) approves it; the rest routes to the **heuristic blend**: Elo + Poisson Dixon-Coles + team profile. In that blend, Elo and profile only vote the home-vs-away split and the Dixon-Coles grid owns the draw mass — mixing their full masses and renormalizing systematically diluted E (~0.30 → ~0.23), the finding from the 2026-07-16 market comparison.
 
-### Retrain periódico del artefacto base
+### Periodic retrain of the base artifact
 
-El worker reentrena `elo_poisson_blend` cuando el último run en DB es más viejo que `PROAI_MODEL_RETRAIN_INTERVAL_HOURS` (default 24; 0 lo desactiva). El gate es el `trained_at` del run — no memoria del worker — así que los reinicios no lo redisparan. Esto mantiene frescos ratings, lambdas y curvas de calibración sin intervención del operador (el gap mayo→julio de 2026 apareció como sobreconfianza en partidos con forma reciente distinta). Es independiente del *adaptive retraining gate* de abajo, que aprende de jornadas Progol completas.
-
----
-
-## Features de alto nivel
-
-Las features se construyen en `FeatureService` a partir de datos históricos de resultados y estadísticas:
-
-- **Forma reciente** de local y visitante (ventana = 3 × mediana de días entre partidos de la competición)
-- **Head-to-head** histórico entre los dos equipos
-- **Ratios de goles** anotados y recibidos por equipo
-- **Elo ratings** derivados del historial
-- **Indicadores de competición** (liga, copa, clasificatorio)
-- **Evidence count** (señales de contexto de texto — actualmente 0 por defecto porque no hay scraper de noticias activo)
+The worker retrains `elo_poisson_blend` when the latest run in the DB is older than `PROAI_MODEL_RETRAIN_INTERVAL_HOURS` (default 24; 0 disables it). The gate is the run's `trained_at` — not worker memory — so restarts do not re-trigger it. This keeps ratings, lambdas and calibration curves fresh without operator intervention (the May→July 2026 gap showed up as overconfidence on matches with different recent form). It is independent of the *adaptive retraining gate* below, which learns from complete Progol jornadas.
 
 ---
 
-## Cómo se genera una predicción
+## High-level features
 
-1. `PredictionService.predict_for_slate()` se llama con la slate activa.
-2. Para cada partido: `FeatureService` construye el feature vector.
-3. Se evalúa `_has_insufficient_data()` — si los anchors no alcanzan el mínimo, `confidence_band = "blocked"`.
-4. Si la competición está en `PROAI_LIVE_PICK_BLOCKED_COMPETITIONS`, también `"blocked"`.
-5. Si pasa los gates: XGBoost produce probabilidades crudas → ajuste Poisson → banda de confianza.
-6. Se calcula `composition_hash` y `slate_version` de la slate al momento del snapshot.
-7. El resultado se persiste en `predictions` + `prediction_snapshots`.
+Features are built in `FeatureService` from historical results and statistics data:
 
-### Bandas de confianza
+- **Recent form** of home and away (window = 3 × median days between the competition's matches)
+- **Head-to-head** history between the two teams
+- **Goal ratios** scored and conceded per team
+- **Elo ratings** derived from history
+- **Competition indicators** (league, cup, qualifier)
+- **Evidence count** (text-context signals — currently 0 by default because there is no active news scraper)
+
+---
+
+## How a prediction is generated
+
+1. `PredictionService.predict_for_slate()` is called with the active slate.
+2. For each match: `FeatureService` builds the feature vector.
+3. `_has_insufficient_data()` is evaluated — if the anchors do not reach the minimum, `confidence_band = "blocked"`.
+4. If the competition is in `PROAI_LIVE_PICK_BLOCKED_COMPETITIONS`, also `"blocked"`.
+5. If it passes the gates: XGBoost produces raw probabilities → Poisson adjustment → confidence band.
+6. The slate's `composition_hash` and `slate_version` at snapshot time are computed.
+7. The result is persisted in `predictions` + `prediction_snapshots`.
+
+### Confidence bands
 
 ```
 anchored = (evidence_count >= 1) OR (h2h >= 2) OR (home_recent >= 3 AND away_recent >= 3)
 
-"blocked"  → competición no clasificada, O datos insuficientes (total_anchors < 4, AND
-              NOT (ambos lados >= 2 recientes O h2h >= 3))
+"blocked"  → competition not classified, OR insufficient data (total_anchors < 4, AND
+              NOT (both sides >= 2 recent OR h2h >= 3))
 "high"     → top_prob >= 0.55 AND spread >= 0.12 AND anchored
 "medium"   → top_prob >= 0.40 AND spread >= 0.02 AND anchored
-"low"      → cualquier otro caso (anchored o no, sin threshold mínimo)
+"low"      → any other case (anchored or not, no minimum threshold)
 ```
 
-Knockouts (partido sin empate posible, redistribución E=0):
+Knockouts (match with no possible draw, E=0 redistribution):
 ```
 "high"   → top_prob >= 0.55 AND anchored
 "medium" → top_prob >= 0.50
-"low"    → resto
+"low"    → rest
 ```
 
-**Regla no negociable:** los thresholds no se relajan para inflar bandas. Un partido con datos insuficientes se muestra como `low` o `blocked` — nunca como `medium` o `high` por regla artificial.
+**Non-negotiable rule:** thresholds are not relaxed to inflate bands. A match with insufficient data is shown as `low` or `blocked` — never as `medium` or `high` by an artificial rule.
 
 ---
 
 ## Anchor gap diagnostic
 
-Cuando un partido queda en `low` por falta de anclaje, `_build_rationale()` incluye una descripción de exactamente qué falta:
+When a match ends up `low` for lack of anchoring, `_build_rationale()` includes a description of exactly what is missing:
 
-- Local tiene N resultado(s) reciente(s), necesita 3
-- Visitante tiene N resultado(s) reciente(s), necesita 3
-- Historial directo insuficiente (N enfrentamiento(s), necesita 2)
+- Home has N recent result(s), needs 3
+- Away has N recent result(s), needs 3
+- Insufficient head-to-head history (N matchup(s), needs 2)
 
-Este diagnóstico se expone en la UI y en el endpoint `/api/predictions/slates/{id}/quality`.
+This diagnostic is exposed in the UI and in the `/api/predictions/slates/{id}/quality` endpoint.
 
-**Por qué ocurre con calificatorias:** la ventana activa es 3 × mediana de días entre partidos (≈211 días para "International Friendlies"). Las eliminatorias CONMEBOL terminaron en septiembre 2025, CAF en octubre 2025 — ambas fuera de la ventana para partidos del 12 de junio de 2026.
+**Why it happens with qualifiers:** the active window is 3 × median days between matches (≈211 days for "International Friendlies"). The CONMEBOL qualifiers ended in September 2025, CAF in October 2025 — both outside the window for matches on 12 June 2026.
 
 ---
 
-## Cómo se genera un ticket
+## How a ticket is generated
 
-1. `TicketRecommendationService` recibe las predicciones del slate.
-2. `TicketOptimizer` selecciona el pick óptimo (1/X/2) por partido según las probabilidades y el objetivo de cobertura.
-3. `coverage.py` (Poisson Binomial) calcula P(≥K aciertos) dado el conjunto de picks.
-4. El ticket se presenta como `Simple` (14 picks únicos), `Dobles` (con segunda opción en partidos seleccionados), y `Completa`.
+1. `TicketRecommendationService` receives the slate's predictions.
+2. `TicketOptimizer` selects the optimal pick (1/X/2) per match based on the probabilities and the coverage target.
+3. `coverage.py` (Poisson Binomial) computes P(≥K hits) given the set of picks.
+4. The ticket is presented as `Simple` (14 unique picks), `Dobles` (with a second option on selected matches), and `Completa`.
 
 ---
 
 ## Scoring
 
-Después de que los partidos se juegan, `JornadaScoringService` computa:
+After the matches are played, `JornadaScoringService` computes:
 
-- **Hit-rate**: fracción de picks correctos
-- **Brier score**: pérdida cuadrática de las probabilidades predichas vs resultado real
+- **Hit-rate**: fraction of correct picks
+- **Brier score**: squared loss of the predicted probabilities vs the real outcome
 
-El scoring se vincula a `(slate_id, composition_hash)` para garantizar que se compare contra exactamente la misma composición que generó la predicción.
+Scoring is linked to `(slate_id, composition_hash)` to guarantee it is compared against exactly the same composition that generated the prediction.
 
-**No ejecutar scoring antes de tener resultados canónicos confirmados.** Ver `docs/data_quality.md`.
+**Do not run scoring before having confirmed canonical results.** See `docs/data_quality.md`.
 
 ---
 
 ## Adaptive dataset
 
-`AdaptiveDatasetService` ensambla filas de entrenamiento a partir de jornadas completas con resultados canónicos, predicciones guardadas, y picks de ticket. Cada fila tiene:
+`AdaptiveDatasetService` assembles training rows from complete jornadas with canonical results, saved predictions, and ticket picks. Each row has:
 
-- feature vector en el momento de la predicción
-- resultado real
-- pick del ticket
+- feature vector at prediction time
+- real outcome
+- ticket pick
 - hit/miss
 
-Este dataset alimenta el retraining gate.
+This dataset feeds the retraining gate.
 
 ---
 
 ## Adaptive retraining gate
 
-`AdaptiveRetrainingService` evalúa readiness con estos gates por defecto:
+`AdaptiveRetrainingService` evaluates readiness with these default gates:
 
-| Gate | Valor por defecto |
+| Gate | Default value |
 |---|---|
 | `min_trainable_rows` | 50 |
 | `min_complete_slates` | 3 |
@@ -121,35 +121,35 @@ Este dataset alimenta el retraining gate.
 | `max_blocked_rate_for_full_retrain` | 60% |
 | `min_new_rows_since_last_train` | 30 |
 
-**Flujo obligatorio antes de reentrenar:**
-1. `GET /api/training/adaptive/readiness` — verificar que todos los gates pasan
-2. `POST /api/training/adaptive/dry-run` — simular sin persistir
-3. `POST /api/training/adaptive/run` — ejecutar solo si los gates y el dry-run son satisfactorios
+**Mandatory flow before retraining:**
+1. `GET /api/training/adaptive/readiness` — verify that all gates pass
+2. `POST /api/training/adaptive/dry-run` — simulate without persisting
+3. `POST /api/training/adaptive/run` — run only if the gates and the dry-run are satisfactory
 
-**No ejecutar `/run` si algún gate falla.** El endpoint devuelve 409 si la readiness no pasa.
+**Do not run `/run` if any gate fails.** The endpoint returns 409 if readiness does not pass.
 
 ---
 
-## Neural baseline experimental
+## Experimental neural baseline
 
-`NeuralBaselineService` implementa un MLP de 2 capas ocultas en PyTorch puro, sin sklearn. Características de diseño:
+`NeuralBaselineService` implements a 2-hidden-layer MLP in pure PyTorch, without sklearn. Design characteristics:
 
-- `is_production = False` en todos los artefactos que escribe
+- `is_production = False` on every artifact it writes
 - `model_type = "neural_baseline_experimental"`
-- Nunca escribe en las tablas de predicción de producción
-- Solo accesible via `/api/training/neural/readiness` (GET) y `/api/training/neural/dry-run` (POST)
+- Never writes to the production prediction tables
+- Only accessible via `/api/training/neural/readiness` (GET) and `/api/training/neural/dry-run` (POST)
 
-**Cuándo podrá entrar en producción:** cuando haya suficientes jornadas completas con resultados canónicos para validar que supera al XGBoost en walk-forward. Las métricas comparativas están en el endpoint de dry-run. Hoy el readiness es `skip` (0 jornadas completas disponibles a junio 2026).
+**When it may enter production:** when there are enough complete jornadas with canonical results to validate that it beats XGBoost in walk-forward. The comparative metrics are in the dry-run endpoint. Today the readiness is `skip` (0 complete jornadas available as of June 2026).
 
 ---
 
-## Qué NO hacer con el ML pipeline
+## What NOT to do with the ML pipeline
 
-| Acción prohibida | Razón |
+| Forbidden action | Reason |
 |---|---|
-| Relajar thresholds de confianza para inflar bandas | Produce picks no fundamentados |
-| Convertir `low` a `medium`/`high` por regla artificial | Viola la semántica de las bandas |
-| Reentrenar con slates contaminadas o con conflict_rate alto | Introduce ruido en el modelo |
-| Usar resultados conflictivos en scoring | Genera métricas incorrectas |
-| Entrenar neural baseline en producción sin validación walk-forward | Sin evidencia de mejora, puede degradar picks |
-| Backfill legacy arbitrario de PG-2334/PG-2335 | Ver `docs/data_quality.md` |
+| Relax confidence thresholds to inflate bands | Produces unfounded picks |
+| Convert `low` to `medium`/`high` by an artificial rule | Violates the band semantics |
+| Retrain with contaminated slates or high conflict_rate | Introduces noise into the model |
+| Use conflicting results in scoring | Generates incorrect metrics |
+| Train the neural baseline in production without walk-forward validation | Without evidence of improvement, it can degrade picks |
+| Arbitrary legacy backfill of PG-2334/PG-2335 | See `docs/data_quality.md` |

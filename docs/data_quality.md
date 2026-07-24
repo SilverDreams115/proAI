@@ -1,113 +1,113 @@
-# proAI — Calidad de Datos
+# proAI — Data Quality
 
-## Resultados canónicos
+## Canonical results
 
-Un resultado canónico es el resultado final confirmado de un partido, almacenado en `canonical_results`. Es la fuente de verdad para scoring y adaptive dataset. Sin resultado canónico confirmado, no se debe computar scoring.
+A canonical result is the confirmed final result of a match, stored in `canonical_results`. It is the source of truth for scoring and the adaptive dataset. Without a confirmed canonical result, scoring must not be computed.
 
-### Fuentes y prioridad
+### Sources and priority
 
-`result_source_priority` en `SourceModel` determina qué fuente prevalece cuando múltiples connectors reportan resultados distintos para el mismo partido. Fuentes con mayor prioridad sobreescriben a las de menor prioridad.
+`result_source_priority` on `SourceModel` determines which source prevails when multiple connectors report different results for the same match. Higher-priority sources override lower-priority ones.
 
-### Conflictos de resultados
+### Result conflicts
 
-Un conflicto ocurre cuando dos fuentes con igual o mayor prioridad reportan resultados distintos para el mismo `(home_team_id, away_team_id, match_date)`. Los conflictos se rastrean en el dataset adaptativo vía `conflict_rate`.
+A conflict occurs when two sources with equal or higher priority report different results for the same `(home_team_id, away_team_id, match_date)`. Conflicts are tracked in the adaptive dataset via `conflict_rate`.
 
-**No usar resultados conflictivos en scoring ni en retraining.** El gate `max_conflict_rate=0.05` en `AdaptiveRetrainingService` rechaza datasets con más del 5% de filas conflictivas.
+**Do not use conflicting results in scoring or retraining.** The `max_conflict_rate=0.05` gate in `AdaptiveRetrainingService` rejects datasets with more than 5% conflicting rows.
 
 ---
 
-## Decisiones de slate legacy (PG-2334 → PG-2336)
+## Legacy slate decisions (PG-2334 → PG-2336)
 
 ### PG-2334
-Primer slate producido. Patrón de desacoplamiento detectado: la slate recibió múltiples snapshots de predicción en versiones diferentes. El `composition_hash` cambió durante el proceso, generando versiones `v1`, `v2`, etc. Resultado: métricas de scoring potencialmente inconsistentes entre versiones.
+First slate produced. A decoupling pattern was detected: the slate received multiple prediction snapshots under different versions. The `composition_hash` changed during the process, generating `v1`, `v2`, etc. versions. Result: potentially inconsistent scoring metrics across versions.
 
-**Lección:** el `composition_hash` garantiza que cada score se compare contra la composición exacta que generó la predicción. No mezclar scores de versiones distintas.
+**Lesson:** the `composition_hash` guarantees that each score is compared against the exact composition that generated the prediction. Do not mix scores from different versions.
 
 ### PG-2335
-Segunda slate analizada. Revisión post-mortem identificó tres posiciones donde el modelo tenía sesgos por calibración insuficiente. Los artefactos de modelo fueron ajustados (`model_training_artifacts.py` línea 57). Slate marcada como `PARTIAL_ONLY` — datos parcialmente útiles para el adaptive dataset pero no representativos del pipeline actual.
+Second slate analyzed. A post-mortem review identified three positions where the model had biases from insufficient calibration. The model artifacts were adjusted (`model_training_artifacts.py` line 57). Slate marked as `PARTIAL_ONLY` — data partially useful for the adaptive dataset but not representative of the current pipeline.
 
 ### PG-2336
-Primera slate limpia con el pipeline completo:
-- `composition_hash` desde el inicio
-- modelo calibrado
-- evidence quality documentada
-- anchor gap diagnostic activo
-- 0 partidos `blocked`
+First clean slate with the complete pipeline:
+- `composition_hash` from the start
+- calibrated model
+- documented evidence quality
+- active anchor gap diagnostic
+- 0 `blocked` matches
 
-Es la primera slate válida para alimentar el adaptive dataset sin restricciones. **No modificar manualmente ningún dato de PG-2336.**
+It is the first valid slate to feed the adaptive dataset without restrictions. **Do not manually modify any PG-2336 data.**
 
-### Por qué no hacer backfill legacy arbitrario
+### Why not do arbitrary legacy backfill
 
-Hacer backfill de PG-2334 o PG-2335 requiere:
-1. Conocer exactamente qué modelo estaba activo en cada momento
-2. Confirmar que los features usados son los mismos que los actuales
-3. Resolver conflictos de resultados documentados
-4. Evitar contaminar el adaptive dataset con predicciones de versiones del modelo incompatibles
+Backfilling PG-2334 or PG-2335 requires:
+1. Knowing exactly which model was active at each moment
+2. Confirming that the features used are the same as the current ones
+3. Resolving documented result conflicts
+4. Avoiding contaminating the adaptive dataset with predictions from incompatible model versions
 
-Sin esas garantías, el backfill introduce ruido en el retraining y distorsiona las métricas walk-forward.
+Without those guarantees, the backfill introduces noise into retraining and distorts the walk-forward metrics.
 
 ---
 
 ## Evidence quality
 
-`evidence_count` es el número de items de evidencia de texto (noticias, lesiones, rotaciones, etc.) asociados a un partido. Actualmente es **0 en casi todos los partidos** porque no hay scraper de noticias activo.
+`evidence_count` is the number of text-evidence items (news, injuries, rotations, etc.) associated with a match. It is currently **0 in almost all matches** because there is no active news scraper.
 
-Esto es intencional y declarado en el sistema. El `_confidence_band()` acepta H2H o forma reciente como anchor equivalente (`evidence_count >= 1 OR h2h >= 2 OR (home_recent >= 3 AND away_recent >= 3)`). No inflar `evidence_count` artificialmente ni crear evidencias sintéticas para subir bandas de confianza.
+This is intentional and declared in the system. `_confidence_band()` accepts H2H or recent form as an equivalent anchor (`evidence_count >= 1 OR h2h >= 2 OR (home_recent >= 3 AND away_recent >= 3)`). Do not inflate `evidence_count` artificially or create synthetic evidence to raise confidence bands.
 
 ---
 
 ## Anchor gap
 
-El anchor gap es el diagnóstico que explica por qué un partido está en banda `low`. Se reporta cuando `_anchored = False`:
+The anchor gap is the diagnostic that explains why a match is in the `low` band. It is reported when `_anchored = False`:
 
 ```
 anchored = (evidence_count >= 1) OR (h2h >= 2) OR (home_recent >= 3 AND away_recent >= 3)
 ```
 
-Si `anchored = False`, el rationale incluye exactamente qué falta:
+If `anchored = False`, the rationale includes exactly what is missing:
 
-| Condición | Mensaje |
+| Condition | Message |
 |---|---|
 | `home_recent < 3` | "Local tiene N resultado(s) reciente(s) en ventana activa — necesita 3" |
 | `away_recent < 3` | "Visitante tiene N resultado(s) reciente(s) en ventana activa — necesita 3" |
 | `h2h < 2` | "Historial directo insuficiente (N enfrentamiento(s), necesita 2)" |
 
-### Ventana activa
+### Active window
 
-La ventana de forma reciente es **3 × mediana de días entre partidos** de la competición. Para "International Friendlies" (al que se mapean las eliminatorias WCQ): ≈211 días.
+The recent-form window is **3 × median days between matches** of the competition. For "International Friendlies" (which WCQ qualifiers are mapped to): ≈211 days.
 
-Partidos fuera de la ventana no contribuyen a `home_recent` ni `away_recent`. Esto es correcto: un partido de hace 8 meses no refleja la forma actual del equipo.
+Matches outside the window do not contribute to `home_recent` or `away_recent`. This is correct: a match from 8 months ago does not reflect the team's current form.
 
-### Por qué los low no deben inflarse artificialmente
+### Why lows must not be inflated artificially
 
-Un partido `low` significa que el modelo no tiene suficiente evidencia reciente para respaldar su elección. Convertirlo a `medium` o `high` mediante regla artificial (e.g. "si la competición es copas del mundo, dar +1 de bonus") viola la semántica del sistema y produce picks no auditables.
+A `low` match means the model does not have enough recent evidence to back its choice. Turning it into `medium` or `high` via an artificial rule (e.g. "if the competition is a World Cup, give +1 bonus") violates the system's semantics and produces non-auditable picks.
 
-La UI muestra el anchor gap diagnostic explícitamente para que el operador entienda la limitación, no para ocultarla.
+The UI shows the anchor gap diagnostic explicitly so the operator understands the limitation, not to hide it.
 
 ---
 
-## Datos de WCQ (World Cup Qualifying)
+## WCQ (World Cup Qualifying) data
 
-Las fuentes de calificatorias mundiales están registradas en el sistema:
+The world-cup qualifier sources are registered in the system:
 
-| Confederation | League ID TSDB | Estado (jun 2026) |
+| Confederation | League ID TSDB | State (Jun 2026) |
 |---|---|---|
-| CONMEBOL | 5515 | Terminó sep 2025 — fuera de ventana activa |
-| CAF | 5514 | Terminó oct 2025 — fuera de ventana activa |
-| AFC | 5513 | Terminó jun 2025 — fuera de ventana activa |
-| CONCACAF | 5516 | Terminó mar 2026 — dentro de ventana |
-| UEFA | 5518 | Activa 2026 |
+| CONMEBOL | 5515 | Ended Sep 2025 — outside active window |
+| CAF | 5514 | Ended Oct 2025 — outside active window |
+| AFC | 5513 | Ended Jun 2025 — outside active window |
+| CONCACAF | 5516 | Ended Mar 2026 — inside window |
+| UEFA | 5518 | Active 2026 |
 
-Los aliases de normalización (`eliminatorias mundialistas`, `wcq`, etc.) mapean a `international-friendlies` para compartir la ventana de forma de ese grupo de competiciones.
+The normalization aliases (`eliminatorias mundialistas`, `wcq`, etc.) map to `international-friendlies` to share that competition group's form window.
 
 ---
 
-## Datos faltantes vs. datos conflictivos
+## Missing data vs. conflicting data
 
-| Situación | Comportamiento correcto |
+| Situation | Correct behavior |
 |---|---|
-| Sin datos recientes (`home_recent < 3`) | `low` — mostrar anchor gap |
-| Sin H2H (`h2h < 2`) | `low` — mostrar anchor gap |
-| Competición no clasificada | `blocked` — no presentar pick |
-| Resultados conflictivos en DB | No usar en scoring ni retraining |
-| Evidence count = 0 | Normal — no inflar artificialmente |
+| No recent data (`home_recent < 3`) | `low` — show anchor gap |
+| No H2H (`h2h < 2`) | `low` — show anchor gap |
+| Competition not classified | `blocked` — do not present a pick |
+| Conflicting results in DB | Do not use in scoring or retraining |
+| Evidence count = 0 | Normal — do not inflate artificially |

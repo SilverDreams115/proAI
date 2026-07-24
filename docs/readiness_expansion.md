@@ -1,17 +1,17 @@
 # Readiness Expansion (R6.3)
 
-Cómo aumentar los partidos en **READY** *sin falsear confianza*. Esta es una
-herramienta de **auditoría read-only**: explica por qué cada partido no está
-READY y qué dato real lo desbloquearía. **No cambia estados, no baja umbrales,
-no oculta LOW_EVIDENCE y no convierte amistosos sin evidencia en READY.**
+How to increase the matches in **READY** *without faking confidence*. This is a
+**read-only audit** tool: it explains why each match is not
+READY and what real data would unblock it. **It does not change states, does not lower thresholds,
+does not hide LOW_EVIDENCE and does not turn evidence-less friendlies into READY.**
 
-## Definición operativa de READY
+## Operational definition of READY
 
-Un partido está **READY** cuando el *presentation guard* permite un pick simple
-defendible (sin blockers de riesgo/evidencia). `safe_to_promote_now=true` solo
-cuando la evidencia **ya** es suficiente — la auditoría nunca inventa un READY.
+A match is **READY** when the *presentation guard* allows a defensible simple pick
+(no risk/evidence blockers). `safe_to_promote_now=true` only
+when the evidence is **already** sufficient — the audit never invents a READY.
 
-## Cómo correr la auditoría
+## How to run the audit
 
 ```bash
 docker compose exec --workdir /app/backend proai \
@@ -21,52 +21,52 @@ docker compose exec --workdir /app/backend proai \
 ... --active-upcoming --json
 ```
 
-Por partido reporta: `position`, `match`, `current_status`, `blocked_by`,
-`can_be_improved_by`, `safe_to_promote_now`. Por slate: `ready_now`,
+Per match it reports: `position`, `match`, `current_status`, `blocked_by`,
+`can_be_improved_by`, `safe_to_promote_now`. Per slate: `ready_now`,
 `ready_potential_with_external_data`, `ready_potential_after_provider_results`,
 `safe_promotions`, `no_promote_reason`.
 
-## Categorías de blocker
+## Blocker categories
 
 `low_evidence`, `fallback_used`, `suspicious_class`, `stale_metadata`,
 `friendly_context`, `placeholder_team`, `provider_unmatched`,
 `canary_not_active`, `no_result_history`, `partial_rating`, `no_rating`,
 `calibrator_missing`.
 
-## Qué desbloquea cada cosa (`can_be_improved_by`)
+## What each thing unblocks (`can_be_improved_by`)
 
-| blocker | dato real que lo mejora |
+| blocker | real data that improves it |
 |---|---|
-| low_evidence | más historial de resultados de los equipos |
-| fallback_used | rating disponible para ambos equipos |
-| suspicious_class | mejor calibración |
-| stale_metadata | corregir metadata/mapping |
-| friendly_context | calibrador específico de amistosos |
-| provider_unmatched | resultado finalizado del proveedor (dry-run) |
-| placeholder_team | resolver el equipo del fixture |
+| low_evidence | more result history for the teams |
+| fallback_used | rating available for both teams |
+| suspicious_class | better calibration |
+| stale_metadata | fix metadata/mapping |
+| friendly_context | friendlies-specific calibrator |
+| provider_unmatched | finished result from the provider (dry-run) |
+| placeholder_team | resolve the fixture's team |
 
-## Cómo mejorar READY **sin falsear confianza**
+## How to improve READY **without faking confidence**
 
-Permitido (cambios seguros, solo si hay evidencia real):
-- arreglar **mapping** de equipos/fixtures,
-- arreglar **metadata stale**,
-- usar **ratings existentes** cuando están disponibles para ambos equipos,
-- usar el **provider dry-run** como evidencia secundaria de resultado.
+Allowed (safe changes, only if there is real evidence):
+- fix team/fixture **mapping**,
+- fix **stale metadata**,
+- use **existing ratings** when they are available for both teams,
+- use the **provider dry-run** as secondary result evidence.
 
-Prohibido:
-- bajar `min_evidence` o cualquier umbral solo para ver más READY,
-- ignorar `fallback`/`LOW_EVIDENCE`,
-- pasar amistosos sin evidencia a READY por defecto,
-- quitar `risk_high` o relajar `NO SIMPLE`.
+Forbidden:
+- lowering `min_evidence` or any threshold just to see more READY,
+- ignoring `fallback`/`LOW_EVIDENCE`,
+- moving evidence-less friendlies to READY by default,
+- removing `risk_high` or relaxing `NO SIMPLE`.
 
-## Estado actual (R6.3)
+## Current state (R6.3)
 
-Para **PG-2338** y **PGM-801** (amistosos internacionales, baja evidencia):
+For **PG-2338** and **PGM-801** (international friendlies, low evidence):
 
-> **No hay promociones READY seguras en esta fase.**
+> **There are no safe READY promotions in this phase.**
 
-Cada partido sigue con evidencia insuficiente, fallback o contexto de amistoso.
-El proveedor gratuito no cubre estas competencias, así que tampoco aporta
-resultados finalizados como evidencia secundaria. Promover sin datos reales
-falsearía la confianza, por lo que `safe_promotions = 0`. La auditoría deja
-explícito qué dato concreto desbloquearía cada partido cuando exista.
+Each match still has insufficient evidence, fallback or a friendly context.
+The free provider does not cover these competitions, so it does not contribute
+finished results as secondary evidence either. Promoting without real data
+would fake confidence, so `safe_promotions = 0`. The audit makes
+explicit which concrete data would unblock each match when it exists.

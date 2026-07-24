@@ -1,157 +1,157 @@
-# proAI — Arquitectura Técnica
+# proAI — Technical Architecture
 
-## Visión general
+## Overview
 
-proAI es una plataforma de predicción deportiva para quinielas Progol. Ingiere estadísticas de fútbol desde fuentes estructuradas, normaliza entidades, genera probabilidades `1/X/2` mediante un modelo XGBoost calibrado, y produce boletas auditables con cobertura de riesgo. Todo output es trazable: cada predicción conserva su feature map completo, su banda de confianza y su hash de composición.
+proAI is a sports-prediction platform for Progol quinielas. It ingests football statistics from structured sources, normalizes entities, generates `1/X/2` probabilities via a calibrated XGBoost model, and produces auditable tickets with risk coverage. All output is traceable: each prediction keeps its full feature map, its confidence band and its composition hash.
 
 ---
 
-## Flujo end-to-end
+## End-to-end flow
 
 ```
-Fuentes externas (TheSportsDB, football-data.org, football-data.co.uk)
+External sources (TheSportsDB, football-data.org, football-data.co.uk)
         │
         ▼
-[IngestionService]  ─── normaliza equipos/competiciones
-        │               entity resolution, aliases, deduplicación
+[IngestionService]  ─── normalizes teams/competitions
+        │               entity resolution, aliases, deduplication
         ▼
 [DB: stats / results / evidence]
         │
         ▼
-[FeatureService]  ─── ventana de forma reciente, H2H, goles, Elo
+[FeatureService]  ─── recent-form window, H2H, goals, Elo
         │
         ▼
 [ModelTrainingService / XGBoost artifact]
         │
         ▼
-[PredictionService]  ─── probabilidades 1/X/2
-        │               banda de confianza (blocked/low/medium/high)
+[PredictionService]  ─── 1/X/2 probabilities
+        │               confidence band (blocked/low/medium/high)
         │               rationale + anchor gap diagnostic
         ▼
 [TicketRecommendationService + TicketOptimizer]
         │               Simple / Dobles / Completa
-        │               cobertura de riesgo (Poisson Binomial)
+        │               risk coverage (Poisson Binomial)
         ▼
-[Slate activa — PG-xxxx]
+[Active slate — PG-xxxx]
         │
-        ▼ (después del partido)
+        ▼ (after the match)
 [ResultService / canonical_result]
         │
         ▼
 [JornadaScoringService]  ─── hit-rate, Brier score
         │
         ▼
-[AdaptiveDatasetService]  ─── filas de entrenamiento auditadas
+[AdaptiveDatasetService]  ─── audited training rows
         │
         ▼
-[AdaptiveRetrainingService]  ─── gate de readiness → retrain XGBoost
+[AdaptiveRetrainingService]  ─── readiness gate → retrain XGBoost
 ```
 
 ---
 
-## Componentes principales
+## Main components
 
 ### FastAPI (app/main.py)
-Servidor principal. Registra 20 routers bajo `/api/`. Auth por middleware (API key o session cookie firmada). Rutas worker y openapi-schema con guard per-route adicional.
+Main server. Registers 20 routers under `/api/`. Auth via middleware (API key or signed session cookie). Worker and openapi-schema routes with an additional per-route guard.
 
 ### PostgreSQL
-Base de datos principal. `SCHEMA_VERSION = 19`. Migraciones automáticas en startup (`app/db/migrations.py`), con Alembic como trail de auditoría (`backend/alembic/`). Nunca hacer cambios de schema fuera de este mecanismo.
+Main database. `SCHEMA_VERSION = 19`. Automatic migrations at startup (`app/db/migrations.py`), with Alembic as the audit trail (`backend/alembic/`). Never make schema changes outside this mechanism.
 
 ### Worker (app/workers/scheduler_worker.py)
-Proceso separado. Ejecuta jobs programados: ingestion refresh, archive/observe/auto-promote del pipeline Progol. Controlable via `POST /api/worker/scheduler/run-once` (requiere auth cuando hay credenciales).
+Separate process. Runs scheduled jobs: ingestion refresh, archive/observe/auto-promote of the Progol pipeline. Controllable via `POST /api/worker/scheduler/run-once` (requires auth when credentials exist).
 
 ### IngestionService
-Núcleo del pipeline de datos. Orquesta connectors → parsers → normalization → entity resolution → persistencia. 10+ servicios dependen de él. **No modificar sin tests exhaustivos.**
+Core of the data pipeline. Orchestrates connectors → parsers → normalization → entity resolution → persistence. 10+ services depend on it. **Do not modify without exhaustive tests.**
 
 ### PredictionService
-Genera probabilidades y bandas de confianza. Contiene el modelo XGBoost cargado, la lógica Poisson, el cálculo de anchor, el rationale y el diagnóstico de anchor gap. **Código más crítico del sistema.**
+Generates probabilities and confidence bands. Contains the loaded XGBoost model, the Poisson logic, the anchor computation, the rationale and the anchor gap diagnostic. **The most critical code in the system.**
 
 ### TicketOptimizer
-Selecciona la boleta óptima dados los picks y los parámetros de cobertura. Determinista y auditado. **No modificar sin demostrar equivalencia exacta.**
+Selects the optimal ticket given the picks and coverage parameters. Deterministic and audited. **Do not modify without demonstrating exact equivalence.**
 
 ### SchedulerService / CurrentProgolService
-Gestionan el ciclo de vida de la slate activa: detect → observe → propose → auto-promote. Driver del flujo Progol.
+Manage the active slate's lifecycle: detect → observe → propose → auto-promote. Driver of the Progol flow.
 
 ### AdaptiveDataset + RetrainingGate
-Acumulan resultados de jornadas completas como dataset de entrenamiento. La gate evalúa readiness antes de permitir un retrain real. Ver `docs/ml_pipeline.md`.
+Accumulate results from complete jornadas as a training dataset. The gate evaluates readiness before allowing a real retrain. See `docs/ml_pipeline.md`.
 
 ### NeuralBaselineService
-Experimental offline. `is_production=False`. No integrado en predicciones de producción.
+Experimental, offline. `is_production=False`. Not integrated into production predictions.
 
 ---
 
-## Clasificación de módulos
+## Module classification
 
 ### DO_NOT_TOUCH_CRITICAL
-Cambios aquí sin tests fuertes pueden romper predicciones, tickets o integridad de datos silenciosamente.
+Changes here without strong tests can silently break predictions, tickets or data integrity.
 
-| Módulo | Razón |
+| Module | Reason |
 |---|---|
-| `prediction_service.py` | Probabilidades, bandas, rationale, persistencia |
-| `feature_service.py` | Feature engineering del modelo XGBoost |
-| `ticket_optimizer.py` | Selección de boleta — determinismo auditado |
-| `ticket_recommendation_service.py` | Cobertura + recomendación |
-| `ingestion_service.py` | Pipeline de datos — 10+ dependientes |
+| `prediction_service.py` | Probabilities, bands, rationale, persistence |
+| `feature_service.py` | Feature engineering for the XGBoost model |
+| `ticket_optimizer.py` | Ticket selection — audited determinism |
+| `ticket_recommendation_service.py` | Coverage + recommendation |
+| `ingestion_service.py` | Data pipeline — 10+ dependents |
 | `model_training_service.py` | XGBoost train/eval/walk-forward |
-| `model_training_artifacts.py` | I/O de artefactos — serialización crítica |
-| `model_training_math.py` | Fundamentos estadísticos |
-| `model_training_metrics.py` | Métricas walk-forward |
-| `current_progol_service.py` | Contexto activo Progol — driver del worker |
-| `slate_proposal_service.py` | Pipeline observe→auto-promote |
-| `normalization_service.py` | Nombres canónicos — afecta todos los datos |
-| `scheduler_service.py` | Jobs programados |
-| `slate_service.py` | CRUD core de slates |
-| `calibration.py` | Calibración isotónica PAV |
+| `model_training_artifacts.py` | Artifact I/O — critical serialization |
+| `model_training_math.py` | Statistical foundations |
+| `model_training_metrics.py` | Walk-forward metrics |
+| `current_progol_service.py` | Active Progol context — worker driver |
+| `slate_proposal_service.py` | observe→auto-promote pipeline |
+| `normalization_service.py` | Canonical names — affects all data |
+| `scheduler_service.py` | Scheduled jobs |
+| `slate_service.py` | Core slate CRUD |
+| `calibration.py` | PAV isotonic calibration |
 | `drift.py` | PSI — drift detection |
-| `coverage.py` | Poisson Binomial — cobertura de ticket |
+| `coverage.py` | Poisson Binomial — ticket coverage |
 
-### ACTIVE (auxiliares wired)
-Activos y necesarios, pero modificables con menor riesgo si hay tests.
+### ACTIVE (wired auxiliaries)
+Active and needed, but modifiable with lower risk if there are tests.
 
-| Módulo | Rol |
+| Module | Role |
 |---|---|
-| `narrative_interpretation_service.py` | Extracción de señales de texto para evidence |
-| `adaptive_dataset_service.py` | Ensamblado de dataset de entrenamiento |
-| `adaptive_retraining_service.py` | Gate de readiness + ejecución de retrain |
-| `result_service.py` | Persistencia de resultados de partido |
-| `slate_refresh_service.py` | Refresh orquestado de slate |
-| `slate_discovery_service.py` | Descubrimiento de fixtures candidatos |
-| `jornada_scoring_service.py` | Métricas de scoring por jornada |
-| `history_import_service.py` | Wrapper de importación histórica |
-| `availability_service.py` | Wrapper de disponibilidad de jugadores |
-| `stats_service.py` | Wrapper de estadísticas |
-| `evidence_service.py` | CRUD de evidencias |
-| `source_service.py` | CRUD de fuentes |
-| `entity_resolution_service.py` | Deduplicación de entidades |
-| `progol_fixture_resolver.py` | Resolución de fixtures Progol |
-| `artifact_storage.py` | I/O S3/local de artefactos |
+| `narrative_interpretation_service.py` | Text-signal extraction for evidence |
+| `adaptive_dataset_service.py` | Training-dataset assembly |
+| `adaptive_retraining_service.py` | Readiness gate + retrain execution |
+| `result_service.py` | Match-result persistence |
+| `slate_refresh_service.py` | Orchestrated slate refresh |
+| `slate_discovery_service.py` | Candidate-fixture discovery |
+| `jornada_scoring_service.py` | Per-jornada scoring metrics |
+| `history_import_service.py` | Historical-import wrapper |
+| `availability_service.py` | Player-availability wrapper |
+| `stats_service.py` | Statistics wrapper |
+| `evidence_service.py` | Evidence CRUD |
+| `source_service.py` | Source CRUD |
+| `entity_resolution_service.py` | Entity deduplication |
+| `progol_fixture_resolver.py` | Progol fixture resolution |
+| `artifact_storage.py` | S3/local artifact I/O |
 
 ### EXPERIMENTAL_NOT_WIRED
-Presentes en el repo, accesibles por rutas o CLI, pero marcados como no-producción.
+Present in the repo, accessible via routes or CLI, but marked as non-production.
 
-| Módulo | Estado |
+| Module | State |
 |---|---|
-| `neural_baseline_service.py` | `is_production=False`; rutas `/training/neural/*` solo para introspección |
-| `expected_goals_service.py` | Solo CLI (`evaluate_xg`); no wired en rutas |
-| `expected_goals_features.py` | Dependencia de expected_goals_service |
+| `neural_baseline_service.py` | `is_production=False`; `/training/neural/*` routes for introspection only |
+| `expected_goals_service.py` | CLI only (`evaluate_xg`); not wired into routes |
+| `expected_goals_features.py` | Dependency of expected_goals_service |
 
-### Eliminados como dead code confirmado
-- `narrative_extractor.py` — cero referencias de producción
-- `stacking.py` — cero referencias de producción
-
----
-
-## composition_hash y slate_version
-
-`composition_hash` es un SHA-256 del listado ordenado de fixtures de una slate: `draw_code + home_team_id + away_team_id + competition_name`. Garantiza que cualquier cambio en la composición de partidos sea detectable.
-
-`slate_version` se incrementa cada vez que el `composition_hash` cambia para el mismo `draw_code`. Snapshots de predicción, tickets y jornada scores se vinculan a `(slate_id, composition_hash)`.
-
-**Regla crítica:** no modificar la lógica de cálculo de `composition_hash` sin una migración de schema y backfill controlado. Un cambio silencioso crearía una versión incompatible que invalidaría el historial de slates existentes sin aviso.
+### Removed as confirmed dead code
+- `narrative_extractor.py` — zero production references
+- `stacking.py` — zero production references
 
 ---
 
-## Diagrama de servicios Docker
+## composition_hash and slate_version
+
+`composition_hash` is a SHA-256 of the ordered fixture list of a slate: `draw_code + home_team_id + away_team_id + competition_name`. It guarantees that any change in the match composition is detectable.
+
+`slate_version` is incremented every time the `composition_hash` changes for the same `draw_code`. Prediction snapshots, tickets and jornada scores are linked to `(slate_id, composition_hash)`.
+
+**Critical rule:** do not modify the `composition_hash` computation logic without a schema migration and a controlled backfill. A silent change would create an incompatible version that would invalidate the history of existing slates without warning.
+
+---
+
+## Docker services diagram
 
 ```
 ┌─────────────────────────────────────────────┐
