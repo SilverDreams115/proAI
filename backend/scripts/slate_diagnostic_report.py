@@ -205,8 +205,8 @@ def main() -> int:
         )
         if raw and display and decision and decision_leaks_raw_probabilities(raw, display, decision):
             leak_alarms.append(
-                f"OPTIMIZER_USING_RAW_PROBABILITIES: {name} — decision={decision} sigue al raw "
-                f"pese a que display lo degradó a {display}."
+                f"OPTIMIZER_USING_RAW_PROBABILITIES: {name} — decision={decision} follows raw "
+                f"even though display downgraded it to {display}."
             )
 
     payload = {

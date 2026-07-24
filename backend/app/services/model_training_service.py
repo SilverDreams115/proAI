@@ -278,13 +278,13 @@ class ModelTrainingService(ModelTrainingArtifactsMixin):
             "draw_bias": 0.015,
         },
         "international-friendlies": {
-            # Fase 2 (2nd pass) — Opción B: los amistosos internacionales
-            # NUNCA se marcan "ready". La forma de selecciones nacionales
-            # oscila demasiado (rosters cambian partido a partido) para
-            # tratarlos como benchmark listo. Quedan en `context_only`: el
-            # modelo los califica con contexto, pero no como jugada simple
-            # segura. La capa de seguridad (sanity_service) sigue dando
-            # headroom de probabilidad solo cuando la evidencia es ALTA.
+            # Phase 2 (2nd pass) — Option B: international friendlies are
+            # NEVER marked "ready". National-team form swings too much
+            # (rosters change match to match) to treat them as a ready
+            # benchmark. They stay in `context_only`: the model scores them
+            # with context, but not as a safe simple pick. The safety layer
+            # (sanity_service) still grants probability headroom only when the
+            # evidence is HIGH.
             "competition_readiness": "context_only",
             "live_pick_allowed": False,
             "policy_reason": (

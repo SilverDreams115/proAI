@@ -1,17 +1,17 @@
 """Tests for JornadaScoringService and the scoring endpoints.
 
 Covers:
-  - Scoring completo (14/14 results) → is_complete=True, all metrics non-null.
-  - Scoring parcial (some results missing) → is_complete=False, partial metrics.
-  - Usa la predicción más reciente por match_id.
-  - Ignora predicciones con composition_hash diferente al slate.
-  - Ignora snapshots inválidos (is_valid=False).
-  - Calcula Brier score correctamente.
-  - Calcula métricas por confidence_band.
-  - Calcula ticket_hits distinguiendo simple/doble/triple.
-  - PG-2336-like sin resultados → 0 evaluables, is_complete=False.
-  - Predicciones históricas con slate_id=NULL son ignoradas por el scorer.
-  - Upsert: recompute actualiza el registro existente, no crea duplicado.
+  - Full scoring (14/14 results) → is_complete=True, all metrics non-null.
+  - Partial scoring (some results missing) → is_complete=False, partial metrics.
+  - Uses the most recent prediction per match_id.
+  - Ignores predictions whose composition_hash differs from the slate.
+  - Ignores invalid snapshots (is_valid=False).
+  - Computes the Brier score correctly.
+  - Computes metrics per confidence_band.
+  - Computes ticket_hits distinguishing simple/doble/triple.
+  - PG-2336-like with no results → 0 evaluable, is_complete=False.
+  - Historical predictions with slate_id=NULL are ignored by the scorer.
+  - Upsert: recompute updates the existing row, does not create a duplicate.
 """
 from __future__ import annotations
 

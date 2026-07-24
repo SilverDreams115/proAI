@@ -39,8 +39,8 @@ THESPORTSDB_LEAGUES: list[tuple[str, str, str, list[str]]] = [
     ("4346", "MLS", "United States", ["2024", "2025", "2026"]),
     ("4627", "Primera Division Chile", "Chile", ["2024", "2025", "2026"]),
     ("4633", "J1 League", "Japan", ["2024", "2025", "2026"]),
-    # International Friendlies covers the Progol amistosos (México vs
-    # Australia, EUA vs Senegal, Noruega vs Suecia, etc.). TheSportsDB
+    # International Friendlies covers the Progol friendlies (Mexico vs
+    # Australia, USA vs Senegal, Norway vs Sweden, etc.). TheSportsDB
     # league id 4562 is the only catalog that exposes national team
     # friendlies on the free tier — football-data.org leaves them out.
     # All friendlies for a year sit in round=1 so the connector's empty-
@@ -75,9 +75,9 @@ THESPORTSDB_LEAGUES: list[tuple[str, str, str, list[str]]] = [
     ("5513", "World Cup Qualifying AFC", "Asia", ["2026"]),
     # CONCACAF WCQ 2026: covers Canada, Mexico, USA qualifying rounds.
     ("5516", "World Cup Qualifying CONCACAF", "CONCACAF", ["2026"]),
-    # --- Bloque 2026-07-16: ligas que aparecían en Progol sin fuente y
-    # dejaban posiciones BLOQUEADO por LOW_EVIDENCE (PG-2342 audit). Ids
-    # verificados via lookupleague/search_all_leagues el 2026-07-16.
+    # --- Block 2026-07-16: leagues that appeared in Progol with no source
+    # and left positions BLOCKED by LOW_EVIDENCE (PG-2342 audit). Ids
+    # verified via lookupleague/search_all_leagues on 2026-07-16.
     # Norwegian Eliteserien (calendar-year): Kristiansund, Sarpsborg,
     # Fredrikstad, Lillestrom...
     ("4358", "Norwegian Eliteserien", "Norway", ["2024", "2025", "2026"]),
@@ -90,10 +90,10 @@ THESPORTSDB_LEAGUES: list[tuple[str, str, str, list[str]]] = [
     # Portuguese Primeira Liga (European split season): Braga, Benfica...
     ("4344", "Portuguese Primeira Liga", "Portugal", ["2024-2025", "2025-2026"]),
     # Colombian Liga DIMAYOR (Primera A, calendar-year): Millonarios,
-    # América de Cali... — cierra el hueco histórico de Colombia.
+    # América de Cali... — closes the historical gap for Colombia.
     ("4497", "Colombian Primera A", "Colombia", ["2024", "2025", "2026"]),
     # Argentinian Primera División (calendar-year): Rivadavia, Tigre... —
-    # cierra el hueco histórico de Argentina.
+    # closes the historical gap for Argentina.
     ("4406", "Argentinian Primera Division", "Argentina", ["2024", "2025", "2026"]),
 ]
 

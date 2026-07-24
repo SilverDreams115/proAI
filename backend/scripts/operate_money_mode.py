@@ -51,21 +51,21 @@ def _render_human(report: dict[str, Any]) -> str:
     lines.append("=" * 64)
     lines.append("OPERATIONAL MONEY MODE — read-only")
     lines.append(f"scope={report['scope']} slates={report['slate_count']} "
-                 f"jugables={report['playable_slate_count']} "
-                 f"bloqueadas={report['blocked_slate_count']}")
+                 f"playable={report['playable_slate_count']} "
+                 f"blocked={report['blocked_slate_count']}")
     lines.append("=" * 64)
     for entry in report["slates"]:
         st = entry["status"]
         lines.append("")
-        lines.append(f"SLATE      : {st['draw_code']} ({st['week_type']}, {st['match_count']} partidos)")
+        lines.append(f"SLATE      : {st['draw_code']} ({st['week_type']}, {st['match_count']} matches)")
         lines.append(f"STATUS     : prediction={st['prediction_status']} "
                      f"money_mode_ready={st['money_mode_ready']} "
-                     f"blockers={st['data_blockers'] or 'ninguno'}")
-        lines.append(f"DECISION   : {_decision_label(st['decision'])} (confianza={st['confidence']})")
+                     f"blockers={st['data_blockers'] or 'none'}")
+        lines.append(f"DECISION   : {_decision_label(st['decision'])} (confidence={st['confidence']})")
         lines.append(f"             {st['reason']}")
-        lines.append(f"RECOMMENDED: {st['recommended_ticket'] or 'ninguno'}")
-        lines.append(f"DO_NOT_SIMPLE: {st['do_not_simple_positions'] or 'ninguno'}")
-        lines.append(f"WARNINGS   : {st['warnings'] or 'ninguno'}")
+        lines.append(f"RECOMMENDED: {st['recommended_ticket'] or 'none'}")
+        lines.append(f"DO_NOT_SIMPLE: {st['do_not_simple_positions'] or 'none'}")
+        lines.append(f"WARNINGS   : {st['warnings'] or 'none'}")
         lines.append(f"WRITE_SAFETY: write_safety_ok={entry['write_safety_ok']}")
     rx = report.get("readiness_expansion_summary", {})
     rp = report.get("results_provider_status", {})
@@ -97,24 +97,24 @@ def _render_markdown(report: dict[str, Any]) -> str:
     if report.get("error"):
         return f"# Operational Money Mode\n\n**ERROR:** {report['error']}\n"
     out: list[str] = []
-    out.append("# Operational Money Mode — reporte accionable")
+    out.append("# Operational Money Mode — actionable report")
     out.append("")
-    out.append(f"- **Generado:** {report['generated_at']}")
+    out.append(f"- **Generated:** {report['generated_at']}")
     out.append(f"- **Scope:** {report['scope']}")
     out.append(f"- **Slates:** {report['slate_count']} · "
-               f"jugables: {report['playable_slate_count']} · "
-               f"bloqueadas: {report['blocked_slate_count']}")
-    out.append(f"- **Read-only:** sí · **counts delta cero:** "
-               f"{'sí' if report['counts_delta_zero'] else 'NO'} · "
+               f"playable: {report['playable_slate_count']} · "
+               f"blocked: {report['blocked_slate_count']}")
+    out.append(f"- **Read-only:** yes · **counts delta zero:** "
+               f"{'yes' if report['counts_delta_zero'] else 'NO'} · "
                f"**write-safety audit:** {'pass' if report['write_safety']['audit_passed'] else 'FAIL'}")
     out.append("")
-    out.append("| slate | tipo | partidos | decisión | boleto | predicción | NO SIMPLE |")
+    out.append("| slate | type | matches | decision | ticket | prediction | NO SIMPLE |")
     out.append("|---|---|---:|---|---|---|---|")
     for entry in report["slates"]:
         st = entry["status"]
         out.append(
             f"| {st['draw_code']} | {st['week_type']} | {st['match_count']} | "
-            f"**{_decision_label(st['decision'])}** | {st['recommended_ticket'] or 'ninguno'} | "
+            f"**{_decision_label(st['decision'])}** | {st['recommended_ticket'] or 'none'} | "
             f"{st['prediction_status']} | {len(st['do_not_simple_positions'])} pos |"
         )
     out.append("")
@@ -122,26 +122,26 @@ def _render_markdown(report: dict[str, Any]) -> str:
         st = entry["status"]
         out.append(f"## {st['draw_code']} → {_decision_label(st['decision'])}")
         out.append("")
-        out.append(f"- **Motivo:** {st['reason']}")
-        out.append(f"- **Boleto recomendado:** {st['recommended_ticket'] or 'ninguno'}")
-        out.append(f"- **Partidos NO SIMPLE:** {st['do_not_simple_positions'] or 'ninguno'}")
-        out.append(f"- **Revisión obligatoria:** {st['must_review_positions'] or 'ninguna'}")
-        out.append(f"- **Warnings:** {st['warnings'] or 'ninguno'}")
+        out.append(f"- **Reason:** {st['reason']}")
+        out.append(f"- **Recommended ticket:** {st['recommended_ticket'] or 'none'}")
+        out.append(f"- **NO SIMPLE matches:** {st['do_not_simple_positions'] or 'none'}")
+        out.append(f"- **Mandatory review:** {st['must_review_positions'] or 'none'}")
+        out.append(f"- **Warnings:** {st['warnings'] or 'none'}")
         out.append("")
     delta = report["counts_delta"]
     out.append("## Counts before/after")
     out.append("")
-    out.append("| tabla | before | after | delta |")
+    out.append("| table | before | after | delta |")
     out.append("|---|---:|---:|---:|")
     for name in report["counts_before"]:
         out.append(f"| {name} | {report['counts_before'][name]} | "
                    f"{report['counts_after'][name]} | {delta[name]} |")
     out.append("")
-    out.append("## Restricciones respetadas")
+    out.append("## Constraints respected")
     out.append("")
-    out.append("no full activation · no training · no optimizer productivo · no ticket "
+    out.append("no full activation · no training · no productive optimizer · no ticket "
                "integration real · no ticket/prediction/feature writes · no results apply · "
-               "no API-Football online · read-only + rollback · guardrail NO SIMPLE respetado.")
+               "no API-Football online · read-only + rollback · NO SIMPLE guardrail respected.")
     out.append("")
     return "\n".join(out)
 
@@ -174,7 +174,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.markdown:
         with open(args.markdown, "w", encoding="utf-8") as handle:
             handle.write(_render_markdown(report))
-        print(f"markdown escrito en {args.markdown}")
+        print(f"markdown written to {args.markdown}")
 
     if args.json:
         print(json.dumps(report, indent=2, sort_keys=True, default=str))

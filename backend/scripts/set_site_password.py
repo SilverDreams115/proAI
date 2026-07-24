@@ -57,13 +57,13 @@ def main() -> int:
     args = parser.parse_args()
     env_file = Path(args.env_file)
 
-    password = getpass.getpass("Nueva contraseña (no se muestra): ")
+    password = getpass.getpass("New password (hidden): ")
     if len(password) < 8:
-        print("ABORTADO: usa al menos 8 caracteres.")
+        print("ABORTED: use at least 8 characters.")
         return 2
-    confirm = getpass.getpass("Confírmala: ")
+    confirm = getpass.getpass("Confirm it: ")
     if password != confirm:
-        print("ABORTADO: las contraseñas no coinciden.")
+        print("ABORTED: the passwords do not match.")
         return 2
 
     new_hash = hash_password(password)

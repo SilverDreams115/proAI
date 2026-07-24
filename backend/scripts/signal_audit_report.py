@@ -347,7 +347,7 @@ def main() -> int:
         return 0
 
     # Human-readable report.
-    print(f"=== Auditoría de señal base · slate {args.slate_id} ===\n")
+    print(f"=== Base signal audit · slate {args.slate_id} ===\n")
     for r in rows:
         print(f"#{r['position']:>2} {r['home']} vs {r['away']}  [{r['competition']}]")
         print(f"     base_pick={r['base_pick']}  raw_argmax={r['raw_argmax']}  decision_argmax={r['decision_argmax']}  sign_changed={r['sign_changed']}")
@@ -361,7 +361,7 @@ def main() -> int:
             print(f"     ⚠ WARNINGS: {', '.join(r['signal_warnings'])}")
         print()
 
-    print("=== Resumen del slate ===")
+    print("=== Slate summary ===")
     for k, v in summary.items():
         print(f"  {k}: {v}")
     return 0

@@ -43,7 +43,7 @@ def build_template(session, draw_code: str) -> dict:
     return {
         "draw_code": slate.draw_code,
         "source": "manual_official",
-        "source_note": "Pronósticos/TuLotero - pendiente de llenar (sign + score por posición)",
+        "source_note": "Pronósticos/TuLotero - pending fill-in (sign + score per position)",
         "results": results,
     }
 

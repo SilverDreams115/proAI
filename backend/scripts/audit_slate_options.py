@@ -27,7 +27,7 @@ from app.services.slate_options_service import (
 
 def _print_slate(report: dict[str, Any]) -> None:
     print(f"== {report['draw_code']} ({report['week_type']}) ==")
-    print(f"  Money Mode: {report['money_mode_decision']} · acción: {report['recommended_action']}")
+    print(f"  Money Mode: {report['money_mode_decision']} · action: {report['recommended_action']}")
     print(f"  pricing: {report['pricing_note']}")
     for opt in report["options"]:
         cost = opt["estimated_cost"]

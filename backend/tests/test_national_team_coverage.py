@@ -824,8 +824,8 @@ class TestCompetitionPolicyForFriendlyVariants:
         return svc.competition_operating_policy(name)
 
     def test_international_friendlies_is_context_only(self):
-        # Opción B del 2º pase: los amistosos nunca son "ready" — quedan
-        # en context_only y no se permiten como live pick fuerte.
+        # Option B of the 2nd pass: friendlies are never "ready" — they stay
+        # in context_only and are not allowed as a strong live pick.
         p = self._policy("International Friendlies")
         assert p["competition_readiness"] == "context_only"
         assert p["live_pick_allowed"] is False

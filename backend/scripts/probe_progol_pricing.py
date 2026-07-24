@@ -36,10 +36,10 @@ def main(argv: list[str] | None = None) -> int:
         "pricing_status": status,
         "example": example,
         "note": (
-            "Precio NO verificado: valida manualmente contra TuLotero / Pronósticos "
-            "y actualiza progol_pricing.py (base_price_mxn + base_price_verified=true)."
+            "Price NOT verified: manually validate against TuLotero / Pronósticos "
+            "and update progol_pricing.py (base_price_mxn + base_price_verified=true)."
             if not status["any_verified"]
-            else "Hay precios verificados en config."
+            else "There are verified prices in config."
         ),
     }
 

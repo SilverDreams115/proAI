@@ -249,9 +249,9 @@ def main() -> int:
 
     print(json.dumps(report.as_dict(), ensure_ascii=False, indent=2))
     if report.dry_run:
-        print("\n[dry-run] No se escribió nada. Usa --apply para aplicar.")
+        print("\n[dry-run] Nothing was written. Use --apply to apply.")
     else:
-        print(f"\n[apply] {report.recorded} resultado(s) escrito(s).")
+        print(f"\n[apply] {report.recorded} result(s) written.")
     return 0
 
 

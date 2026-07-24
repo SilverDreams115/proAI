@@ -633,11 +633,11 @@ def main(argv: list[str] | None = None) -> int:
             Path(args.json_out).write_text(
                 json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
             )
-            print(f"\n[dry-run] Audit JSON escrito en {args.json_out}")
+            print(f"\n[dry-run] Audit JSON written to {args.json_out}")
         except OSError as exc:
             # Non-fatal: stdout above is the source of truth. A read-only
             # or uid-mismatched mount must not fail the read-only audit.
-            print(f"\n[dry-run] No se pudo escribir {args.json_out} ({exc}); usa stdout.")
+            print(f"\n[dry-run] Could not write {args.json_out} ({exc}); using stdout.")
     print("\n[dry-run] 0 escrituras en DB. Nada aplicado, nada entrenado.")
     return 0
 

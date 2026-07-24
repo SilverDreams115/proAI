@@ -45,22 +45,22 @@ def main() -> int:
 
     password_hash = os.getenv("PROAI_AUTH_PASSWORD_HASH") or _hash_from_env_file(Path(args.env_file))
     if not password_hash:
-        print("NO_HASH_FOUND: PROAI_AUTH_PASSWORD_HASH no está en el entorno ni en el .env.")
+        print("NO_HASH_FOUND: PROAI_AUTH_PASSWORD_HASH is not in the environment or the .env.")
         return 2
     if not is_valid_password_hash(password_hash):
         # Do not print the hash; only its shape so we can debug format issues.
         print(
-            "INVALID_HASH_FORMAT: el hash existe pero no tiene el formato "
+            "INVALID_HASH_FORMAT: the hash exists but does not match the format "
             "pbkdf2_sha256$iter$salt$digest "
-            f"(longitud={len(password_hash)})."
+            f"(length={len(password_hash)})."
         )
         return 3
 
-    password = getpass.getpass("Password (no se muestra): ")
+    password = getpass.getpass("Password (hidden): ")
     if verify_password(password, password_hash):
-        print("OK: la contraseña COINCIDE con el hash desplegado.")
+        print("OK: the password MATCHES the deployed hash.")
         return 0
-    print("FAIL: la contraseña NO coincide con el hash desplegado.")
+    print("FAIL: the password does NOT match the deployed hash.")
     return 1
 
 

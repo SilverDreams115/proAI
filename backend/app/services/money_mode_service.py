@@ -63,8 +63,8 @@ _CODE_TO_SIGNAL = {"1": "L", "X": "E", "2": "V"}
 # as a fraction of slate size, above which the slate is not playable for money.
 _NO_JUGAR_RESIDUAL_RATIO = 0.34
 
-# Costo unitario por combinación: NO configurado en el sistema. Mientras no
-# exista una tarifa real, estimated_cost permanece null y se documenta.
+# Unit cost per combination: NOT configured in the system. Until a real
+# tariff exists, estimated_cost stays null and this is documented.
 _COST_NOTE = "costo unitario por combinacion no configurado"
 
 
