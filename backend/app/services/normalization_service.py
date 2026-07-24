@@ -170,13 +170,9 @@ class NormalizationService:
         # emits the short form ("Kalmar", "Malmö", "Sarpsborg"); without these
         # both forms produced different slugs and the TSDB ingest created a
         # duplicate team, splitting each side's recent form across two rows.
-        # Pin both spellings to the canonical slug so resolve_team unifies them.
-        "kalmar": "kalmar-ff",
+        # The short forms and "malmo ff"/"sarpsborg 08" are already pinned
+        # above; only the "Kalmar FF" long form was still missing.
         "kalmar ff": "kalmar-ff",
-        "malmo": "malmo-ff",
-        "malmo ff": "malmo-ff",
-        "sarpsborg": "sarpsborg-08",
-        "sarpsborg 08": "sarpsborg-08",
         # Uruguayan CA Cerro (Montevideo). TSDB writes bare "Cerro"; the
         # canonical row is "Ca Cerro". Paraguayan Cerro Porteño normalizes
         # to "cerro-porteno" and is unaffected.

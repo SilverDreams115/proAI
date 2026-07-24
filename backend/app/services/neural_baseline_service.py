@@ -350,7 +350,6 @@ class _NumpyMLP:
         best_val = float("inf")
         best_state: tuple[list[np.ndarray], list[np.ndarray]] | None = None
         epochs_since_improve = 0
-        use_es = X_val is not None and y_val is not None and patience is not None
         for _ in range(epochs):
             idx = rng.permutation(n)
             epoch_loss = 0.0
@@ -363,7 +362,7 @@ class _NumpyMLP:
                 self.backward(y[bi], lr, l2=l2, sample_weights=sw)
                 n_batches += 1
             history.append(epoch_loss / max(n_batches, 1))
-            if use_es:
+            if X_val is not None and y_val is not None and patience is not None:
                 val_probs = self.forward(X_val)
                 val_ce = self._cross_entropy(val_probs, y_val)
                 if val_ce < best_val - 1e-6:
