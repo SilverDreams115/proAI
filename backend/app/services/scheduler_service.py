@@ -5,6 +5,7 @@ from typing import Callable
 from time import perf_counter
 
 from app.core.errors import NotFoundError
+from app.core.errors import RunDueJobsBudgetExceeded
 from app.core.metrics import metrics_store
 from app.core.settings import settings
 from app.db.session import managed_transaction
@@ -108,6 +109,30 @@ class SchedulerService:
                 continue
             try:
                 run = self._run_job(job)
+            except RunDueJobsBudgetExceeded:
+                # The wall-clock budget fired mid-job. It subclasses
+                # BaseException specifically to skip the except Exception
+                # below and unwind the rest of this cycle's batch (see its
+                # docstring) — but this job still needs the same fast-retry
+                # backoff an ordinary failure gets below. Without this,
+                # claim_job's lease (already committed as next_run_at, up to
+                # a full interval_minutes — e.g. a week for weekly sources)
+                # is the last write this job ever gets, so it silently sits
+                # unretried until that lease expires.
+                logger.warning(
+                    "scheduled job interrupted by wall-clock budget",
+                    extra={
+                        "event": "scheduled_job_budget_exceeded",
+                        "job_name": job.job_name,
+                        "source_id": getattr(job, "source_id", None),
+                    },
+                )
+                self.repository.session.rollback()
+                job.last_run_at = now
+                job.next_run_at = now + timedelta(minutes=min(job.interval_minutes, 5))
+                with managed_transaction(self.repository.session):
+                    self.repository.save_job(job)
+                raise
             except Exception as exc:
                 logger.exception(
                     "scheduled job execution failed",

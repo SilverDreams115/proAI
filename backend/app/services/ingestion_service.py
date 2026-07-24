@@ -16,6 +16,7 @@ from app.connectors.progol_catalog_html import ProgolCatalogHtmlConnector
 from app.connectors.registry import connector_registry
 from app.connectors.thesportsdb import TheSportsDbSeasonConnector
 from app.core.errors import NotFoundError
+from app.core.errors import RunDueJobsBudgetExceeded
 from app.core.errors import ValidationError
 from app.core.metrics import metrics_store
 from app.db.session import managed_transaction
@@ -112,6 +113,18 @@ class IngestionService:
                     duration_ms=(perf_counter() - started) * 1000,
                 )
                 return completed_run
+        except RunDueJobsBudgetExceeded:
+            # The worker's wall-clock budget fired mid-run. This propagates
+            # past the guard below (it subclasses BaseException precisely to
+            # do so), so without this branch the run row is left orphaned at
+            # status "running" forever and the source's scheduled job never
+            # gets the fast failure retry — see RunDueJobsBudgetExceeded's
+            # docstring. Mark it failed like any other interrupted run, then
+            # re-raise so the batch still unwinds as intended.
+            self.repository.session.rollback()
+            with managed_transaction(self.repository.session):
+                self.repository.mark_run_failure(run, "interrupted: wall-clock budget exceeded")
+            raise
         except Exception as exc:
             # The run row gets marked failed below, but without a log
             # entry the traceback is gone — operators only see "status:
@@ -164,6 +177,13 @@ class IngestionService:
                     duration_ms=(perf_counter() - started) * 1000,
                 )
                 return completed_run
+        except RunDueJobsBudgetExceeded:
+            # See the matching branch in run_for_source: without this the
+            # run row would be left orphaned at status "running" forever.
+            self.repository.session.rollback()
+            with managed_transaction(self.repository.session):
+                self.repository.mark_run_failure(run, "interrupted: wall-clock budget exceeded")
+            raise
         except Exception as exc:
             logger.exception(
                 "documents-only ingestion run failed",

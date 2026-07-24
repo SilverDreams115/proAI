@@ -1,7 +1,11 @@
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
+import pytest
+
 from app.connectors.base import SourceDocument
+from app.connectors.registry import connector_registry
+from app.core.errors import RunDueJobsBudgetExceeded
 from app.models.tables import SourceModel
 from app.repositories.scheduler_repository import SchedulerRepository
 from app.schemas.scheduler import ScheduledJobCreate
@@ -213,3 +217,108 @@ def test_worker_run_loop_records_failed_iterations(monkeypatch) -> None:
     assert summary.iterations == 2
     assert summary.executed_runs == 2
     assert summary.failed_iterations == 1
+
+
+def test_scheduler_fast_retries_job_interrupted_by_budget(monkeypatch) -> None:
+    """A job interrupted by the wall-clock budget must still get the same
+    fast failure retry as an ordinary error, not keep claim_job's original
+    lease (up to a full interval_minutes — e.g. a week for weekly sources).
+    """
+    now = datetime.now(timezone.utc)
+    job = SimpleNamespace(
+        id="job-1",
+        source_id="source-1",
+        job_name="refresh-source-1",
+        interval_minutes=10080,  # weekly source, like the TSDB refreshes
+        next_run_at=now - timedelta(minutes=1),
+        last_run_at=None,
+    )
+
+    class StubRepository:
+        def __init__(self) -> None:
+            self.session = StubSession()
+            self.saved_jobs: list[SimpleNamespace] = []
+
+        def list_due_jobs(self, current_now):
+            return [job]
+
+        def claim_job(self, job_id, expected_next_run_at, lease_until):
+            return True
+
+        def save_job(self, current_job):
+            self.saved_jobs.append(SimpleNamespace(**vars(current_job)))
+            return current_job
+
+    repository = StubRepository()
+    ingestion_repository = SimpleNamespace()
+    scheduler = SchedulerService(repository, ingestion_repository)
+    stub_ingestion = SimpleNamespace(
+        run_for_source=lambda source_id: (_ for _ in ()).throw(RunDueJobsBudgetExceeded())
+    )
+
+    monkeypatch.setattr("app.services.scheduler_service.IngestionService", lambda _: stub_ingestion)
+
+    with pytest.raises(RunDueJobsBudgetExceeded):
+        scheduler.run_due_jobs()
+
+    assert len(repository.saved_jobs) == 1
+    saved = repository.saved_jobs[0]
+    assert saved.last_run_at is not None
+    # Fast retry (min(interval_minutes, 5) = 5 min), not the full weekly lease.
+    assert saved.next_run_at <= saved.last_run_at + timedelta(minutes=5, seconds=1)
+
+
+def test_ingestion_run_for_source_marks_failed_when_budget_exceeded(tmp_path) -> None:
+    """The ingestion_runs row must not stay orphaned at status "running"
+    when the worker's wall-clock budget interrupts the fetch mid-run.
+    """
+    from app.db import session as db_session
+    from app.db.migrations import run_migrations
+    from app.repositories.ingestion_repository import IngestionRepository
+
+    db_session.configure_session(f"sqlite:///{tmp_path / 'budget_exceeded.db'}")
+    run_migrations(db_session.engine)
+    session = db_session.SessionLocal()
+    try:
+        source = SourceModel(
+            name="Budget Exceeded Source",
+            base_url="https://example.com/budget",
+            kind="html_page",
+            parser_profile="generic",
+            is_active=True,
+        )
+        session.add(source)
+        session.flush()
+        session.commit()
+
+        class BudgetBlowingConnector:
+            name = source.name
+            kind = "html_page"
+            base_url = source.base_url
+            description = "Connector that gets interrupted by the wall-clock budget."
+
+            def metadata(self):
+                from app.connectors.base import ConnectorMetadata
+
+                return ConnectorMetadata(
+                    name=self.name,
+                    kind=self.kind,
+                    base_url=self.base_url,
+                    description=self.description,
+                )
+
+            def fetch(self) -> list[SourceDocument]:
+                raise RunDueJobsBudgetExceeded()
+
+        connector_registry.register(BudgetBlowingConnector())
+
+        service = IngestionService(IngestionRepository(session))
+        with pytest.raises(RunDueJobsBudgetExceeded):
+            service.run_for_source(source.id)
+
+        runs = IngestionRepository(session).list_runs()
+        assert len(runs) == 1
+        assert runs[0].status == "failed"
+        assert runs[0].error_message == "interrupted: wall-clock budget exceeded"
+    finally:
+        session.close()

@@ -9,6 +9,7 @@ from pathlib import Path
 from time import perf_counter
 import logging
 
+from app.core.errors import RunDueJobsBudgetExceeded
 from app.core.logging import configure_logging
 from app.core.settings import settings
 from app.db import session as db_session
@@ -36,20 +37,15 @@ WORKER_HEARTBEAT_PATH = Path("/data/scheduler_worker_heartbeat.json")
 # even though every other worker duty is fine. SIGALRM interrupts the blocked
 # read in the main thread; the cycle then completes and the heartbeat stays
 # fresh. Kept comfortably below health_worker_poll_critical_age_seconds (300s).
-RUN_DUE_JOBS_BUDGET_SECONDS = 90
-
-
-class _RunDueJobsBudgetExceeded(BaseException):
-    """Raised by the SIGALRM handler to unblock a stalled source refresh.
-
-    Subclasses BaseException (not Exception) so it propagates past the
-    per-job ``except Exception`` guard inside SchedulerService.run_due_jobs
-    and unwinds the whole batch instead of being swallowed as one job's
-    failure."""
+# 120s (not the original 90s) because even a single-season TheSportsDB
+# refresh for a full round-robin league (~38-42 rounds, 2s inter-request
+# delay to respect the free-tier rate limit) legitimately needs slightly
+# more than 90s end to end — 90s was cutting those off on every attempt.
+RUN_DUE_JOBS_BUDGET_SECONDS = 120
 
 
 def _raise_run_due_jobs_budget(signum, frame):  # pragma: no cover - signal path
-    raise _RunDueJobsBudgetExceeded()
+    raise RunDueJobsBudgetExceeded()
 
 
 @dataclass(slots=True)
@@ -160,7 +156,7 @@ class SchedulerWorker:
 
             try:
                 runs = service.run_due_jobs(on_job_processed=_beat)
-            except _RunDueJobsBudgetExceeded:
+            except RunDueJobsBudgetExceeded:
                 session.rollback()
                 logger.warning(
                     "run_due_jobs exceeded wall-clock budget; skipped remaining "
