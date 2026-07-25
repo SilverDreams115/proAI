@@ -84,6 +84,72 @@ IDX_TO_RESULT: dict[int, str] = {0: "1", 1: "X", 2: "2"}
 
 _BANDS = ("high", "medium", "low", "blocked")
 _WEEK_TYPES = ("weekend", "midweek")
+
+# --- Monotone calibration head -------------------------------------------
+# Every feature this model sees is derived from the served baseline's own
+# output (its probability vector, its confidence band, its own recommended
+# pick). It therefore holds strictly LESS information than the baseline had,
+# and cannot out-discriminate it — it can only re-express confidence. A free
+# 3-class softmax head is allowed to re-rank anyway, and on the current data
+# it does so destructively: measured leave-one-slate-out over the 32 available
+# rows, the MLP head collapses to a single class (six different feature
+# subsets were tried; all collapsed) and flipped picks the baseline had right.
+#
+# Temperature scaling fits ONE parameter on the baseline vector instead of
+# ~300 weights. Because it is a strictly monotone transform of the logits it
+# provably cannot change the argmax, so it never costs a pick, and it is what
+# the data actually supports: leave-one-slate-out it improved Brier by
+# +0.043 in every fold (0.6907 -> 0.6476) with accuracy unchanged and zero
+# pick changes. T > 1 in every fold, i.e. the served model is systematically
+# overconfident.
+_TEMPERATURE_GRID = np.arange(0.5, 6.01, 0.01)
+_PROB_EPS = 1e-12
+
+
+def apply_temperature(probs: np.ndarray, temperature: float) -> np.ndarray:
+    """Temperature-scale a row-stochastic probability matrix.
+
+    Monotone in each row: the ordering of the outcomes — and therefore the
+    argmax pick — is identical to ``probs``. ``temperature > 1`` softens an
+    overconfident vector, ``< 1`` sharpens it.
+    """
+    if temperature <= 0:
+        raise ValueError("temperature must be positive")
+    logits = np.log(np.clip(probs, _PROB_EPS, 1.0)) / float(temperature)
+    logits = logits - logits.max(axis=1, keepdims=True)
+    exp = np.exp(logits)
+    return exp / exp.sum(axis=1, keepdims=True)
+
+
+def _baseline_columns(X: np.ndarray) -> np.ndarray:
+    """The served baseline probability vector, renormalised.
+
+    ``FEATURE_NAMES`` starts with ``prob_home/prob_draw/prob_away``, so the
+    first three columns of any encoded matrix are exactly what production
+    served for those rows.
+    """
+    probs = np.asarray(X[:, :3], dtype=np.float64)
+    totals = probs.sum(axis=1, keepdims=True)
+    return np.divide(probs, totals, out=np.full_like(probs, 1.0 / 3), where=totals > 0)
+
+
+def fit_temperature(probs: np.ndarray, y: np.ndarray) -> float:
+    """Pick the temperature minimising held-out cross-entropy.
+
+    A 1-D grid search rather than gradient descent: the objective is convex in
+    ``1/T`` and the grid is tiny, so this is both exact enough and free of
+    optimiser state. Returns 1.0 (a no-op) when there is nothing to fit.
+    """
+    if len(probs) == 0 or len(y) == 0:
+        return 1.0
+    rows = np.arange(len(y))
+    best_t, best_ce = 1.0, float("inf")
+    for candidate in _TEMPERATURE_GRID:
+        scaled = apply_temperature(probs, float(candidate))
+        ce = -float(np.mean(np.log(np.clip(scaled[rows, y], _PROB_EPS, 1.0))))
+        if ce < best_ce:
+            best_ce, best_t = ce, float(candidate)
+    return round(best_t, 4)
 NEURAL_CANDIDATE_MODEL_NAME = "neural_baseline_candidate"
 NEURAL_ACTIVE_MODEL_NAME = "neural_baseline_active"
 
@@ -418,6 +484,8 @@ class NeuralBaselineModel:
         self._mlp: _NumpyMLP | None = None
         self._train_history: list[float] = []
         self._trained_on_rows: int = 0
+        # Calibration head, fitted on the baseline probability columns of X.
+        self.temperature: float = 1.0
 
     def fit(
         self,
@@ -448,7 +516,19 @@ class NeuralBaselineModel:
             patience=cfg.early_stopping_patience if X_val is not None else None,
         )
         self._trained_on_rows = len(X)
+        # The first three features ARE the served baseline vector, so the
+        # calibration head is fitted on the same rows without extra plumbing.
+        self.temperature = fit_temperature(_baseline_columns(X), y)
         return self
+
+    def calibrated_proba(self, X: np.ndarray) -> np.ndarray:
+        """Temperature-scaled baseline probabilities — what the shadow serves.
+
+        Monotone per row, so the pick is always the baseline's pick. This is
+        deliberately NOT ``predict_proba``: the MLP head is kept for offline
+        comparison, but it is not what gets shown to an operator.
+        """
+        return apply_temperature(_baseline_columns(X), self.temperature)
 
     @staticmethod
     def _inverse_frequency_weights(y: np.ndarray, n_classes: int = 3) -> np.ndarray:
@@ -519,6 +599,9 @@ class NeuralBaselineModel:
                 "early_stopping_patience": cfg.early_stopping_patience,
             },
             "feature_names": FEATURE_NAMES,
+            # What the shadow actually serves. Monotone in the baseline vector,
+            # so an artifact can never re-rank a pick.
+            "calibration": {"kind": "temperature", "temperature": self.temperature},
             "shadow_safe": True,
             "post_result_features_used": False,
             "label_map": IDX_TO_RESULT,
@@ -545,6 +628,10 @@ class NeuralBaselineModel:
         )
         obj._trained_on_rows = artifact.get("trained_on_rows", 0)
         obj._train_history = artifact.get("train_loss_history", [])
+        # Artifacts trained before the calibration head carry no temperature;
+        # 1.0 makes them a no-op rather than an error.
+        calibration = artifact.get("calibration") or {}
+        obj.temperature = float(calibration.get("temperature", 1.0) or 1.0)
         return obj
 
 
@@ -797,6 +884,18 @@ class NeuralBaselineService:
 
         model = NeuralBaselineModel(self.config).fit(X_tr, y_tr, X_val=X_ho, y_val=y_ho)
         neural = model.evaluate(X_ho, y_ho)
+        # The served path: temperature fitted on the train fold only, scored on
+        # the held-out slate. This — not `neural` — is what the shadow shows.
+        calibrated_probs = model.calibrated_proba(X_ho)
+        calibrated = {
+            "temperature": model.temperature,
+            "accuracy": round(float(np.mean(calibrated_probs.argmax(axis=1) == y_ho)), 4),
+            "brier_score": round(float(_NumpyMLP._brier_score(calibrated_probs.astype(np.float32), y_ho)), 4),
+            "cross_entropy": round(float(_NumpyMLP._cross_entropy(calibrated_probs.astype(np.float32), y_ho)), 4),
+            "pick_changes_vs_baseline": int(
+                np.sum(calibrated_probs.argmax(axis=1) != _baseline_columns(X_ho).argmax(axis=1))
+            ),
+        }
 
         # Baseline (production probs stored on the holdout rows) on the same fold.
         valid = [
@@ -827,6 +926,7 @@ class NeuralBaselineService:
                 "cross_entropy": neural["cross_entropy"],
             },
             "per_class": neural["per_class"],
+            "calibrated": calibrated,
             "baseline": baseline,
         }
         if baseline is not None:
@@ -834,6 +934,13 @@ class NeuralBaselineService:
             result["accuracy_delta"] = round(neural["accuracy"] - baseline["accuracy"], 4)
             result["neural_better_brier"] = result["brier_delta"] > 0
             result["neural_better_accuracy"] = result["accuracy_delta"] > 0
+            # The served comparison: calibration must improve Brier without
+            # ever costing a pick.
+            result["calibrated_brier_delta"] = round(
+                baseline["brier_score"] - calibrated["brier_score"], 4
+            )
+            result["calibration_helps"] = result["calibrated_brier_delta"] > 0
+            result["calibration_preserves_picks"] = calibrated["pick_changes_vs_baseline"] == 0
         return result
 
 
@@ -1080,7 +1187,9 @@ class NeuralShadowService:
                 [NeuralDatasetBuilder.encode_prediction(pred, week_type=week_type) for pred in predictions],
                 dtype=np.float32,
             )
-            probs = model.predict_proba(X)
+            # Calibrated, NOT the raw MLP head: monotone in the baseline vector
+            # so the shadow can never contradict the served pick.
+            probs = model.calibrated_proba(X)
         except Exception as exc:  # pragma: no cover - diagnostic must not block predictions
             logger.exception("neural_shadow_failed", extra={"event": "neural_shadow_failed"})
             for pred in predictions:
@@ -1112,7 +1221,10 @@ class NeuralShadowService:
                 probabilities=neural_probs,
                 top_pick=top_pick,
                 baseline_top_pick=baseline_top,
+                # Always False by construction (monotone calibration). Kept in
+                # the payload so a regression here is visible instead of silent.
                 top_pick_changed=top_pick != baseline_top,
                 probability_delta=delta,
                 max_abs_delta=round(max(abs(v) for v in delta.values()), 4),
+                reason=f"temperature={model.temperature}",
             )

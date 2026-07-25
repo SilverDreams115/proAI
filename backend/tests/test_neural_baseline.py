@@ -31,11 +31,14 @@ from app.services.neural_baseline_service import (
     NEURAL_CANDIDATE_MODEL_NAME,
     RESULT_TO_IDX,
     NeuralBaselineConfig,
+    NeuralBaselineModel,
     NeuralBaselineRegistryService,
     NeuralShadowService,
     NeuralBaselineService,
     NeuralDatasetBuilder,
     _NumpyMLP,
+    apply_temperature,
+    fit_temperature,
 )
 from app.domain.entities import Outcome
 from app.schemas.prediction import MatchPredictionResponse
@@ -537,6 +540,125 @@ class TestNeuralShadow:
         assert pred.neural_shadow.status == "ok"
         assert pred.neural_shadow.probabilities is not None
         assert pred.decision_probabilities == {"L": 0.6, "E": 0.25, "V": 0.15}
+
+    def test_shadow_never_contradicts_the_served_pick(self, db):
+        """The shadow serves a monotone recalibration, so it must agree with
+        the baseline's pick on every position — a shadow that re-ranks would
+        be advising against production with strictly less information."""
+        from app.repositories.training_repository import TrainingRepository
+
+        registry = NeuralBaselineRegistryService(
+            rows=_synthetic_rows(12),
+            training_repository=TrainingRepository(db),
+            config=_LOW_CONFIG,
+        )
+        candidate = registry.train_candidate()
+        registry.promote_candidate(candidate_run_id=candidate["candidate_run_id"], force=True)
+        db.commit()
+
+        vectors = [
+            {"L": 0.6, "E": 0.25, "V": 0.15},
+            {"L": 0.2, "E": 0.5, "V": 0.3},
+            {"L": 0.15, "E": 0.25, "V": 0.6},
+            {"L": 0.34, "E": 0.33, "V": 0.33},
+        ]
+        preds = [
+            MatchPredictionResponse(
+                slate_id="slate-1",
+                position=idx + 1,
+                match_id=str(uuid4()),
+                competition_name="Liga Test",
+                home_team_name="Home",
+                away_team_name="Away",
+                generated_at=datetime.now(timezone.utc),
+                home_probability=vec["L"],
+                draw_probability=vec["E"],
+                away_probability=vec["V"],
+                recommended_outcome=Outcome.HOME,
+                competition_readiness="ready",
+                live_pick_allowed=True,
+                policy_reason="test",
+                confidence_band="high",
+                rationale=[],
+                probabilities=dict(vec),
+                display_probabilities=dict(vec),
+                decision_probabilities=dict(vec),
+            )
+            for idx, vec in enumerate(vectors)
+        ]
+
+        NeuralShadowService(TrainingRepository(db)).apply_to_predictions(preds, week_type="weekend")
+
+        for pred, vec in zip(preds, vectors, strict=True):
+            shadow = pred.neural_shadow
+            assert shadow is not None and shadow.active is True
+            expected_pick = max(vec, key=lambda key: vec[key])
+            assert shadow.top_pick == expected_pick
+            assert shadow.baseline_top_pick == expected_pick
+            assert shadow.top_pick_changed is False
+            assert shadow.probabilities is not None
+            assert pytest.approx(sum(shadow.probabilities.values()), abs=1e-3) == 1.0
+
+
+# ---------------------------------------------------------------------------
+# 10b. Temperature calibration head
+# ---------------------------------------------------------------------------
+
+class TestTemperatureCalibration:
+    def test_temperature_is_monotone_and_preserves_argmax(self):
+        probs = np.array(
+            [[0.6, 0.25, 0.15], [0.2, 0.5, 0.3], [0.15, 0.25, 0.6], [0.34, 0.33, 0.33]],
+            dtype=np.float64,
+        )
+        for temperature in (0.5, 1.0, 2.37, 6.0):
+            scaled = apply_temperature(probs, temperature)
+            assert np.allclose(scaled.sum(axis=1), 1.0)
+            assert np.array_equal(scaled.argmax(axis=1), probs.argmax(axis=1))
+            # Ordering of every outcome is preserved, not just the top one.
+            assert np.array_equal(scaled.argsort(axis=1), probs.argsort(axis=1))
+
+    def test_temperature_above_one_softens_an_overconfident_vector(self):
+        probs = np.array([[0.9, 0.07, 0.03]], dtype=np.float64)
+        softened = apply_temperature(probs, 3.0)
+        assert softened[0, 0] < probs[0, 0]
+        assert softened[0, 1] > probs[0, 1]
+
+    def test_fit_temperature_softens_a_systematically_overconfident_model(self):
+        """Confident-but-often-wrong probabilities must be pulled toward the
+        middle: the fitted temperature has to come out above 1."""
+        probs = np.array([[0.9, 0.05, 0.05]] * 10, dtype=np.float64)
+        # The confident pick is right only 3 times in 10.
+        y = np.array([0, 0, 0, 1, 1, 2, 2, 1, 2, 1], dtype=np.int64)
+        assert fit_temperature(probs, y) > 1.0
+
+    def test_fit_temperature_is_a_noop_without_data(self):
+        assert fit_temperature(np.empty((0, 3)), np.empty((0,), dtype=np.int64)) == 1.0
+
+    def test_calibrated_proba_keeps_the_baseline_ranking(self):
+        rows = _synthetic_rows(12)
+        X, y, _ = NeuralDatasetBuilder().build(rows)
+        model = NeuralBaselineModel(_LOW_CONFIG).fit(X, y)
+        calibrated = model.calibrated_proba(X)
+        assert np.array_equal(calibrated.argmax(axis=1), X[:, :3].argmax(axis=1))
+        assert model.temperature > 0
+
+    def test_temperature_survives_the_artifact_round_trip(self):
+        rows = _synthetic_rows(12)
+        X, y, _ = NeuralDatasetBuilder().build(rows)
+        model = NeuralBaselineModel(_LOW_CONFIG).fit(X, y)
+        artifact = model.to_artifact()
+        assert artifact["calibration"]["kind"] == "temperature"
+        restored = NeuralBaselineModel.from_artifact(artifact)
+        assert restored.temperature == model.temperature
+        assert np.allclose(restored.calibrated_proba(X), model.calibrated_proba(X))
+
+    def test_pre_calibration_artifact_is_a_noop_not_an_error(self):
+        rows = _synthetic_rows(12)
+        X, y, _ = NeuralDatasetBuilder().build(rows)
+        artifact = NeuralBaselineModel(_LOW_CONFIG).fit(X, y).to_artifact()
+        artifact.pop("calibration")
+        restored = NeuralBaselineModel.from_artifact(artifact)
+        assert restored.temperature == 1.0
 
 
 # ---------------------------------------------------------------------------
