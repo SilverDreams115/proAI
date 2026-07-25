@@ -1,0 +1,61 @@
+{
+  "draw_code": "PGM-805",
+  "source": "manual_official",
+  "source_note": "Pronósticos/TuLotero - pending fill-in (sign + score per position)",
+  "results": [
+    {
+      "position": 1,
+      "sign": "L",
+      "score": "2-1",
+      "source_note": "Cruz Azul vs Puebla"
+    },
+    {
+      "position": 2,
+      "sign": "V",
+      "score": "1-2",
+      "source_note": "Toluca vs Pumas"
+    },
+    {
+      "position": 3,
+      "sign": "V",
+      "score": "1-2",
+      "source_note": "Internacional vs Cruzeiro"
+    },
+    {
+      "position": 4,
+      "sign": "V",
+      "score": "1-2",
+      "source_note": "Sao Paulo vs Athletico Paranaense"
+    },
+    {
+      "position": 5,
+      "sign": "E",
+      "score": "2-2",
+      "source_note": "Independiente Medellin vs Vasco da Gama"
+    },
+    {
+      "position": 6,
+      "sign": "L",
+      "score": "3-2",
+      "source_note": "Bolivar vs Gremio"
+    },
+    {
+      "position": 7,
+      "sign": "L",
+      "score": "2-1",
+      "source_note": "Belgrano vs CA Rosario Central"
+    },
+    {
+      "position": 8,
+      "sign": "V",
+      "score": "2-3",
+      "source_note": "Sarmiento vs Argentinos Juniors"
+    },
+    {
+      "position": 9,
+      "sign": "L",
+      "score": "3-2",
+      "source_note": "Inter Miami vs Chicago Fire"
+    }
+  ]
+}
