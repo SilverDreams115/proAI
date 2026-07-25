@@ -149,11 +149,37 @@ def test_feature_service_window_widens_for_infrequent_competition(tmp_path) -> N
         )
         weekly_window = service._max_recent_age_days(weekly_match)
         rare_window = service._max_recent_age_days(rare_match)
-        # Weekly gets clamped at the minimum window (30 days) because
-        # 3 * 7 = 21 < 30.
-        assert weekly_window == 30.0
-        # Rare cadence: 3 * ~70 = ~210 days, well above the weekly cap.
+        # Weekly gets clamped at the minimum window (90 days) because
+        # 3 * 7 = 21 < 90.
+        assert weekly_window == 90.0
+        # Rare cadence: 3 * ~70 = ~210 days, well above the weekly floor.
         assert rare_window >= 180.0
         assert rare_window > weekly_window
     finally:
         session.close()
+
+
+def test_window_floor_reaches_past_an_inter_tournament_break() -> None:
+    """A league on break leaves every team's last result 2-3 months old.
+
+    The floor exists so the sufficiency gate does not block a whole slate over
+    results that sit just past a 30-day cutoff — on PGM-806 four fixtures
+    needed only 60-71 days. Lowering it back to 30 silently re-blocks them, so
+    the intent is pinned here rather than left to the constant alone.
+    """
+    from app.services.feature_service import FeatureService
+
+    assert FeatureService.RECENT_FORM_MIN_WINDOW_DAYS >= 90
+    # Still bounded: the floor must never swallow the whole max window, or the
+    # per-competition cadence sizing stops meaning anything.
+    assert FeatureService.RECENT_FORM_MIN_WINDOW_DAYS < FeatureService.RECENT_FORM_MAX_WINDOW_DAYS
+
+
+def test_window_floor_does_not_relax_the_sufficiency_gate() -> None:
+    """Widening the window changes only how far back 'recent' reaches. The
+    number of anchoring events a prediction needs is a separate rule and must
+    stay put: two results per side, or three head-to-heads."""
+    from app.services.prediction_service import PredictionService
+
+    assert PredictionService.MIN_RECENT_PER_SIDE == 2
+    assert PredictionService.MIN_H2H == 3

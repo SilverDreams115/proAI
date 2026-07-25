@@ -386,8 +386,18 @@ class FeatureService:
     RECENT_FORM_GAP_MULTIPLIER = 3.0
     # Hard caps so an unusually thin competition can't blow the window
     # all the way to a year, and a busy weekly league still gets at
-    # least ~one month of recent form.
-    RECENT_FORM_MIN_WINDOW_DAYS = 30
+    # least ~three months of recent form.
+    #
+    # The floor is 90 rather than 30 days because 3x the median gap assumes a
+    # league that is *currently playing*. A competition on a mid-season or
+    # inter-tournament break leaves every team's last result outside a 30-day
+    # window, so the sufficiency gate in `PredictionService` blocked whole
+    # slates while real, usable results sat just past the cutoff — measured on
+    # PGM-806, four fixtures needed only 60-71 days. Widening the reach does
+    # NOT relax that gate: two results per side (or three head-to-heads) are
+    # still required, and older form still carries less weight through the
+    # per-match points/goal-balance averages.
+    RECENT_FORM_MIN_WINDOW_DAYS = 90
     RECENT_FORM_MAX_WINDOW_DAYS = 365
     # In-process cache keyed by competition_id. The median gap doesn't
     # change between fixture ingests; recomputing it per match would
