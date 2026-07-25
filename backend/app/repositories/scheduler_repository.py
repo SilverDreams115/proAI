@@ -35,13 +35,31 @@ class SchedulerRepository:
         return list(self.session.scalars(statement))
 
     def list_due_jobs(self, now: datetime) -> list[ScheduledIngestionJobModel]:
+        """Due jobs, fairest-first.
+
+        Ordering by ``next_run_at`` alone starves the queue: a job that fails
+        gets a deliberately short retry backoff, which puts it back at the head
+        of the queue, where it consumes the whole ``run_due_jobs`` wall-clock
+        budget and every other source is skipped again. That is how a single
+        source came to fail seven cycles in a row while competitions used by
+        active slates went months without a successful refresh.
+
+        Ordering by ``last_run_at`` first (never-run jobs, then longest-waiting)
+        makes the queue fair: whoever just consumed the budget goes to the back
+        next cycle, so every source makes progress even when the budget only
+        allows one or two per pass. ``next_run_at`` stays as the tiebreak, so
+        overdue-ness still decides between jobs that last ran at the same time.
+        """
         statement = (
             select(ScheduledIngestionJobModel)
             .where(
                 ScheduledIngestionJobModel.is_active.is_(True),
                 ScheduledIngestionJobModel.next_run_at <= now,
             )
-            .order_by(ScheduledIngestionJobModel.next_run_at.asc())
+            .order_by(
+                ScheduledIngestionJobModel.last_run_at.asc().nullsfirst(),
+                ScheduledIngestionJobModel.next_run_at.asc(),
+            )
         )
         return list(self.session.scalars(statement))
 

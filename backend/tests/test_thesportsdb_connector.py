@@ -151,9 +151,10 @@ def test_future_events_keep_none_score(monkeypatch: pytest.MonkeyPatch) -> None:
     assert fixture["played_at"].startswith("2026-05-26T23:30:00")
 
 
-def test_multiple_seasons_each_get_their_own_walk(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A source covering two seasons must walk rounds independently for
-    each — confirms we don't bleed empty-streak state across seasons."""
+def test_backfill_walks_every_season_independently(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Under `backfill=1` a source covering two seasons must walk rounds
+    independently for each — confirms we don't bleed empty-streak state across
+    seasons."""
     url_a = _round_url("4346", "2024", 1)
     url_b = _round_url("4346", "2025", 1)
     body_a = json.dumps(
@@ -190,7 +191,7 @@ def test_multiple_seasons_each_get_their_own_walk(monkeypatch: pytest.MonkeyPatc
 
     connector = TheSportsDbSeasonConnector(
         name="MLS",
-        base_url="https://api.example/?league=4346&seasons=2024,2025",
+        base_url="https://api.example/?league=4346&seasons=2024,2025&backfill=1",
     )
     documents = connector.fetch()
 
@@ -320,3 +321,58 @@ def test_max_round_overrides_default(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     documents = connector.fetch()
     assert documents == []
+
+
+def test_scheduled_run_walks_only_the_current_season(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Without `backfill=1` only the LAST listed season is walked.
+
+    Re-walking history every cycle is what let one source consume the worker's
+    whole run_due_jobs budget (Liga MX: four seasons, ~80 requests against a
+    120s budget) and burn free-tier quota re-fetching stored events. Seasons are
+    listed oldest-first, so the current one is last.
+    """
+    url = _round_url("4350", "2025-2026", 1)
+    body = json.dumps(
+        {
+            "events": [
+                {
+                    "idEvent": "9",
+                    "strLeague": "Liga MX",
+                    "strHomeTeam": "Cruz Azul",
+                    "strAwayTeam": "Puebla",
+                    "intHomeScore": "2",
+                    "intAwayScore": "1",
+                    "strTimestamp": "2026-07-22T02:00:00",
+                }
+            ]
+        }
+    )
+    calls = _patch_urlopen(monkeypatch, {url: body})
+
+    connector = TheSportsDbSeasonConnector(
+        name="TSDB Liga MX",
+        base_url=(
+            "https://api.example/?league=4350"
+            "&seasons=2022-2023,2023-2024,2024-2025,2025-2026"
+        ),
+    )
+    documents = connector.fetch()
+
+    assert len(documents) == 1
+    # Only the current season is touched — none of the three historical ones.
+    assert all("s=2025-2026" in call for call in calls)
+    for stale in ("2022-2023", "2023-2024", "2024-2025"):
+        assert not any(stale in call for call in calls)
+    # 1 hit + MAX_EMPTY_ROUNDS misses, instead of four seasons' worth.
+    assert len(calls) == 1 + TheSportsDbSeasonConnector.MAX_EMPTY_ROUNDS
+
+
+def test_backfill_flag_accepts_only_truthy_values(monkeypatch: pytest.MonkeyPatch) -> None:
+    for raw, expect_all_seasons in (("1", True), ("true", True), ("0", False), ("", False)):
+        connector = TheSportsDbSeasonConnector(
+            name="x",
+            base_url=f"https://api.example/?league=4351&seasons=2024,2025,2026&backfill={raw}",
+        )
+        seasons = connector._seasons
+        assert (len(seasons) == 3) is expect_all_seasons, raw
+        assert seasons[-1] == "2026"

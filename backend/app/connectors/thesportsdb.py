@@ -11,6 +11,11 @@ migration is needed:
 
     https://www.thesportsdb.com/api/v1/json/3?league=<id>&seasons=<s1>,<s2>&max_round=<N>
 
+Seasons are listed oldest-first. A normal (scheduled) run walks ONLY the last
+one — the season currently being played — because re-walking history on every
+cycle costs quota and wall-clock for events that are already stored. Add
+`backfill=1` to walk every listed season for a one-time historical load.
+
 The free tier caps `eventsseason.php` at 15 events, so the connector
 walks `eventsround.php` from round 1 up to `max_round` (default 50) and
 stops after `MAX_EMPTY_ROUNDS` consecutive empty responses — that way a
@@ -77,6 +82,21 @@ class TheSportsDbSeasonConnector(SourceConnector):
         ]
         if not self._seasons:
             raise ValueError("TheSportsDB seasons list is empty after parsing.")
+        # A SCHEDULED refresh only needs the season currently being played.
+        # Re-walking every historical season on every run costs ~20 requests
+        # per extra season at REQUEST_DELAY_SECONDS apiece — enough for a
+        # single source to blow the worker's run_due_jobs wall-clock budget on
+        # its own (Liga MX: four seasons, ~80 requests, ~160s against a 120s
+        # budget) and to burn free-tier quota re-fetching events that are
+        # already ingested. It also produced the confusing "75 documents, 0 new
+        # matches" runs.
+        #
+        # Seasons are listed oldest-first, so the last entry is the current
+        # one. Pass `backfill=1` in base_url for the one-time historical load.
+        backfill_values = params.get("backfill") or []
+        self._backfill = bool(backfill_values) and backfill_values[0].strip() not in ("", "0", "false")
+        if not self._backfill:
+            self._seasons = self._seasons[-1:]
         override_values = params.get("competition") or []
         self._competition_override = (
             override_values[0].strip() if override_values else ""
