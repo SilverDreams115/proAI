@@ -39,6 +39,140 @@ def test_run_migrations_creates_operational_indexes(tmp_path) -> None:
     assert version == SCHEMA_VERSION
 
 
+def test_v21_merges_duplicate_club_rows(tmp_path) -> None:
+    """A club split across two team rows by rival naming conventions must end
+    up with a single row owning every match — otherwise each row holds half the
+    result history and the recent-form gate blocks the fixture."""
+    from datetime import datetime, timezone
+
+    from sqlalchemy import text
+
+    from app.db import session as db_session
+    from app.db.migrations import _migrate_to_v21, run_migrations
+    from app.models import tables  # noqa: F401
+
+    db_session.configure_session(f"sqlite:///{tmp_path / 'merge_clubs.db'}")
+    run_migrations(db_session.engine)
+
+    kickoff = datetime(2026, 5, 1, tzinfo=timezone.utc)
+    with db_session.engine.begin() as connection:
+        connection.execute(
+            text("INSERT INTO competitions (id, name, is_placeholder) VALUES ('c1', 'Brasileirao', 0)")
+        )
+        # "Flamengo" (TheSportsDB) and "CR Flamengo" (football-data.org).
+        for team_id, name in (("t-short", "Flamengo"), ("t-legal", "CR Flamengo"), ("t-rival", "Rival")):
+            connection.execute(
+                text("INSERT INTO teams (id, name, is_placeholder) VALUES (:i, :n, 0)"),
+                {"i": team_id, "n": name},
+            )
+        # One match under each naming convention, different dates so the merge
+        # cannot be refused as a duplicate fixture identity.
+        connection.execute(
+            text(
+                "INSERT INTO matches (id, competition_id, home_team_id, away_team_id, kickoff_at)"
+                " VALUES ('m1', 'c1', 't-short', 't-rival', :k)"
+            ),
+            {"k": kickoff},
+        )
+        connection.execute(
+            text(
+                "INSERT INTO matches (id, competition_id, home_team_id, away_team_id, kickoff_at)"
+                " VALUES ('m2', 'c1', 't-rival', 't-legal', :k)"
+            ),
+            {"k": kickoff.replace(day=2)},
+        )
+
+    with db_session.engine.begin() as connection:
+        _migrate_to_v21(connection)
+
+    with db_session.engine.connect() as connection:
+        home = connection.execute(text("SELECT home_team_id FROM matches WHERE id='m1'")).scalar_one()
+        away = connection.execute(text("SELECT away_team_id FROM matches WHERE id='m2'")).scalar_one()
+        short_refs = connection.execute(
+            text("SELECT count(*) FROM matches WHERE home_team_id='t-short' OR away_team_id='t-short'")
+        ).scalar_one()
+        rows = connection.execute(text("SELECT count(*) FROM teams WHERE id='t-short'")).scalar_one()
+
+    # Both matches now hang off the canonical row the live feed writes...
+    assert home == "t-legal"
+    assert away == "t-legal"
+    assert short_refs == 0
+    # ...and the emptied row survives, so nothing in history dangles.
+    assert rows == 1
+
+
+def test_distinct_nacional_clubs_are_never_merged() -> None:
+    """"Nacional" collides across six real clubs. Whoever extends the merge
+    lists must not fold them together on name similarity: "Club Nacional"
+    (Paraguay) played "CDC Atlético Nacional" home and away, and ran a 2024
+    Libertadores qualifying tie in parallel with "Club Nacional de Football"
+    (Montevideo)."""
+    from app.db.migrations import _CONTINENTAL_SPLIT_MERGES, _DUPLICATE_CLUB_MERGES
+
+    pairs = _DUPLICATE_CLUB_MERGES + _CONTINENTAL_SPLIT_MERGES
+    forbidden = {"Club Nacional", "Club Nacional de Football", "CSCyD El Nacional",
+                 "Club Nacional Potosí", "Club Universidad Nacional Femenil"}
+    for source, canonical in pairs:
+        assert source not in forbidden, f"{source} is a distinct club, not a duplicate"
+        assert canonical not in forbidden, f"{canonical} is a distinct club, not a merge target"
+    # The Colombian side is the one legitimately consolidated.
+    assert ("CDC Atlético Nacional", "Atlético Nacional") in _CONTINENTAL_SPLIT_MERGES
+
+
+def test_v22_merges_the_continental_split_rows(tmp_path) -> None:
+    from datetime import datetime, timezone
+
+    from sqlalchemy import text
+
+    from app.db import session as db_session
+    from app.db.migrations import _migrate_to_v22, run_migrations
+    from app.models import tables  # noqa: F401
+
+    db_session.configure_session(f"sqlite:///{tmp_path / 'merge_continental.db'}")
+    run_migrations(db_session.engine)
+
+    with db_session.engine.begin() as connection:
+        for cid, cname in (("c-dom", "Argentinian Primera Division"), ("c-int", "Copa Libertadores")):
+            connection.execute(
+                text("INSERT INTO competitions (id, name, is_placeholder) VALUES (:i, :n, 0)"),
+                {"i": cid, "n": cname},
+            )
+        for tid, name in (("t-dom", "River Plate"), ("t-int", "CA River Plate"), ("t-riv", "Rival")):
+            connection.execute(
+                text("INSERT INTO teams (id, name, is_placeholder) VALUES (:i, :n, 0)"),
+                {"i": tid, "n": name},
+            )
+        connection.execute(
+            text(
+                "INSERT INTO matches (id, competition_id, home_team_id, away_team_id, kickoff_at)"
+                " VALUES ('m-int', 'c-int', 't-int', 't-riv', :k)"
+            ),
+            {"k": datetime(2025, 4, 3, tzinfo=timezone.utc)},
+        )
+
+    with db_session.engine.begin() as connection:
+        _migrate_to_v22(connection)
+
+    with db_session.engine.connect() as connection:
+        home = connection.execute(text("SELECT home_team_id FROM matches WHERE id='m-int'")).scalar_one()
+    # The Libertadores row folds into the domestic row the live feed updates.
+    assert home == "t-dom"
+
+
+def test_v21_is_idempotent(tmp_path) -> None:
+    from app.db import session as db_session
+    from app.db.migrations import _migrate_to_v21, run_migrations
+    from app.models import tables  # noqa: F401
+
+    db_session.configure_session(f"sqlite:///{tmp_path / 'merge_idempotent.db'}")
+    run_migrations(db_session.engine)
+    # A second and third pass on a database with none of the pairs present
+    # must be a silent no-op rather than an error.
+    with db_session.engine.begin() as connection:
+        _migrate_to_v21(connection)
+        _migrate_to_v21(connection)
+
+
 def test_alembic_configuration_is_present() -> None:
     from pathlib import Path
 

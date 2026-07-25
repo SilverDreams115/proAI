@@ -9,7 +9,7 @@ from sqlalchemy.engine import Engine
 
 from app.db.base import Base
 
-SCHEMA_VERSION = 20
+SCHEMA_VERSION = 22
 POSTGRES_MIGRATION_LOCK_ID = 791796
 ALEMBIC_VERSION_PATTERN = re.compile(r"^0*(?P<version>\d+)_.*\.py$")
 
@@ -128,6 +128,12 @@ def _run_migrations_unlocked(engine: Engine) -> None:
         if current_version < 20:
             _migrate_to_v20(connection)
             current_version = 20
+        if current_version < 21:
+            _migrate_to_v21(connection)
+            current_version = 21
+        if current_version < 22:
+            _migrate_to_v22(connection)
+            current_version = 22
         connection.execute(text("UPDATE schema_migrations SET version = :version"), {"version": current_version})
 
 
@@ -182,6 +188,8 @@ def _bootstrap_schema(engine: Engine) -> None:
         _migrate_to_v17(connection)
         _migrate_to_v18(connection)
         _migrate_to_v20(connection)
+        _migrate_to_v21(connection)
+        _migrate_to_v22(connection)
         connection.execute(text("CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER NOT NULL)"))
         has_row = connection.execute(text("SELECT 1 FROM schema_migrations LIMIT 1")).scalar_one_or_none()
         if has_row is None:
@@ -759,11 +767,19 @@ def _migrate_to_v14(connection) -> None:
         ("Túnez", "Tunisia"),
     ]
     for placeholder_name, canonical_name in pairs:
-        _merge_national_team_placeholder(connection, placeholder_name, canonical_name)
+        _merge_team_into(connection, placeholder_name, canonical_name)
 
 
-def _merge_national_team_placeholder(connection, placeholder_name: str, canonical_name: str) -> None:
-    """Move all match references from the placeholder team to the canonical team.
+def _merge_team_into(connection, placeholder_name: str, canonical_name: str) -> None:
+    """Move all match references from one team row to another.
+
+    Re-points ``matches.home_team_id`` / ``matches.away_team_id`` and moves
+    ``team_aliases``, skipping rows that would violate a unique constraint
+    (a duplicate fixture identity, or an alias the canonical team already
+    owns). The source row is never deleted, so nothing in history dangles.
+
+    Used both for national-team placeholders (v14/v16) and for club rows that
+    two ingestion sources split under different naming conventions (v21).
 
     No-op when either entity does not exist (fresh DB / test).
     """
@@ -910,7 +926,7 @@ def _migrate_to_v16(connection) -> None:
     Idempotent: the NOT EXISTS guards prevent double-updates.
     No-op on fresh DB or when either entity does not exist.
     """
-    _merge_national_team_placeholder(connection, "Re P. Corea", "South Korea")
+    _merge_team_into(connection, "Re P. Corea", "South Korea")
 
 
 def _migrate_to_v18(connection) -> None:
@@ -970,6 +986,107 @@ def _migrate_to_v17(connection) -> None:
             "ON match_live_results (source_id)"
         )
     )
+
+
+# (source_name, canonical_name) club rows that two ingestion sources split
+# under different naming conventions. football-data.org writes the legal club
+# name ("CR Flamengo", "SE Palmeiras", "EC Vitória"); TheSportsDB writes the
+# short form ("Flamengo", "Palmeiras", "Vitoria"). Every affected club ended up
+# with two team rows, each holding half the result history — which is why a
+# fixture can look like it has no recent form while the other row is being
+# updated weekly.
+#
+# The canonical target is always the row the LIVE ingestion currently writes
+# (the one with the most recent result), never simply the one with more rows:
+# merging into a stale name would let the next ingestion run split it again.
+#
+# Deliberately NOT merged, because they are different clubs that only collide
+# once prefixes are stripped:
+#   * "Atlético Nacional" (Colombia) vs "Club Nacional" (Uruguay/Paraguay)
+#   * "CA River Plate" vs "River Plate" — plausibly the same Argentine club
+#     split by source, but River Plate Montevideo would collide identically,
+#     so it needs an operator decision rather than a guess.
+_DUPLICATE_CLUB_MERGES: tuple[tuple[str, str], ...] = (
+    # Brazil — short form -> legal name written by the live FD-ORG feed.
+    ("Flamengo", "CR Flamengo"),
+    ("Palmeiras", "SE Palmeiras"),
+    ("Vitoria", "EC Vitória"),
+    ("Bahia", "EC Bahia"),
+    ("Atlético Mineiro", "CA Mineiro"),
+    ("CR Vasco da Gama", "Vasco da Gama"),
+    ("CA Paranaense", "Athletico Paranaense"),
+    ("EC Juventude", "Juventude"),
+    # Mexico / USA / Spain — punctuation and rename variants.
+    ("Morelia", "Atlético Morelia"),
+    ("L.A. Galaxy", "LA Galaxy"),
+    ("La Coruna", "Deportivo de La Coruña"),
+    ("Ath. Bilbao", "Ath Bilbao"),
+    # Argentina / Chile / Colombia.
+    ("OHiggins", "O'Higgins"),
+    ("CA Vélez Sarsfield", "Velez Sarsfield"),
+    ("Newells Old Boys", "Newell's Old Boys"),
+    ("Platense", "CA Platense"),
+    ("CA Bucaramanga", "Atlético Bucaramanga"),
+    ("CA Central Córdoba", "Central Córdoba de Santiago del Estero"),
+    # Placeholder rows created from truncated slate names, now that their
+    # fixtures have been relinked to the canonical club.
+    ("Paranaense", "Athletico Paranaense"),
+    ("Talleres", "CA Talleres"),
+    ("Atl. Tucumán", "Atletico Tucuman"),
+    ("Central Córdoba", "Central Córdoba de Santiago del Estero"),
+)
+
+
+# The two pairs v21 deliberately left alone, resolved afterwards from match
+# evidence rather than from the names. Both turned out to be one club whose
+# domestic rows and continental rows were written by different feeds:
+#
+#   * "River Plate" holds only Argentinian Primera Division fixtures and
+#     "CA River Plate" only Copa Libertadores ones; they never meet and never
+#     play on the same day, and the 2025 Libertadores group on the CA row
+#     (Universitario, Independiente del Valle, Barcelona) is River Plate
+#     Argentina's real group.
+#   * "Corporación Deportiva Club Atlético Nacional" is the Colombian club's
+#     legal name, so "CDC Atlético Nacional" (Libertadores only) and
+#     "Atlético Nacional" (Colombian Primera A only) are the same side.
+#
+# Still NOT merged, and this is the reason to keep the note: "Nacional"
+# collides across six real clubs — Montevideo ("Club Nacional de Football"),
+# Colombia, Paraguay ("Club Nacional"), Ecuador ("CSCyD El Nacional"), Bolivia
+# ("Club Nacional Potosí") and Liga MX Femenil's Universidad Nacional.
+# "Club Nacional" and "Club Nacional de Football" ran two SIMULTANEOUS 2024
+# Libertadores qualifying ties against different opponents, one day apart, so
+# they are provably different clubs; "Club Nacional" also played "CDC Atlético
+# Nacional" home and away. Name similarity alone must never drive a merge here.
+_CONTINENTAL_SPLIT_MERGES: tuple[tuple[str, str], ...] = (
+    ("CA River Plate", "River Plate"),
+    ("CDC Atlético Nacional", "Atlético Nacional"),
+)
+
+
+def _migrate_to_v22(connection) -> None:
+    """Merge the domestic/continental split rows for River Plate and Atlético
+    Nacional (Colombia).
+
+    Same contract as v21: data only, no deletes, collision-safe, idempotent,
+    and a no-op when the rows are absent. Mirrors alembic 0022.
+    """
+    for source_name, canonical_name in _CONTINENTAL_SPLIT_MERGES:
+        _merge_team_into(connection, source_name, canonical_name)
+
+
+def _migrate_to_v21(connection) -> None:
+    """Merge club rows that ingestion sources split under different names.
+
+    Data-only: no DDL, no deletes. Each pair re-points match and alias
+    references onto the canonical row via ``_merge_team_into``, which already
+    skips anything that would collide with an existing fixture identity.
+
+    Idempotent — a second run finds nothing left to move — and a no-op for any
+    pair whose rows do not exist (fresh DB / tests). Mirrors alembic 0021.
+    """
+    for source_name, canonical_name in _DUPLICATE_CLUB_MERGES:
+        _merge_team_into(connection, source_name, canonical_name)
 
 
 def _migrate_to_v20(connection) -> None:
