@@ -3,7 +3,16 @@ import unicodedata
 
 
 class NormalizationService:
-    TEAM_STOPWORDS = {"fc", "cf", "club", "de", "ac", "sc", "cd", "unam", "femenil", "femenino"}
+    # "femenil"/"femenino" are deliberately NOT stopwords. Dropping them
+    # collapsed every women's side onto the men's club of the same name:
+    # "Cruz Azul Femenil" and "Cruz Azul" both normalized to `cruz-azul`,
+    # so a Liga MX Femenil fixture resolved to the men's team and its
+    # document linked to the men's match — orientation included, which
+    # produced links like "Cruz Azul Femenil vs Pumas Femenil" onto
+    # "Pumas vs Cruz Azul". The competition layer already keeps
+    # `international-friendlies-women` separate for exactly this reason;
+    # the team layer has to agree.
+    TEAM_STOPWORDS = {"fc", "cf", "club", "de", "ac", "sc", "cd", "unam"}
     COMPETITION_STOPWORDS = {"liga", "division", "primera", "torneo", "league"}
     TEAM_ALIAS_SLUGS = {
         "ath bilbao": "athletic-bilbao",

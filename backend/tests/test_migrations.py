@@ -187,3 +187,88 @@ def test_runtime_schema_version_matches_alembic_review_revision() -> None:
     from app.db.migrations import migration_audit_errors
 
     assert migration_audit_errors() == []
+
+
+def test_v23_renormalizes_femenil_aliases(tmp_path) -> None:
+    """Aliases stored while "femenil" was a stopword keep the collapsed slug
+    until v23 re-derives them. Until then a men's lookup can land on the
+    women's row, because find_team_by_alias matches on normalized_alias."""
+    from sqlalchemy import text
+
+    from app.db import session as db_session
+    from app.db.migrations import _migrate_to_v23, run_migrations
+    from app.models import tables  # noqa: F401
+
+    db_session.configure_session(f"sqlite:///{tmp_path / 'femenil_alias.db'}")
+    run_migrations(db_session.engine)
+
+    with db_session.engine.begin() as connection:
+        for tid, name in (("t-w", "Tigres UANL Femenil"), ("t-m", "Tigres")):
+            connection.execute(
+                text("INSERT INTO teams (id, name, is_placeholder) VALUES (:i, :n, 0)"),
+                {"i": tid, "n": name},
+            )
+        # The collapsed slug the old normalizer produced.
+        connection.execute(
+            text(
+                "INSERT INTO team_aliases (id, team_id, alias, normalized_alias)"
+                " VALUES ('a-w', 't-w', 'Tigres UANL Femenil', 'tigres-uanl')"
+            )
+        )
+
+    with db_session.engine.begin() as connection:
+        _migrate_to_v23(connection)
+
+    with db_session.engine.begin() as connection:
+        slug = connection.execute(
+            text("SELECT normalized_alias FROM team_aliases WHERE id = 'a-w'")
+        ).scalar_one()
+    assert slug == "tigres-uanl-femenil"
+
+    # Idempotent: a second pass recomputes the same value.
+    with db_session.engine.begin() as connection:
+        _migrate_to_v23(connection)
+        again = connection.execute(
+            text("SELECT normalized_alias FROM team_aliases WHERE id = 'a-w'")
+        ).scalar_one()
+    assert again == slug
+
+
+def test_v23_skips_an_alias_whose_new_slug_another_team_owns(tmp_path) -> None:
+    """The unique index on normalized_alias must never be violated: if some
+    other team already holds the recomputed slug, leave the row alone."""
+    from sqlalchemy import text
+
+    from app.db import session as db_session
+    from app.db.migrations import _migrate_to_v23, run_migrations
+    from app.models import tables  # noqa: F401
+
+    db_session.configure_session(f"sqlite:///{tmp_path / 'femenil_clash.db'}")
+    run_migrations(db_session.engine)
+
+    with db_session.engine.begin() as connection:
+        for tid, name in (("t-a", "Club America Femenil"), ("t-b", "Otro")):
+            connection.execute(
+                text("INSERT INTO teams (id, name, is_placeholder) VALUES (:i, :n, 0)"),
+                {"i": tid, "n": name},
+            )
+        connection.execute(
+            text(
+                "INSERT INTO team_aliases (id, team_id, alias, normalized_alias)"
+                " VALUES ('a-1', 't-a', 'Club America Femenil', 'club-america')"
+            )
+        )
+        # Another team already owns the slug v23 would compute.
+        connection.execute(
+            text(
+                "INSERT INTO team_aliases (id, team_id, alias, normalized_alias)"
+                " VALUES ('a-2', 't-b', 'ocupado', 'america-femenil')"
+            )
+        )
+
+    with db_session.engine.begin() as connection:
+        _migrate_to_v23(connection)
+        untouched = connection.execute(
+            text("SELECT normalized_alias FROM team_aliases WHERE id = 'a-1'")
+        ).scalar_one()
+    assert untouched == "club-america"

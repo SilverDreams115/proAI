@@ -54,3 +54,35 @@ def test_wcq_competition_aliases_map_to_international_friendlies() -> None:
         assert (
             service.normalize_competition_name(variant) == "international-friendlies"
         ), f"Expected 'international-friendlies' for {variant!r}"
+
+
+def test_womens_teams_do_not_collide_with_the_mens_club() -> None:
+    """"Femenil"/"Femenino" must survive normalization. While they were
+    stopwords, "Cruz Azul Femenil" and "Cruz Azul" both became `cruz-azul`,
+    so a Liga MX Femenil fixture resolved to the men's team and its document
+    linked to the men's match with the orientation flipped."""
+    from app.services.normalization_service import NormalizationService
+
+    service = NormalizationService()
+
+    for womens, mens in (
+        ("Cruz Azul Femenil", "Cruz Azul"),
+        ("Pumas UNAM Femenil", "Pumas"),
+        ("CF América Femenil", "America"),
+        ("Barcelona Femenino", "Barcelona"),
+    ):
+        womens_slug = service.normalize_team_name(womens)
+        mens_slug = service.normalize_team_name(mens)
+        assert womens_slug != mens_slug, f"{womens} collided with {mens}"
+        assert womens_slug.endswith(("femenil", "femenino")), womens_slug
+
+
+def test_other_team_stopwords_still_apply() -> None:
+    """Keeping the gender marker must not turn off the rest of the
+    stopword list — those still collapse legitimate spelling variants."""
+    from app.services.normalization_service import NormalizationService
+
+    service = NormalizationService()
+
+    assert service.normalize_team_name("FC Barcelona") == service.normalize_team_name("Barcelona")
+    assert service.normalize_team_name("Club Tijuana") == service.normalize_team_name("Tijuana")

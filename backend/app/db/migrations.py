@@ -9,7 +9,7 @@ from sqlalchemy.engine import Engine
 
 from app.db.base import Base
 
-SCHEMA_VERSION = 22
+SCHEMA_VERSION = 23
 POSTGRES_MIGRATION_LOCK_ID = 791796
 ALEMBIC_VERSION_PATTERN = re.compile(r"^0*(?P<version>\d+)_.*\.py$")
 
@@ -134,6 +134,9 @@ def _run_migrations_unlocked(engine: Engine) -> None:
         if current_version < 22:
             _migrate_to_v22(connection)
             current_version = 22
+        if current_version < 23:
+            _migrate_to_v23(connection)
+            current_version = 23
         connection.execute(text("UPDATE schema_migrations SET version = :version"), {"version": current_version})
 
 
@@ -190,6 +193,7 @@ def _bootstrap_schema(engine: Engine) -> None:
         _migrate_to_v20(connection)
         _migrate_to_v21(connection)
         _migrate_to_v22(connection)
+        _migrate_to_v23(connection)
         connection.execute(text("CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER NOT NULL)"))
         has_row = connection.execute(text("SELECT 1 FROM schema_migrations LIMIT 1")).scalar_one_or_none()
         if has_row is None:
@@ -1064,6 +1068,59 @@ _CONTINENTAL_SPLIT_MERGES: tuple[tuple[str, str], ...] = (
     ("CA River Plate", "River Plate"),
     ("CDC Atlético Nacional", "Atlético Nacional"),
 )
+
+
+def _migrate_to_v23(connection) -> None:
+    """Recompute `team_aliases.normalized_alias` for women's sides.
+
+    Until v23 the team normalizer treated "femenil"/"femenino" as
+    stopwords, so every women's alias was stored with the marker stripped:
+    "Tigres UANL Femenil" landed as `tigres-uanl` and "Cruz Azul Femenil"
+    as plain `cruz-azul`. Two things followed. A women's fixture resolved
+    to the men's club of the same name, and — the direction that is easy
+    to miss — a men's name could resolve to a women's row, because the
+    stripped alias sits in the same lookup namespace.
+
+    Dropping the stopword fixes new lookups but leaves the stored aliases
+    on the old slug, so this re-derives them with the same rule the
+    service now applies: strip accents and punctuation, drop the
+    remaining stopwords, join with "-".
+
+    Data only, no DDL, no deletes. Idempotent — a second run recomputes
+    the same values. ``normalized_alias`` carries no unique index (only
+    ``alias`` does), which is precisely how the collision stayed silent;
+    the skip below is therefore not constraint protection but a refusal to
+    hand one slug to two different teams, since ``find_team_by_alias``
+    would then resolve it arbitrarily. Mirrors alembic 0023.
+    """
+    rows = connection.execute(
+        text(
+            "SELECT id, team_id, alias FROM team_aliases "
+            "WHERE LOWER(alias) LIKE '%femenil%' OR LOWER(alias) LIKE '%femenino%'"
+        )
+    ).fetchall()
+    if not rows:
+        return
+    from app.services.normalization_service import NormalizationService
+
+    normalizer = NormalizationService()
+    for alias_id, team_id, alias in rows:
+        new_slug = normalizer.normalize_team_name(alias)
+        if not new_slug:
+            continue
+        clash = connection.execute(
+            text(
+                "SELECT team_id FROM team_aliases "
+                "WHERE normalized_alias = :slug AND id <> :id"
+            ),
+            {"slug": new_slug, "id": alias_id},
+        ).fetchone()
+        if clash is not None and clash[0] != team_id:
+            continue
+        connection.execute(
+            text("UPDATE team_aliases SET normalized_alias = :slug WHERE id = :id"),
+            {"slug": new_slug, "id": alias_id},
+        )
 
 
 def _migrate_to_v22(connection) -> None:
