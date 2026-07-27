@@ -35,7 +35,13 @@ THESPORTSDB_LEAGUES: list[tuple[str, str, str, list[str]]] = [
     # weekly ingest completed with 0 documents. 4404 re-verified 2026-07-16
     # (lookupleague + eventsround r=16 s=2026 returns real scored events).
     ("4404", "Brasileirao Serie B", "Brazil", ["2024", "2025", "2026"]),
-    ("4350", "Liga MX", "Mexico", ["2022-2023", "2023-2024", "2024-2025", "2025-2026"]),
+    # Season lists must always end with the one currently being played: a
+    # scheduled run walks only the last entry. Liga MX sat on "2025-2026"
+    # (ended April) through the whole 2026-2027 Apertura, so every weekly
+    # refresh re-walked a finished season and the database held 8 Liga MX
+    # results across 90 days for the league Progol is mostly made of.
+    ("4350", "Liga MX", "Mexico",
+     ["2022-2023", "2023-2024", "2024-2025", "2025-2026", "2026-2027"]),
     ("4346", "MLS", "United States", ["2024", "2025", "2026"]),
     ("4627", "Primera Division Chile", "Chile", ["2024", "2025", "2026"]),
     ("4633", "J1 League", "Japan", ["2024", "2025", "2026"]),
@@ -50,10 +56,11 @@ THESPORTSDB_LEAGUES: list[tuple[str, str, str, list[str]]] = [
     # and similar Progol lower-tier MX fixtures. Apertura/Clausura split
     # uses the YYYY-YYYY season string. Backfilled 2022-2024 so teams
     # that sat out of the latest torneo still carry real form data.
-    ("4654", "Liga de Expansion MX", "Mexico", ["2022-2023", "2023-2024", "2024-2025", "2025-2026"]),
+    ("4654", "Liga de Expansion MX", "Mexico",
+     ["2022-2023", "2023-2024", "2024-2025", "2025-2026", "2026-2027"]),
     # Spanish La Liga 2 (LaLiga Hypermotion): covers Ceuta/Albacete and
     # other Spanish second-tier Progol fixtures.
-    ("4400", "Spanish La Liga 2", "Spain", ["2024-2025", "2025-2026"]),
+    ("4400", "Spanish La Liga 2", "Spain", ["2024-2025", "2025-2026", "2026-2027"]),
     # Swedish Allsvenskan (top tier): covers Degerfors/Brommapojkarna and
     # other Nordic Progol fixtures. Calendar-year season.
     ("4347", "Swedish Allsvenskan", "Sweden", ["2024", "2025", "2026"]),
@@ -98,13 +105,26 @@ THESPORTSDB_LEAGUES: list[tuple[str, str, str, list[str]]] = [
 ]
 
 
+# Leagues whose round numbers repeat inside a single season label. The
+# Argentine Apertura and Clausura both live under season "2026" and both
+# start at round 1, so `eventsround.php` — capped at 5 events per call on
+# the free key — only ever returns the earliest tournament and the current
+# half is unreachable. These walk calendar days instead. Value = days_back.
+DAY_STRATEGY_LEAGUES: dict[str, int] = {
+    "4406": 21,  # Argentinian Primera Division
+}
+
+
 def _source_for(league_id: str, label: str, seasons: list[str]) -> dict[str, object]:
     season_csv = ",".join(seasons)
+    days_back = DAY_STRATEGY_LEAGUES.get(league_id)
+    strategy = f"&strategy=day&days_back={days_back}" if days_back is not None else ""
     return {
         "name": f"TSDB {label}",
         "base_url": (
             f"https://www.thesportsdb.com/api/v1/json/3?league={quote(league_id)}"
             f"&seasons={quote(season_csv, safe=',-')}"
+            f"{strategy}"
             f"&competition={quote(label)}"
         ),
         "kind": "thesportsdb_season",
