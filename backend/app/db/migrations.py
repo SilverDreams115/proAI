@@ -10,7 +10,7 @@ from sqlalchemy.engine import Engine
 
 from app.db.base import Base
 
-SCHEMA_VERSION = 24
+SCHEMA_VERSION = 25
 POSTGRES_MIGRATION_LOCK_ID = 791796
 ALEMBIC_VERSION_PATTERN = re.compile(r"^0*(?P<version>\d+)_.*\.py$")
 
@@ -141,6 +141,9 @@ def _run_migrations_unlocked(engine: Engine) -> None:
         if current_version < 24:
             _migrate_to_v24(connection)
             current_version = 24
+        if current_version < 25:
+            _migrate_to_v25(connection)
+            current_version = 25
         connection.execute(text("UPDATE schema_migrations SET version = :version"), {"version": current_version})
 
 
@@ -199,6 +202,7 @@ def _bootstrap_schema(engine: Engine) -> None:
         _migrate_to_v22(connection)
         _migrate_to_v23(connection)
         _migrate_to_v24(connection)
+        _migrate_to_v25(connection)
         connection.execute(text("CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER NOT NULL)"))
         has_row = connection.execute(text("SELECT 1 FROM schema_migrations LIMIT 1")).scalar_one_or_none()
         if has_row is None:
@@ -1193,6 +1197,60 @@ def _split_team_matches_by_competition(
 def _false_for_dialect(connection):
     """SQLite stores booleans as integers; Postgres wants a real boolean."""
     return False if connection.engine.dialect.name != "sqlite" else 0
+
+
+# The reverse direction of the same collision v23/v24 addressed: with
+# "femenil" stripped, "Cruz Azul Femenil" resolved to the men's Cruz Azul, so
+# most of Liga MX Femenil was ingested straight onto men's rows. 18 men's rows
+# carry 289 women's fixtures between them, which corrupts the recent-form
+# features of the league Progol is mostly made of.
+#
+# (men's row, women's row). Every pair is Liga MX Femenil — verified that no
+# men's row holds fixtures from any other women's competition. The first seven
+# targets already exist under the inconsistent names the sources produced, so
+# they are mapped explicitly rather than derived: creating "Monterrey Femenil"
+# next to "C.F. Monterrey Femenil" would duplicate the club, which is the mess
+# v21 had to clean up. The remaining eleven have no women's row at all —
+# the collision is why — and get one named after the men's club.
+#
+# "Washington Spirit" is deliberately absent: it holds one CONCACAF W fixture
+# and no men's ones, because it is an NWSL club whose real name simply carries
+# no gender marker. It was never contaminated.
+_FEMENIL_ROW_SPLITS: tuple[tuple[str, str], ...] = (
+    ("America", "CF América Femenil"),
+    ("Guadalajara", "C.D. Guadalajara Femenil"),
+    ("Monterrey", "C.F. Monterrey Femenil"),
+    ("Pachuca", "C.F. Pachuca Femenil"),
+    ("Pumas", "Club Universidad Nacional Femenil"),
+    ("Toluca", "Deportivo Toluca F.C. Femenil"),
+    ("Tigres", "Tigres UANL Femenil"),
+    ("Atlas", "Atlas Femenil"),
+    ("Atletico de San Luis", "Atletico de San Luis Femenil"),
+    ("Cruz Azul", "Cruz Azul Femenil"),
+    ("FC Juarez", "FC Juarez Femenil"),
+    ("Leon", "Leon Femenil"),
+    ("Mazatlán", "Mazatlán Femenil"),
+    ("Necaxa", "Necaxa Femenil"),
+    ("Puebla", "Puebla Femenil"),
+    ("Queretaro FC", "Queretaro FC Femenil"),
+    ("Santos Laguna", "Santos Laguna Femenil"),
+    ("Tijuana", "Tijuana Femenil"),
+)
+
+
+def _migrate_to_v25(connection) -> None:
+    """Move Liga MX Femenil fixtures off the men's rows that absorbed them.
+
+    Same helper and same contract as v24 — collision-safe, no deletes, a
+    no-op on a database that never had the contamination. Dry-run on the
+    live data before writing this: 68 fixtures move onto the seven existing
+    women's rows with zero fixture-identity collisions, the rest onto rows
+    this creates. Mirrors alembic 0025.
+    """
+    for mens_name, womens_name in _FEMENIL_ROW_SPLITS:
+        _split_team_matches_by_competition(
+            connection, mens_name, "Liga MX Femenil", womens_name, "Mexico"
+        )
 
 
 def _migrate_to_v24(connection) -> None:

@@ -372,3 +372,108 @@ def test_v24_is_a_noop_when_the_merged_row_is_absent(tmp_path) -> None:
             text("SELECT COUNT(*) FROM teams WHERE name IN ('Barcelona', 'Barcelona SC')")
         ).scalar_one()
     assert created == 0
+
+
+def test_v25_moves_womens_fixtures_off_the_mens_row(tmp_path) -> None:
+    """The reverse of v24: Liga MX Femenil fixtures ingested onto men's rows
+    move to the women's club. Rows that already exist under the sources'
+    inconsistent names are reused, never duplicated."""
+    from datetime import datetime, timezone
+
+    from sqlalchemy import text
+
+    from app.db import session as db_session
+    from app.db.migrations import _migrate_to_v25, run_migrations
+    from app.models import tables  # noqa: F401
+
+    db_session.configure_session(f"sqlite:///{tmp_path / 'split_femenil.db'}")
+    run_migrations(db_session.engine)
+
+    with db_session.engine.begin() as connection:
+        for cid, cname in (("c-mx", "Liga MX"), ("c-mxf", "Liga MX Femenil")):
+            connection.execute(
+                text("INSERT INTO competitions (id, name, is_placeholder) VALUES (:i, :n, 0)"),
+                {"i": cid, "n": cname},
+            )
+        for tid, name in (
+            ("t-cruz", "Cruz Azul"),
+            ("t-mty", "Monterrey"),
+            ("t-mty-f", "C.F. Monterrey Femenil"),
+            ("t-riv", "Rival"),
+        ):
+            connection.execute(
+                text("INSERT INTO teams (id, name, is_placeholder) VALUES (:i, :n, 0)"),
+                {"i": tid, "n": name},
+            )
+        for mid, cid, home, away, day in (
+            ("m-men", "c-mx", "t-cruz", "t-riv", 1),      # men's fixture: must not move
+            ("m-cruz-f", "c-mxf", "t-cruz", "t-riv", 2),  # women's on men's row, no women's row yet
+            ("m-mty-f", "c-mxf", "t-mty", "t-riv", 3),    # women's on men's row, women's row exists
+        ):
+            connection.execute(
+                text(
+                    "INSERT INTO matches (id, competition_id, home_team_id, away_team_id, kickoff_at)"
+                    " VALUES (:i, :c, :h, :a, :k)"
+                ),
+                {"i": mid, "c": cid, "h": home, "a": away, "k": datetime(2026, 4, day, tzinfo=timezone.utc)},
+            )
+
+    with db_session.engine.begin() as connection:
+        _migrate_to_v25(connection)
+
+    with db_session.engine.begin() as connection:
+        def home_of(match_id: str) -> str:
+            return connection.execute(
+                text("SELECT t.name FROM matches m JOIN teams t ON t.id = m.home_team_id WHERE m.id = :i"),
+                {"i": match_id},
+            ).scalar_one()
+
+        assert home_of("m-men") == "Cruz Azul", "men's fixture must stay put"
+        assert home_of("m-cruz-f") == "Cruz Azul Femenil", "women's row created"
+        assert home_of("m-mty-f") == "C.F. Monterrey Femenil", "existing row reused"
+
+        # The existing women's row must not have been duplicated.
+        monterrey_rows = connection.execute(
+            text("SELECT COUNT(*) FROM teams WHERE name LIKE '%Monterrey%'")
+        ).scalar_one()
+    assert monterrey_rows == 2, "Monterrey + C.F. Monterrey Femenil, nothing minted"
+
+
+def test_v25_leaves_a_womens_only_club_alone(tmp_path) -> None:
+    """A club whose real name carries no gender marker and that plays only
+    women's football (Washington Spirit) was never contaminated and must not
+    be split."""
+    from datetime import datetime, timezone
+
+    from sqlalchemy import text
+
+    from app.db import session as db_session
+    from app.db.migrations import _migrate_to_v25, run_migrations
+    from app.models import tables  # noqa: F401
+
+    db_session.configure_session(f"sqlite:///{tmp_path / 'split_nwsl.db'}")
+    run_migrations(db_session.engine)
+
+    with db_session.engine.begin() as connection:
+        connection.execute(
+            text("INSERT INTO competitions (id, name, is_placeholder) VALUES ('c-w', 'Liga MX Femenil', 0)")
+        )
+        for tid, name in (("t-ws", "Washington Spirit"), ("t-riv", "Rival")):
+            connection.execute(
+                text("INSERT INTO teams (id, name, is_placeholder) VALUES (:i, :n, 0)"),
+                {"i": tid, "n": name},
+            )
+        connection.execute(
+            text(
+                "INSERT INTO matches (id, competition_id, home_team_id, away_team_id, kickoff_at)"
+                " VALUES ('m-ws', 'c-w', 't-ws', 't-riv', :k)"
+            ),
+            {"k": datetime(2026, 4, 9, tzinfo=timezone.utc)},
+        )
+
+    with db_session.engine.begin() as connection:
+        _migrate_to_v25(connection)
+        still = connection.execute(
+            text("SELECT t.name FROM matches m JOIN teams t ON t.id = m.home_team_id WHERE m.id = 'm-ws'")
+        ).scalar_one()
+    assert still == "Washington Spirit"
