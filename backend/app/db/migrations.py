@@ -10,7 +10,7 @@ from sqlalchemy.engine import Engine
 
 from app.db.base import Base
 
-SCHEMA_VERSION = 25
+SCHEMA_VERSION = 26
 POSTGRES_MIGRATION_LOCK_ID = 791796
 ALEMBIC_VERSION_PATTERN = re.compile(r"^0*(?P<version>\d+)_.*\.py$")
 
@@ -144,6 +144,9 @@ def _run_migrations_unlocked(engine: Engine) -> None:
         if current_version < 25:
             _migrate_to_v25(connection)
             current_version = 25
+        if current_version < 26:
+            _migrate_to_v26(connection)
+            current_version = 26
         connection.execute(text("UPDATE schema_migrations SET version = :version"), {"version": current_version})
 
 
@@ -203,6 +206,7 @@ def _bootstrap_schema(engine: Engine) -> None:
         _migrate_to_v23(connection)
         _migrate_to_v24(connection)
         _migrate_to_v25(connection)
+        _migrate_to_v26(connection)
         connection.execute(text("CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER NOT NULL)"))
         has_row = connection.execute(text("SELECT 1 FROM schema_migrations LIMIT 1")).scalar_one_or_none()
         if has_row is None:
@@ -1238,6 +1242,88 @@ _FEMENIL_ROW_SPLITS: tuple[tuple[str, str], ...] = (
 )
 
 
+# Liga MX Femenil rows carry the club names the *results* sources produced
+# ("C.F. Pachuca Femenil", "Club Universidad Nacional Femenil"), while the
+# fixture feed uses the short form ("Pachuca Femenil", "Pumas UNAM Femenil").
+# find_team_by_alias needs either an exact name hit or an alias slug hit, and
+# the rows v25 created were inserted as raw SQL with no alias at all — so the
+# short forms resolved to nothing and the next Femenil ingest would have minted
+# a second row per club. Verified against the live data before writing: seven
+# of the fifteen names in the 2026-2027 fixture list resolved to nothing.
+#
+# (alias the feed emits, team row it belongs to). Only pairs where the two
+# names genuinely differ; the other eleven clubs already match exactly.
+_FEMENIL_TEAM_ALIASES: tuple[tuple[str, str], ...] = (
+    ("América Femenil", "CF América Femenil"),
+    ("Pachuca Femenil", "C.F. Pachuca Femenil"),
+    ("Monterrey Femenil", "C.F. Monterrey Femenil"),
+    ("Guadalajara Femenil", "C.D. Guadalajara Femenil"),
+    ("Toluca Femenil", "Deportivo Toluca F.C. Femenil"),
+    ("Pumas UNAM Femenil", "Club Universidad Nacional Femenil"),
+    ("Juárez Femenil", "FC Juarez Femenil"),
+    ("Querétaro Femenil", "Queretaro FC Femenil"),
+    ("León Femenil", "Leon Femenil"),
+    ("Atlético de San Luis Femenil", "Atletico de San Luis Femenil"),
+)
+
+
+def _migrate_to_v26(connection) -> None:
+    """Give the Liga MX Femenil rows the aliases the fixture feed needs.
+
+    Also backfills a self-alias for every women's row that has none, so a
+    club is reachable by its own normalized slug and not only by an exact
+    name match — that gap is what made accents and "FC"/"C.F." prefixes
+    decide whether a lookup succeeded.
+
+    Data only, no DDL, no deletes. Idempotent, and skips any alias another
+    team already owns rather than moving it. Mirrors alembic 0026.
+    """
+    from app.services.normalization_service import NormalizationService
+
+    normalizer = NormalizationService()
+
+    def _attach(alias: str, team_name: str) -> None:
+        team = connection.execute(
+            text("SELECT id FROM teams WHERE name = :n LIMIT 1"), {"n": team_name}
+        ).fetchone()
+        if team is None:
+            return
+        slug = normalizer.normalize_team_name(alias)
+        # Both columns are unique: `ix_team_aliases_alias` on the raw text and
+        # `uq_team_alias_normalized` on the slug. The slug check is the one
+        # that matters here — "América Femenil" and "CF América Femenil"
+        # normalize to the same `america-femenil`, so attaching the short form
+        # makes the self-alias for the full name redundant, not missing.
+        taken = connection.execute(
+            text(
+                "SELECT team_id FROM team_aliases"
+                " WHERE alias = :a OR normalized_alias = :s LIMIT 1"
+            ),
+            {"a": alias, "s": slug},
+        ).fetchone()
+        if taken is not None:
+            return  # already reachable, here or elsewhere — never steal it
+        connection.execute(
+            text(
+                "INSERT INTO team_aliases (id, team_id, alias, normalized_alias)"
+                " VALUES (:i, :t, :a, :s)"
+            ),
+            {"i": str(uuid.uuid4()), "t": team[0], "a": alias, "s": slug},
+        )
+
+    for alias, team_name in _FEMENIL_TEAM_ALIASES:
+        _attach(alias, team_name)
+
+    womens_rows = connection.execute(
+        text(
+            "SELECT name FROM teams"
+            " WHERE LOWER(name) LIKE '%femenil%' OR LOWER(name) LIKE '%femenino%'"
+        )
+    ).fetchall()
+    for (name,) in womens_rows:
+        _attach(name, name)
+
+
 def _migrate_to_v25(connection) -> None:
     """Move Liga MX Femenil fixtures off the men's rows that absorbed them.
 
@@ -1281,11 +1367,10 @@ def _migrate_to_v23(connection) -> None:
     remaining stopwords, join with "-".
 
     Data only, no DDL, no deletes. Idempotent — a second run recomputes
-    the same values. ``normalized_alias`` carries no unique index (only
-    ``alias`` does), which is precisely how the collision stayed silent;
-    the skip below is therefore not constraint protection but a refusal to
-    hand one slug to two different teams, since ``find_team_by_alias``
-    would then resolve it arbitrarily. Mirrors alembic 0023.
+    the same values. Skips any row whose new slug another team already
+    holds: ``uq_team_alias_normalized`` makes that a hard constraint, and
+    handing one slug to two teams would leave ``find_team_by_alias`` to
+    resolve it arbitrarily anyway. Mirrors alembic 0023.
     """
     rows = connection.execute(
         text(

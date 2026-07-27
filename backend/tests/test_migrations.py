@@ -477,3 +477,113 @@ def test_v25_leaves_a_womens_only_club_alone(tmp_path) -> None:
             text("SELECT t.name FROM matches m JOIN teams t ON t.id = m.home_team_id WHERE m.id = 'm-ws'")
         ).scalar_one()
     assert still == "Washington Spirit"
+
+
+def test_v26_attaches_the_short_form_femenil_aliases(tmp_path) -> None:
+    """The fixture feed says "Pachuca Femenil"; the row is called "C.F.
+    Pachuca Femenil". Without an alias the lookup misses and the next ingest
+    mints a duplicate club."""
+    from sqlalchemy import text
+
+    from app.db import session as db_session
+    from app.db.migrations import _migrate_to_v26, run_migrations
+    from app.models import tables  # noqa: F401
+    from app.repositories.entity_repository import EntityRepository
+    from app.services.normalization_service import NormalizationService
+
+    db_session.configure_session(f"sqlite:///{tmp_path / 'femenil_alias_v26.db'}")
+    run_migrations(db_session.engine)
+
+    with db_session.engine.begin() as connection:
+        for tid, name in (("t-pac", "C.F. Pachuca Femenil"), ("t-atl", "Atlas Femenil")):
+            connection.execute(
+                text("INSERT INTO teams (id, name, is_placeholder) VALUES (:i, :n, 0)"),
+                {"i": tid, "n": name},
+            )
+
+    with db_session.engine.begin() as connection:
+        _migrate_to_v26(connection)
+
+    normalizer = NormalizationService()
+    with db_session.SessionLocal() as session:
+        repo = EntityRepository(session)
+        found = repo.find_team_by_alias(
+            "Pachuca Femenil", normalizer.normalize_team_name("Pachuca Femenil")
+        )
+        assert found is not None and found.name == "C.F. Pachuca Femenil"
+        # A row whose name already matches gets a self-alias, so it resolves
+        # by slug too rather than only by an exact-name hit.
+        by_slug = repo.find_team_by_alias(
+            "atlas femenil", normalizer.normalize_team_name("Atlas Femenil")
+        )
+        assert by_slug is not None and by_slug.name == "Atlas Femenil"
+
+    # Idempotent: a second pass adds nothing.
+    with db_session.engine.begin() as connection:
+        before = connection.execute(text("SELECT COUNT(*) FROM team_aliases")).scalar_one()
+        _migrate_to_v26(connection)
+        after = connection.execute(text("SELECT COUNT(*) FROM team_aliases")).scalar_one()
+    assert before == after
+
+
+def test_v26_never_steals_an_alias_another_team_owns(tmp_path) -> None:
+    from sqlalchemy import text
+
+    from app.db import session as db_session
+    from app.db.migrations import _migrate_to_v26, run_migrations
+    from app.models import tables  # noqa: F401
+
+    db_session.configure_session(f"sqlite:///{tmp_path / 'femenil_alias_owned.db'}")
+    run_migrations(db_session.engine)
+
+    with db_session.engine.begin() as connection:
+        for tid, name in (("t-pac", "C.F. Pachuca Femenil"), ("t-other", "Otro")):
+            connection.execute(
+                text("INSERT INTO teams (id, name, is_placeholder) VALUES (:i, :n, 0)"),
+                {"i": tid, "n": name},
+            )
+        connection.execute(
+            text(
+                "INSERT INTO team_aliases (id, team_id, alias, normalized_alias)"
+                " VALUES ('a-x', 't-other', 'Pachuca Femenil', 'pachuca-femenil')"
+            )
+        )
+
+    with db_session.engine.begin() as connection:
+        _migrate_to_v26(connection)
+        owner = connection.execute(
+            text("SELECT team_id FROM team_aliases WHERE alias = 'Pachuca Femenil'")
+        ).scalar_one()
+    assert owner == "t-other"
+
+
+def test_v26_respects_the_unique_slug_constraint(tmp_path) -> None:
+    """"América Femenil" and "CF América Femenil" normalize to the same slug,
+    and uq_team_alias_normalized makes that unique. Attaching the short form
+    must therefore make the self-alias a no-op, not a crash — this is what
+    broke startup the first time v26 shipped."""
+    from sqlalchemy import text
+
+    from app.db import session as db_session
+    from app.db.migrations import _migrate_to_v26, run_migrations
+    from app.models import tables  # noqa: F401
+
+    db_session.configure_session(f"sqlite:///{tmp_path / 'femenil_slug_clash.db'}")
+    run_migrations(db_session.engine)
+
+    with db_session.engine.begin() as connection:
+        connection.execute(
+            text("INSERT INTO teams (id, name, is_placeholder) VALUES ('t-ame', 'CF América Femenil', 0)")
+        )
+
+    with db_session.engine.begin() as connection:
+        _migrate_to_v26(connection)
+
+    with db_session.engine.begin() as connection:
+        slugs = [
+            row[0]
+            for row in connection.execute(
+                text("SELECT normalized_alias FROM team_aliases WHERE team_id = 't-ame'")
+            ).fetchall()
+        ]
+    assert slugs == ["america-femenil"], slugs

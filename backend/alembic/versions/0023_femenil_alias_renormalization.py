@@ -16,11 +16,14 @@ Two failures came out of that, and only the first is obvious:
   linked to the men's match — orientation included, which produced links
   like "Cruz Azul Femenil vs Pumas Femenil" onto "Pumas vs Cruz Azul";
 * a men's name could resolve to a women's row, because the stripped alias
-  sits in the same lookup namespace and ``find_team_by_alias`` orders an
+  sits in the same lookup namespace and ``find_team_by_alias`` orders a
   ``normalized_alias`` hit ahead of a ``TeamModel.name`` hit. Verified
   against the live database before this revision: resolving "Barcelona"
   returned "Barcelona Femenino", not the men's club that owns 58 results
   in SP1.
+
+``uq_team_alias_normalized`` makes the slug unique, so a row whose
+recomputed slug another team already holds is skipped rather than moved.
 
 Nothing was written to ``match_results`` from this — the fixtures that
 exposed it had no scores yet — but the next scored women's round would

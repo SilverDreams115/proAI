@@ -106,15 +106,13 @@ THESPORTSDB_LEAGUES: list[tuple[str, str, str, list[str]]] = [
     # empty database silently lost them. Both appear in Progol slates:
     # Russia carried PG-2343 position 14, Femenil carried position 1.
     ("4355", "Russian Premier League", "Russia", ["2025-2026", "2026-2027"]),
-    # Femenil deliberately stops at 2025-2026. Enabling 2026-2027 pulled 70
-    # fixtures and the normalizer linked 20 of them to MEN'S Liga MX matches
-    # — it drops the "Femenil" suffix and ignores home/away orientation
-    # ("Cruz Azul Femenil vs Pumas Femenil" matched "Pumas vs Cruz Azul").
-    # Those fixtures carry no scores yet so nothing was written, but once
-    # they do, a women's result would land on a men's match with the sign
-    # inverted. Re-enable only after team normalization distinguishes the
-    # two competitions.
-    ("5206", "Liga MX Femenil", "Mexico", ["2024-2025", "2025-2026"]),
+    # 2026-2027 was held back for a while: with "femenil" still a team
+    # stopword the fixtures linked to MEN'S Liga MX matches, orientation
+    # included. Enabled once v23 taught the normalizer to keep the marker,
+    # v24/v25 unpicked the rows that had already merged, and v26 gave the
+    # women's rows the short-form aliases the fixture feed emits
+    # ("Pachuca Femenil" for "C.F. Pachuca Femenil").
+    ("5206", "Liga MX Femenil", "Mexico", ["2024-2025", "2025-2026", "2026-2027"]),
 ]
 
 
