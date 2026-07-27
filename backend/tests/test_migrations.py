@@ -272,3 +272,103 @@ def test_v23_skips_an_alias_whose_new_slug_another_team_owns(tmp_path) -> None:
             text("SELECT normalized_alias FROM team_aliases WHERE id = 'a-1'")
         ).scalar_one()
     assert untouched == "club-america"
+
+
+def test_v24_splits_a_merged_row_by_competition(tmp_path) -> None:
+    """The femenil collision fused three clubs onto "Barcelona Femenino".
+    v24 peels each competition onto the club it belongs to, creates the
+    target rows that never existed because of the collision, and leaves the
+    women's fixtures untouched."""
+    from datetime import datetime, timezone
+
+    from sqlalchemy import text
+
+    from app.db import session as db_session
+    from app.db.migrations import _migrate_to_v24, run_migrations
+    from app.models import tables  # noqa: F401
+
+    db_session.configure_session(f"sqlite:///{tmp_path / 'split_barcelona.db'}")
+    run_migrations(db_session.engine)
+
+    with db_session.engine.begin() as connection:
+        for cid, cname in (
+            ("c-sp1", "SP1"),
+            ("c-lib", "Copa Libertadores"),
+            ("c-ucw", "UEFA Champions League Femenina"),
+        ):
+            connection.execute(
+                text("INSERT INTO competitions (id, name, is_placeholder) VALUES (:i, :n, 0)"),
+                {"i": cid, "n": cname},
+            )
+        for tid, name in (
+            ("t-merged", "Barcelona Femenino"),
+            ("t-madrid", "Real Madrid"),
+            ("t-boca", "CA Boca Juniors"),
+            ("t-lyon", "Lyonnes Femenino"),
+        ):
+            connection.execute(
+                text("INSERT INTO teams (id, name, is_placeholder) VALUES (:i, :n, 0)"),
+                {"i": tid, "n": name},
+            )
+        for mid, cid, home, away, day in (
+            ("m-sp1", "c-sp1", "t-merged", "t-madrid", 10),
+            ("m-lib", "c-lib", "t-boca", "t-merged", 11),
+            ("m-ucw", "c-ucw", "t-merged", "t-lyon", 12),
+        ):
+            connection.execute(
+                text(
+                    "INSERT INTO matches (id, competition_id, home_team_id, away_team_id, kickoff_at)"
+                    " VALUES (:i, :c, :h, :a, :k)"
+                ),
+                {"i": mid, "c": cid, "h": home, "a": away, "k": datetime(2026, 3, day, tzinfo=timezone.utc)},
+            )
+
+    with db_session.engine.begin() as connection:
+        _migrate_to_v24(connection)
+
+    with db_session.engine.begin() as connection:
+        def team_of(match_id: str, side: str) -> str:
+            return connection.execute(
+                text(f"SELECT t.name FROM matches m JOIN teams t ON t.id = m.{side} WHERE m.id = :i"),
+                {"i": match_id},
+            ).scalar_one()
+
+        # Men's league fixture moved onto a freshly created men's row.
+        assert team_of("m-sp1", "home_team_id") == "Barcelona"
+        # Libertadores fixture moved onto the Ecuadorian club.
+        assert team_of("m-lib", "away_team_id") == "Barcelona SC"
+        # The women's fixture is untouched.
+        assert team_of("m-ucw", "home_team_id") == "Barcelona Femenino"
+
+        country = connection.execute(
+            text("SELECT country FROM teams WHERE name = 'Barcelona SC'")
+        ).scalar_one()
+        assert country == "Ecuador"
+
+    # Idempotent: nothing left in those competitions to move.
+    with db_session.engine.begin() as connection:
+        _migrate_to_v24(connection)
+        still = connection.execute(
+            text("SELECT t.name FROM matches m JOIN teams t ON t.id = m.home_team_id WHERE m.id = 'm-sp1'")
+        ).scalar_one()
+    assert still == "Barcelona"
+
+
+def test_v24_is_a_noop_when_the_merged_row_is_absent(tmp_path) -> None:
+    """A fresh database has none of these rows; the migration must not
+    invent teams or fail."""
+    from sqlalchemy import text
+
+    from app.db import session as db_session
+    from app.db.migrations import _migrate_to_v24, run_migrations
+    from app.models import tables  # noqa: F401
+
+    db_session.configure_session(f"sqlite:///{tmp_path / 'split_noop.db'}")
+    run_migrations(db_session.engine)
+
+    with db_session.engine.begin() as connection:
+        _migrate_to_v24(connection)
+        created = connection.execute(
+            text("SELECT COUNT(*) FROM teams WHERE name IN ('Barcelona', 'Barcelona SC')")
+        ).scalar_one()
+    assert created == 0

@@ -2,6 +2,7 @@ from contextlib import contextmanager
 import fcntl
 from pathlib import Path
 import re
+import uuid
 
 from sqlalchemy import inspect
 from sqlalchemy import text
@@ -9,7 +10,7 @@ from sqlalchemy.engine import Engine
 
 from app.db.base import Base
 
-SCHEMA_VERSION = 23
+SCHEMA_VERSION = 24
 POSTGRES_MIGRATION_LOCK_ID = 791796
 ALEMBIC_VERSION_PATTERN = re.compile(r"^0*(?P<version>\d+)_.*\.py$")
 
@@ -137,6 +138,9 @@ def _run_migrations_unlocked(engine: Engine) -> None:
         if current_version < 23:
             _migrate_to_v23(connection)
             current_version = 23
+        if current_version < 24:
+            _migrate_to_v24(connection)
+            current_version = 24
         connection.execute(text("UPDATE schema_migrations SET version = :version"), {"version": current_version})
 
 
@@ -194,6 +198,7 @@ def _bootstrap_schema(engine: Engine) -> None:
         _migrate_to_v21(connection)
         _migrate_to_v22(connection)
         _migrate_to_v23(connection)
+        _migrate_to_v24(connection)
         connection.execute(text("CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER NOT NULL)"))
         has_row = connection.execute(text("SELECT 1 FROM schema_migrations LIMIT 1")).scalar_one_or_none()
         if has_row is None:
@@ -1068,6 +1073,137 @@ _CONTINENTAL_SPLIT_MERGES: tuple[tuple[str, str], ...] = (
     ("CA River Plate", "River Plate"),
     ("CDC Atlético Nacional", "Atlético Nacional"),
 )
+
+
+# (source team, competition, target team, target country). Each row moves the
+# matches a merged team row holds in ONE competition onto the club they
+# actually belong to, creating the target row when it does not exist yet.
+#
+# "Barcelona Femenino" accumulated 168 matches while "femenil"/"femenino" were
+# team stopwords: every "Barcelona" normalized to `barcelona`, and
+# find_team_by_alias prefers an alias hit over a name hit, so three different
+# clubs landed on the women's row. The split is read off the opponents and is
+# not a judgement call:
+#   * SP1 — Real Madrid, Sevilla, Athletic, Betis, Valencia...  -> men's club
+#   * UEFA Champions League — Bayern, Inter, Chelsea, PSG...    -> men's club
+#   * Copa Libertadores — Boca, River, Corinthians, El Nacional -> Barcelona SC
+#     (Ecuador), the only Barcelona that plays that competition
+#   * UEFA Champions League Femenina — vs Lyonnes Femenino      -> stays put
+#
+# "Tigres UANL Femenil" holds one men's Liga MX fixture (Tijuana vs Tigres,
+# 2026-07-17) by the same mechanism; the men's row already exists.
+_MERGED_TEAM_SPLITS: tuple[tuple[str, str, str, str | None], ...] = (
+    ("Barcelona Femenino", "SP1", "Barcelona", "Spain"),
+    ("Barcelona Femenino", "UEFA Champions League", "Barcelona", "Spain"),
+    ("Barcelona Femenino", "Copa Libertadores", "Barcelona SC", "Ecuador"),
+    ("Tigres UANL Femenil", "Liga MX", "Tigres", None),
+)
+
+
+def _split_team_matches_by_competition(
+    connection,
+    source_name: str,
+    competition_name: str,
+    target_name: str,
+    target_country: str | None,
+) -> None:
+    """Move one team's matches in one competition onto another team row.
+
+    The inverse of ``_merge_team_into``: that helper folds two rows together,
+    this one peels a competition's worth of fixtures off a row that absorbed
+    clubs it never was. Creates the target team when absent — unlike the merge
+    helpers, the correct row may simply not exist yet, because the collision
+    prevented it from ever being created.
+
+    Data only, no DDL, no deletes. The source row survives with whatever
+    genuinely belongs to it. Skips any fixture whose move would collide with
+    an existing (competition, home, away, kickoff) identity. Idempotent: a
+    second run finds nothing left in that competition to move.
+    """
+    source_row = connection.execute(
+        text("SELECT id FROM teams WHERE name = :name LIMIT 1"),
+        {"name": source_name},
+    ).fetchone()
+    competition_row = connection.execute(
+        text("SELECT id FROM competitions WHERE name = :name LIMIT 1"),
+        {"name": competition_name},
+    ).fetchone()
+    if source_row is None or competition_row is None:
+        return
+    source_id = source_row[0]
+    competition_id = competition_row[0]
+
+    pending = connection.execute(
+        text(
+            "SELECT 1 FROM matches WHERE competition_id = :c"
+            " AND (home_team_id = :s OR away_team_id = :s) LIMIT 1"
+        ),
+        {"c": competition_id, "s": source_id},
+    ).fetchone()
+    if pending is None:
+        return  # nothing to move — already split, or never contaminated
+
+    target_row = connection.execute(
+        text("SELECT id FROM teams WHERE name = :name LIMIT 1"),
+        {"name": target_name},
+    ).fetchone()
+    if target_row is None:
+        target_id = str(uuid.uuid4())
+        connection.execute(
+            text(
+                "INSERT INTO teams (id, name, country, is_placeholder)"
+                " VALUES (:i, :n, :c, :p)"
+            ),
+            {
+                "i": target_id,
+                "n": target_name,
+                "c": target_country,
+                "p": _false_for_dialect(connection),
+            },
+        )
+    else:
+        target_id = target_row[0]
+    if target_id == source_id:
+        return
+
+    for side, other in (("home_team_id", "away_team_id"), ("away_team_id", "home_team_id")):
+        connection.execute(
+            text(f"""
+                UPDATE matches
+                SET {side} = :target_id
+                WHERE competition_id = :competition_id
+                  AND {side} = :source_id
+                  AND NOT EXISTS (
+                      SELECT 1 FROM matches m2
+                      WHERE m2.id != matches.id
+                        AND m2.competition_id = matches.competition_id
+                        AND m2.{side} = :target_id
+                        AND m2.{other} = matches.{other}
+                        AND m2.kickoff_at = matches.kickoff_at
+                  )
+            """),
+            {
+                "target_id": target_id,
+                "source_id": source_id,
+                "competition_id": competition_id,
+            },
+        )
+
+
+def _false_for_dialect(connection):
+    """SQLite stores booleans as integers; Postgres wants a real boolean."""
+    return False if connection.engine.dialect.name != "sqlite" else 0
+
+
+def _migrate_to_v24(connection) -> None:
+    """Split the club rows that the femenil normalization collision merged.
+
+    v23 stopped new contamination; this repairs what the old rule already
+    fused. See ``_MERGED_TEAM_SPLITS`` for the per-competition mapping and
+    why each one is unambiguous. Mirrors alembic 0024.
+    """
+    for source, competition, target, country in _MERGED_TEAM_SPLITS:
+        _split_team_matches_by_competition(connection, source, competition, target, country)
 
 
 def _migrate_to_v23(connection) -> None:
