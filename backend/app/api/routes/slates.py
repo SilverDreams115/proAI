@@ -516,10 +516,12 @@ async def set_slate_match_knockout(
 ) -> None:
     """Mark (or clear) a slate position as a knockout / final fixture.
 
-    When ``is_knockout=true`` the prediction service forces the
-    recommendation to be L or V on that position — the boleta in
-    elimination fixtures does not accept "X". Defaults to ``true`` so
-    the simple call ``POST .../knockout`` flips the flag on.
+    When ``is_knockout=true`` the prediction service trims the draw
+    probability by the per-competition calibrated band — it does NOT
+    remove it. Progol grades every position on the 90-minute result, so
+    a knockout that ends level is an official "X" (extra time and
+    penalties do not count). Defaults to ``true`` so the simple call
+    ``POST .../knockout`` flips the flag on.
     """
     from sqlalchemy import select
 

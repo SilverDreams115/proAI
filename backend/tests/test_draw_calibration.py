@@ -113,14 +113,19 @@ def test_draw_already_near_prior_unchanged():
     assert res.reason == "draw_already_sufficient"
 
 
-def test_knockout_never_calibrated():
+def test_squashed_draw_is_calibrated_on_any_fixture():
+    """A knockout-shaped vector (draw squashed well below the prior) gets
+    the same coverage lift as any other match — Progol grades knockouts on
+    the 90-minute result, so X is reachable there too."""
     probs = {"L": 0.70, "E": 0.05, "V": 0.25}
     res = calibrate_draw(
         probs, prior=_prior(0.27), confidence_band="low", evidence_level="low",
-        final_status="REVISAR", quality_ok=False, is_knockout=True,
+        final_status="REVISAR", quality_ok=False,
     )
-    assert res.applied is False
-    assert res.reason == "knockout_no_draw"
+    assert res.applied is True
+    assert res.probabilities["E"] > probs["E"]
+    # Calibration lifts coverage without ever stealing the pick.
+    assert max(res.probabilities, key=res.probabilities.get) == "L"
 
 
 def test_pg2338_like_squashed_draw_gets_coverage_lift():

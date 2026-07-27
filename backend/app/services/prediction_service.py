@@ -187,17 +187,15 @@ class PredictionService:
                     feature_map,
                     competition_name=match.competition.name,
                 )
-            # Band on the FINAL probability vector — for knockouts that
-            # means the post-E=0 redistribution where the comparison is
-            # binary (L vs V). The knockout-aware thresholds in
-            # _confidence_band correct for that shape.
+            # Band on the FINAL probability vector. Knockouts stay on the
+            # same 3-class scale as everything else — the draw is only
+            # shrunk, never removed, so the vector never becomes binary.
             sorted_probabilities = sorted([adjusted_home, adjusted_draw, adjusted_away], reverse=True)
             confidence_band = self._confidence_band(
                 sorted_probabilities[0],
                 sorted_probabilities[1],
                 evidence_count,
                 feature_map,
-                is_knockout=is_knockout,
             )
             if competition_policy["competition_readiness"] == "unclassified":
                 confidence_band = "blocked"
@@ -209,18 +207,16 @@ class PredictionService:
             # of presenting hollow probabilities as if they were grounded.
             if self._has_insufficient_data(feature_map):
                 confidence_band = "blocked"
+            # Every outcome competes on every position, knockouts
+            # included: Progol grades on the 90-minute result, so a
+            # knockout that ends level is an official X. The knockout
+            # shrinkage above already trimmed the draw mass; if X still
+            # comes out highest after that, it is the model's pick.
             outcome_candidates: list[tuple[float, Outcome]] = [
                 (adjusted_home, Outcome.HOME),
                 (adjusted_away, Outcome.AWAY),
+                (adjusted_draw, Outcome.DRAW),
             ]
-            if not is_knockout:
-                outcome_candidates.append((adjusted_draw, Outcome.DRAW))
-            # A knockout / final must produce a winner — the boleta in
-            # those positions doesn't accept X. The model probabilities
-            # were already shrunk above so the L/V mass reflects the
-            # data-anchored attacking rhythm; we still belt-and-
-            # suspenders the choice here to guarantee the pick is L or
-            # V even if the shrinkage left X technically highest.
             recommended_outcome = max(
                 outcome_candidates,
                 key=lambda item: item[0],
@@ -254,7 +250,6 @@ class PredictionService:
                 evidence_level=evidence_level,
                 is_international_friendly=is_friendly,
                 fallback_used=fallback_used,
-                is_knockout=is_knockout,
                 recommended_outcome=recommended_outcome.value,
             )
             if sanity.flags:
@@ -280,6 +275,7 @@ class PredictionService:
             # squashed below the prior. Raw is untouched; the pre-calibration
             # decision vector is preserved. Never makes X the pick. The result
             # feeds both the UI and the ticket optimizer (decision_vector).
+            # Runs on knockouts too — they are graded at 90' like everything else.
             draw_cal = calibrate_draw(
                 {"L": decision_home, "E": decision_draw, "V": decision_away},
                 prior=prior_for_week_type(draw_priors, getattr(slate, "week_type", "") or ""),
@@ -287,7 +283,6 @@ class PredictionService:
                 evidence_level=evidence_level.value,
                 final_status=sanity.final_status.value,
                 quality_ok=sanity.final_status.value not in ("REVISAR", "BLOQUEADO"),
-                is_knockout=is_knockout,
             )
             pre_draw_calibration_vector = dict(draw_cal.pre_probabilities)
             draw_calibration_applied = draw_cal.applied
@@ -432,15 +427,21 @@ class PredictionService:
         *,
         competition_name: str | None = None,
     ) -> tuple[float, float, float, str]:
-        """Redistribute the draw probability for a knockout fixture.
+        """Trim (never remove) the draw probability for a knockout fixture.
 
-        Knockout matches resolve to a winner (ET / penalties), so the
-        90-minute draw mass that the model produced reflects league
-        habits more than final-match dynamics. We shrink the draw
-        proportionally to the expected goal output of the pair —
-        higher rhythm = more likely a winner emerges in regulation —
-        and redistribute the freed mass to L and V weighted by their
-        existing probabilities.
+        Progol grades knockouts on the 90-minute result like every other
+        position, so E stays a valid, non-zero outcome — a final decided
+        on penalties is an official X. What a knockout does change is the
+        *shape* of the 90 minutes: teams that must produce a winner tend
+        to play for one, so the league-habit draw mass the model produced
+        is somewhat too high. We shrink it proportionally to the expected
+        goal output of the pair — higher rhythm = more likely a winner
+        emerges in regulation — and redistribute only the freed fraction
+        to L and V, weighted by their existing probabilities.
+
+        The direction of this correction is a weak prior, not a measured
+        effect: revisit ``KNOCKOUT_TARGET_DRAW_RATE`` once there are ~10+
+        graded knockout results to fit it against.
 
         The shrinkage is data-anchored on two axes:
         * Team-level: each side's goals_for_per_match and
@@ -504,13 +505,15 @@ class PredictionService:
             if league_label:
                 anchor_note = f"{anchor_note} ({league_label})"
 
-        # Boleta rule for knockouts: E is not a valid outcome, so the
-        # displayed probability must be 0%. We redistribute 100% of the
-        # draw mass to L/V (proportional to their existing weights) and
-        # keep the per-league `shrinkage` only as a diagnostic of how
-        # aggressive the redistribution would have been on a soft model.
-        freed_mass = draw_p
-        new_draw = 0.0
+        # Progol grades every position — knockouts included — on the
+        # 90-minute result, so E is a valid outcome here and must keep a
+        # non-zero probability. A tie in regulation that goes to ET or
+        # penalties is still an official "E" on the boleta. We therefore
+        # move only the calibrated `shrinkage` fraction of the draw mass
+        # to L/V (proportional to their existing weights) instead of all
+        # of it.
+        freed_mass = draw_p * shrinkage
+        new_draw = draw_p - freed_mass
         total_ha = home_p + away_p
         if total_ha > 1e-9:
             new_home = home_p + freed_mass * (home_p / total_ha)
@@ -527,9 +530,9 @@ class PredictionService:
 
         shrinkage_pct = int(round(shrinkage * 100))
         note = (
-            f"Eliminatoria: empate descartado por la boleta (E=0%). "
-            f"Toda la masa de E redistribuida a L/V proporcional "
-            f"(banda calibrada {shrinkage_pct}%, {anchor_note}); "
+            f"Eliminatoria: empate reducido {shrinkage_pct}%, no descartado "
+            f"(el signo se define a los 90'; prorroga y penales no cuentan). "
+            f"Masa liberada redistribuida a L/V proporcional ({anchor_note}); "
             f"probabilidades ajustadas L={new_home:.2f} E={new_draw:.2f} V={new_away:.2f}."
         )
         return new_home, new_draw, new_away, note
@@ -765,8 +768,6 @@ class PredictionService:
         second_probability: float,
         evidence_count: int,
         feature_map: dict[str, float] | None = None,
-        *,
-        is_knockout: bool = False,
     ) -> str:
         spread = top_probability - second_probability
         # No per-match news scraper runs yet, so evidence_count is 0 on
@@ -783,19 +784,6 @@ class PredictionService:
             or h2h >= 2
             or (home_recent >= 3 and away_recent >= 3)
         )
-        # Knockouts: after the E=0 redistribution the comparison is
-        # binary (L vs V). The 3-class spread thresholds undersell the
-        # signal — drop the spread guard and band on top alone.
-        # high threshold = 0.55 because the residual mass on the second
-        # outcome is at most 0.45 by construction (top + second = 1
-        # after E=0), so a 0.55 favourite carries a real edge — the
-        # 0.60 we used before was carried over from the 3-class scale.
-        if is_knockout:
-            if top_probability >= 0.55 and anchored:
-                return "high"
-            if top_probability >= 0.50:
-                return "medium"
-            return "low"
         if top_probability >= 0.55 and spread >= 0.12 and anchored:
             return "high"
         if top_probability >= 0.40 and spread >= 0.02 and anchored:

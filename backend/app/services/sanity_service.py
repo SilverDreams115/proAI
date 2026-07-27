@@ -323,8 +323,6 @@ def _status_from_band(band: str) -> FinalStatus:
 def _shrink_toward_prior(
     probabilities: dict[str, float],
     cap: float,
-    *,
-    is_knockout: bool,
 ) -> dict[str, float]:
     """Blend the vector toward the uniform prior until the top outcome
     sits at ``cap``.
@@ -332,18 +330,16 @@ def _shrink_toward_prior(
     Uses ``p' = lambda * p + (1 - lambda) * prior`` with a single lambda
     chosen so ``max(p')`` == ``cap``. This preserves the argmax and the
     relative ordering of all outcomes — it degrades confidence without
-    inventing a different pick. For knockouts the draw is held at 0 and
-    the prior is split 50/50 across L and V.
+    inventing a different pick. The prior is uniform on every fixture,
+    knockouts included: Progol grades on the 90-minute result, so a draw
+    is a reachable outcome everywhere.
     """
     top_label = _argmax_label(probabilities)
     top_value = probabilities[top_label]
     if top_value <= cap:
         return dict(probabilities)
 
-    if is_knockout:
-        prior = {"home": 0.5, "draw": 0.0, "away": 0.5}
-    else:
-        prior = {"home": 1.0 / 3.0, "draw": 1.0 / 3.0, "away": 1.0 / 3.0}
+    prior = {"home": 1.0 / 3.0, "draw": 1.0 / 3.0, "away": 1.0 / 3.0}
     prior_top = prior[top_label]
 
     denominator = top_value - prior_top
@@ -374,7 +370,6 @@ def apply_sanity_layer(
     evidence_level: EvidenceLevel,
     is_international_friendly: bool = False,
     fallback_used: bool = False,
-    is_knockout: bool = False,
     recommended_outcome: str,
 ) -> SanityResult:
     """Run the guardrail policy over one match's probabilities.
@@ -435,7 +430,7 @@ def apply_sanity_layer(
         # degraded to the friendly cap at most — it must not be shown raw.
         cap = min(cap, FRIENDLY_PROBABILITY_CAP)
 
-    adjusted = _shrink_toward_prior(raw, cap, is_knockout=is_knockout)
+    adjusted = _shrink_toward_prior(raw, cap)
     if _argmax_label(adjusted) != top_label or adjusted[top_label] < raw[top_label] - 1e-6:
         # Cap actually bit. Record the right flag(s).
         if SanityFlag.EXTREME_PROBABILITY_CAPPED not in flags:

@@ -145,17 +145,12 @@ def calibrate_draw(
     evidence_level: str | None,
     final_status: str | None,
     quality_ok: bool,
-    is_knockout: bool = False,
 ) -> DrawCalibrationResult:
     """Conservatively nudge the decision-vector draw probability toward the
     prior on uncertain, low-evidence matches. Pure; never mutates the input.
     """
     pre = {k: float(probabilities.get(k, 0.0)) for k in ("L", "E", "V")}
     home, draw, away = pre["L"], pre["E"], pre["V"]
-
-    # Knockouts have no X on the boleta — never calibrate a draw in.
-    if is_knockout:
-        return DrawCalibrationResult(pre, False, "knockout_no_draw", pre)
 
     top = max(home, draw, away)
     top_two = sorted((home, draw, away), reverse=True)

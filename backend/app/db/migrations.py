@@ -459,10 +459,12 @@ def _migrate_to_v9(connection) -> None:
     """Mark progol_slate_matches positions that are knockout fixtures.
 
     Knockout / elimination fixtures (Champions League final, Liga MX
-    Liguilla final, etc.) must produce a winner — the boleta in those
-    positions does not accept "X". The slate-match level (not the
-    match level) is the right scope: the same fixture pair could be a
-    friendly one week and a final the next.
+    Liguilla final, etc.) advance a winner, but Progol still grades the
+    position on the 90-minute result — a tie decided by penalties is an
+    official "X". The flag only trims the model's draw mass; it never
+    removes it. The slate-match level (not the match level) is the right
+    scope: the same fixture pair could be a friendly one week and a
+    final the next.
     """
     _add_column_if_missing(
         connection,

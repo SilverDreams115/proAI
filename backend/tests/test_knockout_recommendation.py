@@ -1,10 +1,16 @@
-"""Knockout positions must never recommend a draw.
+"""Knockout positions trim the draw — they never eliminate it.
 
-When a slate operator (or the upstream parser) flags a position as
-knockout / final, the boleta semantics in that position don't allow
-"X". The prediction service keeps the raw three probabilities so the
-operator can see the model's full view, but the recommendation collapses
-to L or V — whichever the model thinks is more likely.
+Progol grades every position on the 90-minute result, knockouts
+included: a tie in regulation that goes to extra time or penalties is
+still an official "X" on the boleta. PG-2335 proved it the hard way —
+positions 2 (PSG 1-1 Arsenal) and 3 (Toluca 0-0 Tigres) were both flagged
+knockout, both ended level, and both were served with p_draw = 0.0, so the
+model had zero probability on the outcome that happened and the jornada's
+logloss blew up to 4.90.
+
+The prediction service therefore shrinks the draw mass by the
+per-competition calibrated band and redistributes only that fraction to
+L/V. X remains a reachable recommendation.
 """
 
 from __future__ import annotations
@@ -57,7 +63,7 @@ def _seed_slate_match(session, *, is_knockout: bool):
     return slate
 
 
-def test_recommendation_skips_draw_for_knockout_position(tmp_path) -> None:
+def test_knockout_position_keeps_draw_available(tmp_path) -> None:
     from app.repositories.entity_repository import EntityRepository
     from app.repositories.result_repository import ResultRepository
     from app.repositories.training_repository import TrainingRepository
@@ -81,9 +87,10 @@ def test_recommendation_skips_draw_for_knockout_position(tmp_path) -> None:
         assert len(responses) == 1
         response = responses[0]
         assert response.is_knockout is True
-        # Pick collapses to L or V regardless of which class scored
-        # highest before the knockout adjustment.
-        assert response.recommended_outcome.value in {"1", "2"}
+        # Progol grades knockouts at 90', so X stays a reachable pick and
+        # the draw keeps a non-zero probability on the served vector.
+        assert response.recommended_outcome.value in {"1", "X", "2"}
+        assert response.probabilities["E"] > 0.0
         assert any("Eliminatoria" in note for note in response.rationale)
     finally:
         invalidate_slate_prediction_cache()
@@ -91,11 +98,10 @@ def test_recommendation_skips_draw_for_knockout_position(tmp_path) -> None:
 
 
 def test_knockout_redistributes_draw_into_home_and_away(tmp_path) -> None:
-    """Boleta rule: knockouts must report E=0% and redistribute the
-    entire draw mass into L/V, proportional to their pre-adjustment
-    share. The per-league shrinkage band is preserved only in the
-    rationale note as a diagnostic of how aggressive the soft-model
-    redistribution would have been."""
+    """Knockouts trim the draw by the per-league calibrated shrinkage and
+    redistribute only that fraction into L/V, proportional to their
+    pre-adjustment share. E is reduced, never removed — Progol grades the
+    position on the 90-minute result."""
     from app.services.prediction_service import PredictionService
 
     service = PredictionService(training_service=None)
@@ -114,7 +120,7 @@ def test_knockout_redistributes_draw_into_home_and_away(tmp_path) -> None:
         home_p, draw_p, away_p, feature_map,
     )
 
-    assert new_draw == 0.0, "Draw must be exactly 0% on knockouts (boleta rule)."
+    assert 0.0 < new_draw < draw_p, "Draw must be trimmed on knockouts, never zeroed."
     assert new_home > home_p
     assert new_away > away_p
     pre_ratio = home_p / away_p
@@ -125,7 +131,7 @@ def test_knockout_redistributes_draw_into_home_and_away(tmp_path) -> None:
     assert abs(post_ratio - pre_ratio) < 1e-9
     assert abs((new_home + new_draw + new_away) - 1.0) < 1e-6
     assert "Eliminatoria" in note
-    assert "E=0%" in note
+    assert "no descartado" in note
 
 
 def test_knockout_thin_data_falls_back_to_minimum_shrinkage(tmp_path) -> None:
@@ -145,11 +151,55 @@ def test_knockout_thin_data_falls_back_to_minimum_shrinkage(tmp_path) -> None:
     new_home, new_draw, new_away, note = service._apply_knockout_adjustment(
         0.30, 0.55, 0.15, feature_map,
     )
-    # Boleta rule supersedes data-anchored shrinkage: E=0% even when
-    # no recent form is available. The diagnostic note still records
-    # that we fell back to the band floor for the per-league summary.
-    assert new_draw == 0.0
+    # With no recent form we shrink by the band floor only — the least
+    # aggressive trim, since we have no evidence about this pair's rhythm.
+    assert 0.0 < new_draw < 0.55
     assert "datos historicos limitados" in note
+
+
+def test_knockout_trim_uses_the_calibrated_band(tmp_path) -> None:
+    """The surviving draw mass must equal the calibrated shrinkage applied
+    to the model's draw — not an arbitrary constant. Without a training
+    service the fallback band is (0.15, 0.55), so E keeps between 45% and
+    85% of its pre-adjustment mass."""
+    from app.services.prediction_service import PredictionService
+
+    service = PredictionService(training_service=None)
+    draw_p = 0.40
+    feature_map = {
+        "home_goals_for_per_match": 1.5,
+        "away_goals_for_per_match": 1.4,
+        "home_goals_against_per_match": 1.2,
+        "away_goals_against_per_match": 1.1,
+        "home_recent_matches": 8,
+        "away_recent_matches": 8,
+    }
+    _, new_draw, _, _ = service._apply_knockout_adjustment(
+        0.35, draw_p, 0.25, feature_map,
+    )
+    surviving_fraction = new_draw / draw_p
+    assert 1 - PredictionService.KNOCKOUT_SHRINK_MAX_FALLBACK <= surviving_fraction
+    assert surviving_fraction <= 1 - PredictionService.KNOCKOUT_SHRINK_MIN_FALLBACK
+
+
+def test_knockout_can_still_recommend_draw_when_draw_dominates(tmp_path) -> None:
+    """A knockout where the model is overwhelmingly on X keeps X as the
+    pick. The shrinkage trims the draw; it does not veto it."""
+    from app.services.prediction_service import PredictionService
+
+    service = PredictionService(training_service=None)
+    feature_map = {
+        "home_goals_for_per_match": 0.6,
+        "away_goals_for_per_match": 0.5,
+        "home_goals_against_per_match": 0.7,
+        "away_goals_against_per_match": 0.6,
+        "home_recent_matches": 10,
+        "away_recent_matches": 10,
+    }
+    new_home, new_draw, new_away, _ = service._apply_knockout_adjustment(
+        0.20, 0.65, 0.15, feature_map,
+    )
+    assert new_draw > new_home and new_draw > new_away
 
 
 def test_knockout_shrinkage_calibration_widens_with_high_draw_league(tmp_path) -> None:
