@@ -102,6 +102,19 @@ THESPORTSDB_LEAGUES: list[tuple[str, str, str, list[str]]] = [
     # Argentinian Primera División (calendar-year): Rivadavia, Tigre... —
     # closes the historical gap for Argentina.
     ("4406", "Argentinian Primera Division", "Argentina", ["2024", "2025", "2026"]),
+    # Registered by hand before this script existed, so a rebuild from an
+    # empty database silently lost them. Both appear in Progol slates:
+    # Russia carried PG-2343 position 14, Femenil carried position 1.
+    ("4355", "Russian Premier League", "Russia", ["2025-2026", "2026-2027"]),
+    # Femenil deliberately stops at 2025-2026. Enabling 2026-2027 pulled 70
+    # fixtures and the normalizer linked 20 of them to MEN'S Liga MX matches
+    # — it drops the "Femenil" suffix and ignores home/away orientation
+    # ("Cruz Azul Femenil vs Pumas Femenil" matched "Pumas vs Cruz Azul").
+    # Those fixtures carry no scores yet so nothing was written, but once
+    # they do, a women's result would land on a men's match with the sign
+    # inverted. Re-enable only after team normalization distinguishes the
+    # two competitions.
+    ("5206", "Liga MX Femenil", "Mexico", ["2024-2025", "2025-2026"]),
 ]
 
 
@@ -114,17 +127,27 @@ DAY_STRATEGY_LEAGUES: dict[str, int] = {
     "4406": 21,  # Argentinian Primera Division
 }
 
+# Leagues that need a non-default round ceiling. The connector's default of
+# 50 is fine for most, but these were registered by hand with a tighter
+# bound and re-running the bootstrap must not silently widen it.
+MAX_ROUND_LEAGUES: dict[str, int] = {
+    "4355": 30,  # Russian Premier League
+    "5206": 40,  # Liga MX Femenil
+}
+
 
 def _source_for(league_id: str, label: str, seasons: list[str]) -> dict[str, object]:
     season_csv = ",".join(seasons)
     days_back = DAY_STRATEGY_LEAGUES.get(league_id)
     strategy = f"&strategy=day&days_back={days_back}" if days_back is not None else ""
+    max_round = MAX_ROUND_LEAGUES.get(league_id)
+    round_cap = f"&max_round={max_round}" if max_round is not None else ""
     return {
         "name": f"TSDB {label}",
         "base_url": (
             f"https://www.thesportsdb.com/api/v1/json/3?league={quote(league_id)}"
             f"&seasons={quote(season_csv, safe=',-')}"
-            f"{strategy}"
+            f"{strategy}{round_cap}"
             f"&competition={quote(label)}"
         ),
         "kind": "thesportsdb_season",
