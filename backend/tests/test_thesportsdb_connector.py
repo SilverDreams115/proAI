@@ -376,3 +376,78 @@ def test_backfill_flag_accepts_only_truthy_values(monkeypatch: pytest.MonkeyPatc
         seasons = connector._seasons
         assert (len(seasons) == 3) is expect_all_seasons, raw
         assert seasons[-1] == "2026"
+
+
+def _day_url(league_id: str, day: str) -> str:
+    return (
+        f"https://www.thesportsdb.com/api/v1/json/3/eventsday.php?"
+        f"d={day}&l={league_id}"
+    )
+
+
+def test_day_strategy_walks_calendar_days_backwards(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Argentina reuses round numbers between Apertura and Clausura inside
+    one season label, so `eventsround.php` (capped at 5 events per call)
+    only ever returns the earliest fixtures and the current half is
+    unreachable. `strategy=day` walks dates instead, where no collision
+    exists."""
+    from datetime import datetime, timezone
+
+    today = datetime.now(timezone.utc)
+    body = json.dumps(
+        {
+            "events": [
+                {
+                    "idEvent": "arg-1",
+                    "strLeague": "Argentinian Primera Division",
+                    "strHomeTeam": "Newell's Old Boys",
+                    "strAwayTeam": "Talleres de Cordoba",
+                    "intHomeScore": "1",
+                    "intAwayScore": "0",
+                    "strTimestamp": "2026-07-25T20:00:00",
+                }
+            ]
+        }
+    )
+    day_zero = today.strftime("%Y-%m-%d")
+    calls = _patch_urlopen(monkeypatch, {_day_url("4406", day_zero): body})
+
+    connector = TheSportsDbSeasonConnector(
+        name="x",
+        base_url="https://api.example/?league=4406&seasons=2026&strategy=day&days_back=3",
+    )
+    documents = connector.fetch()
+
+    assert len(calls) == 3, "one request per calendar day walked"
+    assert all("eventsday.php" in call for call in calls)
+    assert not any("eventsround.php" in call for call in calls)
+    assert len(documents) == 1
+    fixture = documents[0].payload["fixtures"][0]
+    assert fixture["home_team"] == "Newell's Old Boys"
+    assert fixture["home_goals"] == 1
+
+
+def test_round_strategy_is_the_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Sources that do not opt in must keep walking rounds exactly as
+    before — the day strategy is additive, never a silent switch."""
+    calls = _patch_urlopen(monkeypatch, {})
+
+    connector = TheSportsDbSeasonConnector(
+        name="x",
+        base_url="https://api.example/?league=4351&seasons=2026",
+    )
+    connector.fetch()
+
+    assert connector._day_strategy is False
+    assert all("eventsround.php" in call for call in calls)
+
+
+def test_day_strategy_defaults_and_rejects_bad_days_back() -> None:
+    for raw, expected in (("", 21), ("7", 7), ("abc", 21), ("0", 21), ("-5", 21)):
+        suffix = f"&days_back={raw}" if raw else ""
+        connector = TheSportsDbSeasonConnector(
+            name="x",
+            base_url=f"https://api.example/?league=4406&seasons=2026&strategy=day{suffix}",
+        )
+        assert connector._days_back == expected, raw
+        assert connector._day_strategy is True

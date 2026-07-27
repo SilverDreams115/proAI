@@ -22,6 +22,18 @@ stops after `MAX_EMPTY_ROUNDS` consecutive empty responses — that way a
 short league like Liga MX (17 rounds) doesn't pay for 50 round requests
 while Brasileirao (38 rounds) still gets every match.
 
+Round walking breaks down on leagues that restart round numbering inside
+one season label. Argentina is the case that forced this: the Clausura
+reuses rounds 1..N of the same `2026` season, and since the free key caps
+`eventsround.php` at 5 events per call, only the earliest (Apertura)
+fixtures ever come back — the second-half matches are permanently behind
+the cap. For those leagues pass `strategy=day&days_back=<N>` in base_url
+and the connector walks `eventsday.php` one calendar day at a time
+instead. That endpoint is capped at 3 events per call, so a league with
+more than three matches on the same day still loses some, but a partial
+current season beats a complete stale one. Full coverage needs a provider
+without a per-response cap.
+
 Sequential requests with a small delay stay under TheSportsDB's free-tier
 rate limit. Missing scores (future events) yield `None`, which the parser
 treats as "no result row yet" — only fixtures with both goals fields
@@ -31,7 +43,7 @@ from __future__ import annotations
 
 import json
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from urllib.error import HTTPError
 from urllib.parse import parse_qs, urlsplit
@@ -54,6 +66,10 @@ class TheSportsDbSeasonConnector(SourceConnector):
     # 38 rounds; Liga MX 17 per torneo) so a static upper bound would
     # waste calls or miss data.
     MAX_EMPTY_ROUNDS = 3
+    # How many calendar days back `strategy=day` walks when the source does
+    # not say. Three weeks covers a scheduled daily run missing a few cycles
+    # without turning one source into a 100-request job.
+    DEFAULT_DAYS_BACK = 21
 
     def __init__(self, name: str, base_url: str) -> None:
         self.name = name
@@ -108,8 +124,57 @@ class TheSportsDbSeasonConnector(SourceConnector):
             )
         except ValueError:
             self._max_round = self.DEFAULT_MAX_ROUND
+        strategy_values = params.get("strategy") or []
+        self._day_strategy = (
+            strategy_values[0].strip().lower() == "day" if strategy_values else False
+        )
+        days_back_values = params.get("days_back") or []
+        try:
+            self._days_back = (
+                int(days_back_values[0]) if days_back_values else self.DEFAULT_DAYS_BACK
+            )
+        except ValueError:
+            self._days_back = self.DEFAULT_DAYS_BACK
+        if self._days_back < 1:
+            self._days_back = self.DEFAULT_DAYS_BACK
 
     def fetch(self) -> list[SourceDocument]:
+        if self._day_strategy:
+            return self._fetch_by_day()
+        return self._fetch_by_round()
+
+    def _fetch_by_day(self) -> list[SourceDocument]:
+        """Walk `eventsday.php` backwards from today.
+
+        For leagues whose round numbers repeat within a season, the round
+        endpoint returns only the earliest fixtures under that number and
+        the current ones are unreachable. Walking days sidesteps the
+        collision entirely — every response is scoped to one date.
+        """
+        documents: list[SourceDocument] = []
+        seen_event_ids: set[str] = set()
+        captured = datetime.now(timezone.utc)
+        for offset in range(self._days_back):
+            if offset > 0:
+                time.sleep(self.REQUEST_DELAY_SECONDS)
+            day = (captured - timedelta(days=offset)).strftime("%Y-%m-%d")
+            url = f"{self.API_HOST}/eventsday.php?d={day}&l={self._league_id}"
+            body = self._fetch_with_backoff(url)
+            payload = json.loads(body) if body.strip() else {"events": []}
+            for event in payload.get("events") or []:
+                if not isinstance(event, dict):
+                    continue
+                event_id = str(event.get("idEvent") or "")
+                if event_id and event_id in seen_event_ids:
+                    continue
+                if event_id:
+                    seen_event_ids.add(event_id)
+                doc = self._to_document(event, url, captured)
+                if doc is not None:
+                    documents.append(doc)
+        return documents
+
+    def _fetch_by_round(self) -> list[SourceDocument]:
         documents: list[SourceDocument] = []
         seen_event_ids: set[str] = set()
         captured = datetime.now(timezone.utc)
