@@ -623,3 +623,53 @@ def test_diagnostic_report_is_pure_dry_run_with_zero_db_writes():
     )
     assert report["dry_run"] is True
     assert report["db_writes"] == 0
+
+
+# --- Gender is disqualifying, unlike a plain competition label mismatch ---
+
+def test_womens_fixture_never_matches_the_mens_match_safely():
+    """Liga MX Femenil documents linked onto men's Liga MX matches because
+    competition similarity is floored at 0.5 on purpose (providers mislabel)
+    and "Pachuca Femenil" scores very high against "Pachuca". Gender is not a
+    labelling difference, so it blocks safe."""
+    slate = _slate_input("Pachuca Femenil", "Pumas UNAM Femenil", competition="Liga MX Femenil", day=18)
+    fixture = _fx("Pachuca", "Pumas UNAM", comp="Liga MX")
+
+    decision = match_slate_fixture(slate, [fixture])
+
+    assert decision.decision != "safe"
+    assert "gender_mismatch" in decision.safe_blockers
+    assert "gender_mismatch" in decision.mapping_warnings
+
+
+def test_mens_fixture_never_matches_the_womens_match_safely():
+    """The reverse direction matters just as much: a men's slate position must
+    not pick up the women's result."""
+    slate = _slate_input("Pachuca", "Pumas UNAM", competition="Liga MX", day=18)
+    fixture = _fx("Pachuca Femenil", "Pumas UNAM Femenil", comp="Liga MX Femenil")
+
+    decision = match_slate_fixture(slate, [fixture])
+
+    assert decision.decision != "safe"
+    assert "gender_mismatch" in decision.safe_blockers
+
+
+def test_two_womens_sides_still_match_normally():
+    """The guard keys on a *difference*, so a women's fixture matched against
+    the women's competition is untouched."""
+    slate = _slate_input("Pachuca Femenil", "Pumas UNAM Femenil", competition="Liga MX Femenil", day=18)
+    fixture = _fx("Pachuca Femenil", "Pumas UNAM Femenil", comp="Liga MX Femenil")
+
+    decision = match_slate_fixture(slate, [fixture])
+
+    assert "gender_mismatch" not in decision.safe_blockers
+
+
+def test_english_womens_markers_are_recognised():
+    """Providers write the marker in their own language."""
+    slate = _slate_input("Chelsea Women", "Arsenal Women", competition="WSL", day=18)
+    fixture = _fx("Chelsea", "Arsenal", comp="Premier League")
+
+    decision = match_slate_fixture(slate, [fixture])
+
+    assert "gender_mismatch" in decision.safe_blockers

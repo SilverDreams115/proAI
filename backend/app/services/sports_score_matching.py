@@ -119,6 +119,39 @@ def _competition_similarity(a: str | None, b: str | None) -> float:
     return 0.5 + 0.5 * SequenceMatcher(None, na, nb).ratio()
 
 
+# Markers that make a competition or club a women's one. A women's fixture
+# and the men's fixture of the same clubs are different matches, not the same
+# match under two provider labels — so unlike a plain competition mismatch,
+# this one disqualifies.
+_WOMENS_MARKERS = ("femenil", "femenino", "femenina", "women", "womens", "feminin")
+
+
+def _is_womens(*values: str | None) -> bool:
+    for value in values:
+        if not value:
+            continue
+        lowered = value.lower()
+        if any(marker in lowered for marker in _WOMENS_MARKERS):
+            return True
+    return False
+
+
+def gender_mismatch(slate: "SlateMatchInput", fixture: ApiFootballFixture) -> bool:
+    """True when one side is a women's fixture and the other is not.
+
+    `_competition_similarity` is floored at 0.5 on purpose: providers file the
+    same fixture under different competition labels, so a label difference must
+    not sink an otherwise strong match. That tolerance cannot tell "same
+    competition, wrong label" from "the women's edition of this fixture", and
+    the team names make it worse — SequenceMatcher scores "Pachuca Femenil"
+    against "Pachuca" very highly. Liga MX Femenil documents linked onto men's
+    Liga MX matches that way, orientation included.
+    """
+    slate_womens = _is_womens(slate.competition, slate.home, slate.away)
+    fixture_womens = _is_womens(fixture.competition, fixture.home, fixture.away)
+    return slate_womens != fixture_womens
+
+
 def _competition_mismatch(a: str | None, b: str | None) -> bool:
     if not a or not b:
         return False
@@ -193,6 +226,8 @@ def _warnings_for(slate: SlateMatchInput, cand: CandidateScore) -> list[str]:
         warnings.append(f"date_offset_{offset}d")
     if _competition_mismatch(slate.competition, fx.competition):
         warnings.append("competition_mismatch")
+    if gender_mismatch(slate, fx):
+        warnings.append("gender_mismatch")
     if cand.team_match_score < TEAM_CLARITY_FLOOR:
         warnings.append("ambiguous_team_match")
     return warnings
@@ -232,6 +267,8 @@ def match_slate_fixture(
     warnings = _warnings_for(slate, best)
 
     safe_blockers: list[str] = []
+    if gender_mismatch(slate, best.fixture):
+        safe_blockers.append("gender_mismatch")
     if best.inverted:
         safe_blockers.append("home_away_inverted")
     if best.team_match_score < TEAM_CLARITY_FLOOR:

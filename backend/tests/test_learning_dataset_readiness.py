@@ -78,3 +78,39 @@ def test_readiness_counts_classification_rows_from_materialized_score(
     assert report["classification_comparable_slates"] == ["PG-SCORED"]
     assert report["classification_match_count"] == 3
     assert report["classification_training_ready"] is True
+
+
+def test_slate_with_results_but_no_predictions_is_not_comparable(learn_db, monkeypatch):  # noqa: F811
+    """A slate can have every canonical result and still have nothing to
+    compare them against. This is the PGM-801 case: 9/9 results, zero
+    prediction rows. learning_inventory always excluded it as
+    `incomplete_predictions` while this service counted it, so the inventory
+    reported 8 comparable slates and the gate reported 9 — and the gate is
+    what authorises retraining."""
+    monkeypatch.setattr(readiness_mod, "MIN_COMPARABLE_SLATES", 1)
+    monkeypatch.setattr(readiness_mod, "MIN_COMPARABLE_MATCHES", 1)
+    seed_official_slate(
+        learn_db, draw="PGM-801", n=9, with_results=True, with_predictions=False
+    )
+
+    report = build_dataset_readiness(learn_db)
+
+    assert report["comparable_slate_count"] == 0
+    assert report["comparable_match_count"] == 0
+    assert "PGM-801" in report["excluded"]
+    assert "incomplete_predictions" in report["excluded"]["PGM-801"]
+    assert report["training_ready"] is False
+
+
+def test_predictions_plus_results_still_counts(learn_db, monkeypatch):  # noqa: F811
+    """The new check must not exclude a genuinely comparable slate."""
+    monkeypatch.setattr(readiness_mod, "MIN_COMPARABLE_SLATES", 1)
+    monkeypatch.setattr(readiness_mod, "MIN_COMPARABLE_MATCHES", 1)
+    seed_official_slate(
+        learn_db, draw="PG-OK", n=5, with_results=True, with_predictions=True
+    )
+
+    report = build_dataset_readiness(learn_db)
+
+    assert report["comparable_slate_count"] == 1
+    assert report["comparable_match_count"] == 5

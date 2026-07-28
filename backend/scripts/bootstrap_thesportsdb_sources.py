@@ -134,6 +134,27 @@ MAX_ROUND_LEAGUES: dict[str, int] = {
 }
 
 
+# Sources this script deliberately does NOT manage. They exist in databases
+# that predate it, and each is deactivated rather than deleted: their
+# documents and the matches those produced stay valid, only the ingestion is
+# stopped. Recorded here because a bare `is_active = false` row explains
+# nothing to whoever finds it next.
+#
+#   TSDB Brasileirao 2026 — duplicate: same league 4351 and the same
+#     competition label as "TSDB Brasileirao", which this script manages.
+#   TSDB WCQ UEFA 2026 — the competition finished with the June 2026 World
+#     Cup. Its row is also named for the concurso while its label is
+#     "World Cup Qualifying UEFA", so bootstrapping it would mint a second
+#     source rather than upsert this one.
+#   TSDB Team Backfill — carries no `league` parameter at all, so the season
+#     connector rejects it. It has produced zero documents in its lifetime.
+DEACTIVATED_LEGACY_SOURCES: tuple[str, ...] = (
+    "TSDB Brasileirao 2026",
+    "TSDB WCQ UEFA 2026",
+    "TSDB Team Backfill",
+)
+
+
 def _source_for(league_id: str, label: str, seasons: list[str]) -> dict[str, object]:
     season_csv = ",".join(seasons)
     days_back = DAY_STRATEGY_LEAGUES.get(league_id)

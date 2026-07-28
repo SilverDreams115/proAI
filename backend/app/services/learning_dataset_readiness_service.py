@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 
 from app.models.tables import (
     MatchFeatureSnapshotModel,
+    PredictionModel,
     ProgolJornadaScoreModel,
     ProgolSlateModel,
 )
@@ -38,6 +39,25 @@ def _matches_with_features(session: Session, match_ids: list[str]) -> set[str]:
     rows = session.scalars(
         select(MatchFeatureSnapshotModel.match_id)
         .where(MatchFeatureSnapshotModel.match_id.in_(match_ids))
+        .distinct()
+    ).all()
+    return set(rows)
+
+
+def _matches_with_predictions(session: Session, match_ids: list[str]) -> set[str]:
+    """Fixtures that carry at least one prediction row.
+
+    Deliberately keyed on match_id alone, not (slate_id, match_id): some
+    slates persisted predictions before the rows carried a slate_id, and
+    `completed_slate_results_validation_service._latest_prediction_sign`
+    already falls back the same way. Matching that behaviour keeps the two
+    comparability definitions from disagreeing again.
+    """
+    if not match_ids:
+        return set()
+    rows = session.scalars(
+        select(PredictionModel.match_id)
+        .where(PredictionModel.match_id.in_(match_ids))
         .distinct()
     ).all()
     return set(rows)
@@ -168,6 +188,20 @@ def build_dataset_readiness(session: Session) -> dict[str, Any]:
                 excluded[slate.draw_code] = (
                     f"incomplete_results ({covered}/{len(match_ids)} canonical, {conflicts} conflicts)"
                 )
+            continue
+
+        # A slate with results but no predictions has nothing to compare
+        # them against. `learning_inventory` has always excluded these as
+        # `incomplete_predictions`; this service did not, so the two
+        # disagreed — the inventory reported 8 comparable slates while the
+        # gate reported 9, counting PGM-801, which has zero prediction rows.
+        # The gate is what authorises retraining, so it was the one
+        # over-counting the evidence.
+        predicted = _matches_with_predictions(session, match_ids)
+        if len(predicted) < len(match_ids):
+            excluded[slate.draw_code] = (
+                f"incomplete_predictions ({len(predicted)}/{len(match_ids)} predicted)"
+            )
             continue
 
         # Comparable slate confirmed.
