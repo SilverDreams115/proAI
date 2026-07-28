@@ -82,6 +82,15 @@ class FeatureService:
     def __init__(self, repository: FeatureRepository, result_repository: ResultRepository | None = None) -> None:
         self.repository = repository
         self.result_repository = result_repository
+        # Per-instance memo for build_model_features, keyed by (match, cutoff).
+        # Scoring one slate asked for the same match's features three times —
+        # once for the rationale's feature map and twice down the scoring path
+        # — and each rebuild re-ran the recent-form, head-to-head, evidence and
+        # availability queries. That was 84 recent-form round-trips for 14
+        # matches. A FeatureService is constructed per session (there is no
+        # singleton anywhere), so the memo cannot outlive the request, and no
+        # caller mutates the returned map.
+        self._model_feature_memo: dict[tuple[str, str], dict[str, float]] = {}
 
     def build_match_features(
         self, match_id: str, *, use_cache: bool = True, persist: bool = False
@@ -203,6 +212,13 @@ class FeatureService:
             cutoff = match.kickoff_at
         if cutoff.tzinfo is None:
             cutoff = cutoff.replace(tzinfo=timezone.utc)
+        # Keyed on the cutoff too: a walk-forward evaluation scores the same
+        # match at several cutoffs and those are genuinely different feature
+        # vectors, so they must never share an entry.
+        memo_key = (str(match.id), cutoff.isoformat())
+        memoized = self._model_feature_memo.get(memo_key)
+        if memoized is not None:
+            return memoized
         home_results = (
             self.result_repository.list_recent_team_results(match.home_team_id, cutoff, limit=8)
             if self.result_repository
@@ -227,7 +243,7 @@ class FeatureService:
             evidence_items,
             availability_items,
         )
-        return {
+        features: dict[str, float] = {
             "home_points_per_match": self._per_match(home_form["points"], home_form["matches"]),
             "away_points_per_match": self._per_match(away_form["points"], away_form["matches"]),
             "home_goal_balance_per_match": self._per_match(home_form["goal_balance"], home_form["matches"]),
@@ -274,6 +290,8 @@ class FeatureService:
             "venue_known": 1.0 if match.venue else 0.0,
             "home_advantage": 1.0,
         }
+        self._model_feature_memo[memo_key] = features
+        return features
 
     def _list_head_to_head_results(self, match_id: str) -> list:
         if self.result_repository is None:

@@ -8,12 +8,12 @@ from app.domain.entities import Outcome, Prediction
 from app.domain.presentation_guard import derive_presentation_guard
 from app.models.tables import MatchModel
 from app.models.tables import ProgolSlateModel
-from app.repositories.feature_repository import FeatureRepository
 from app.repositories.evidence_dedupe import dedupe_evidence_items
+from app.repositories.feature_repository import FeatureRepository
 from app.repositories.result_repository import ResultRepository
 from app.services.draw_calibration import DrawPrior, calibrate_draw, compute_draw_priors
-from app.services.draw_calibration_service import build_draw_priors, prior_for_week_type
 from app.services.feature_service import FeatureService
+from app.services.draw_calibration_service import build_draw_priors, prior_for_week_type
 from app.services.model_training_service import ModelTrainingService
 from app.services.prediction_cache import SlatePredictionCache
 from app.services.sanity_service import (
@@ -56,14 +56,26 @@ class PredictionService:
 
     def __init__(self, training_service: ModelTrainingService | None = None) -> None:
         self.training_service = training_service
-        self.feature_service = (
-            FeatureService(
-                FeatureRepository(training_service.training_repository.session),
-                ResultRepository(training_service.training_repository.session),
-            )
-            if training_service is not None
-            else None
-        )
+        # Reuse the training service's FeatureService rather than building a
+        # second one over the same session. They were always equivalent —
+        # same session, same repositories — but two instances mean two
+        # feature memos, so every match's features were computed once for the
+        # rationale map and again inside scoring. Sharing one instance makes
+        # the second lookup a memo hit.
+        #
+        # Falls back to constructing one: a training service is not required to
+        # expose `feature_service`, and the stubs several tests inject do not.
+        self.feature_service: FeatureService | None = None
+        if training_service is not None:
+            shared = getattr(training_service, "feature_service", None)
+            if isinstance(shared, FeatureService):
+                self.feature_service = shared
+            else:
+                session = training_service.training_repository.session
+                self.feature_service = FeatureService(
+                    FeatureRepository(session),
+                    ResultRepository(session),
+                )
 
     def build_placeholder_prediction(self, match_id: str) -> Prediction:
         return Prediction(
