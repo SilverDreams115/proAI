@@ -164,6 +164,14 @@ jobs:
           # when it hands the value to the container.
           sed -i 's|PROAI_AUTH_PASSWORD_HASH=.*|PROAI_AUTH_PASSWORD_HASH=pbkdf2_sha256$$390000$$ca8d2fb5aa00353673f60720a4717bc3$$8a7f2dfcaac18b46b8862a2d213cf974e4a4710849992bae8a88e5ce9c57b58f|' .env
           sed -i 's|PROAI_SESSION_SECRET=.*|PROAI_SESSION_SECRET=7zP5-sT8fP4j2Dlh5UJAG924-FxNGeFINWDTeO-G0hVioOol|' .env
+          # Caddy turns on automatic HTTPS for a bare hostname and redirects
+          # HTTP to it, signing with its internal CA. curl without -L silently
+          # accepted the 308, but frontend_smoke uses urllib, which follows the
+          # redirect and then cannot validate that CA:
+          #   URLError: [SSL: TLSV1_ALERT_INTERNAL_ERROR]
+          # An `http://` prefixed site address makes Caddy serve plain HTTP and
+          # skip the redirect. Production sets a real hostname and keeps TLS.
+          sed -i 's|PROAI_PUBLIC_HOSTNAME=.*|PROAI_PUBLIC_HOSTNAME=http://localhost|' .env
           docker compose -f docker-compose.prod.yml up -d
           for attempt in $(seq 1 30); do
             if curl -fsS http://127.0.0.1/api/ready; then
