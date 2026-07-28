@@ -17,7 +17,13 @@ def _chromium_binary() -> str:
     configured = os.getenv("PROAI_CHROMIUM_BIN")
     if configured:
         return configured
-    for candidate in ("chromium", "chromium-browser", "google-chrome"):
+    # google-chrome first, then chromium. On GitHub's ubuntu runners
+    # /usr/bin/chromium is a snap wrapper, and a snap-confined browser hangs
+    # in a non-interactive CI environment: --dump-dom never returned there,
+    # not even after 90s, while the same page dumps in under a second against
+    # a normally packaged chromium. Google Chrome ships as a real deb on those
+    # runners, so preferring it sidesteps the confinement entirely.
+    for candidate in ("google-chrome", "google-chrome-stable", "chromium", "chromium-browser"):
         resolved = shutil.which(candidate)
         if resolved:
             return resolved
@@ -42,9 +48,14 @@ def main() -> int:
             "--no-sandbox",
             "--disable-dev-shm-usage",
             f"--user-data-dir={user_data_dir}",
+            # --virtual-time-budget alone never settles on this page: app.js
+            # installs setInterval(tickCountdown, 1000) and
+            # setInterval(pollActiveSlate, 60000) at load, so there is always
+            # another task queued and Chromium waits forever with --dump-dom.
+            # It hung past 90s in CI. --timeout forces the dump after a fixed
+            # wall-clock window regardless of what the page still has pending.
             "--virtual-time-budget=5000",
-            # A cold headless launch on a CI runner spends most of its time
-            # here: no warm profile, no shader cache, no prefetched fonts.
+            "--timeout=15000",
             "--no-first-run",
             "--no-default-browser-check",
             "--disable-extensions",
