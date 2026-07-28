@@ -28,6 +28,12 @@ services:
     volumes:
       - proai-data:/data
       - ./data/progol_context:/data/progol_context:ro
+      # Read-only so /health can report how fresh the last dump is. The
+      # backup container's own healthcheck cannot cover the case that bit
+      # us: a container that fails to start never runs its healthcheck, so
+      # it sits Exited rather than unhealthy and nothing surfaces it.
+      # Read-only guarantees the app can never touch a dump.
+      - proai-backups:/backups:ro
     depends_on:
       postgres:
         condition: service_healthy

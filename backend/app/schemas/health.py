@@ -31,6 +31,10 @@ class HealthResponse(BaseModel):
     worker_last_polled_at: str | None = None
     worker_last_polled_age_seconds: float | None = None
     worker_status: str = "unknown"
+    # None means "cannot tell" (volume not mounted, fresh install), never
+    # "stale" — the backup alert only fires on a real reading.
+    backup_last_success_at: str | None = None
+    backup_age_seconds: float | None = None
     freshness_alerts: list[FreshnessAlert] = Field(default_factory=list)
     unregistered_parser_sources: int = 0
 

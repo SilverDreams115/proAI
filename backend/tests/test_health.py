@@ -209,3 +209,73 @@ async def test_health_reports_stale_worker_poll(client, tmp_path, monkeypatch) -
     assert payload["worker_status"] == "stale"
     assert payload["freshness_alerts"][0]["signal"] == "worker_poll"
     assert payload["freshness_alerts"][0]["severity"] == "critical"
+
+
+@pytest.mark.anyio
+async def test_missing_backup_marker_reports_null_and_never_degrades(client, monkeypatch, tmp_path) -> None:
+    """A box without the backups volume — every test run, a fresh install —
+    must read as "cannot tell", not as a stale backup. Reporting an age here
+    would flip /health to degraded everywhere the volume is absent."""
+    from app.core.settings import settings
+
+    monkeypatch.setattr(settings, "health_backup_marker_path", str(tmp_path / "nope"))
+
+    response = await client.get("/api/health")
+    body = response.json()
+
+    assert response.status_code == 200
+    assert body["backup_last_success_at"] is None
+    assert body["backup_age_seconds"] is None
+    assert not [a for a in body["freshness_alerts"] if a["signal"] == "backup"]
+    assert body["status"] == "ok"
+
+
+@pytest.mark.anyio
+async def test_fresh_backup_marker_is_reported_without_alerting(client, monkeypatch, tmp_path) -> None:
+    from app.core.settings import settings
+
+    marker = tmp_path / ".last_success_epoch"
+    marker.write_text(str(int(datetime.now(timezone.utc).timestamp())), encoding="utf-8")
+    monkeypatch.setattr(settings, "health_backup_marker_path", str(marker))
+
+    body = (await client.get("/api/health")).json()
+
+    assert body["backup_last_success_at"] is not None
+    assert body["backup_age_seconds"] < 60
+    assert not [a for a in body["freshness_alerts"] if a["signal"] == "backup"]
+    assert body["status"] == "ok"
+
+
+@pytest.mark.anyio
+async def test_stale_backup_marker_raises_a_critical_alert(client, monkeypatch, tmp_path) -> None:
+    """Three days without a dump is exactly what went unnoticed for four
+    days while the backup container sat Exited."""
+    from app.core.settings import settings
+
+    marker = tmp_path / ".last_success_epoch"
+    stale = datetime.now(timezone.utc) - timedelta(days=3)
+    marker.write_text(str(int(stale.timestamp())), encoding="utf-8")
+    monkeypatch.setattr(settings, "health_backup_marker_path", str(marker))
+
+    body = (await client.get("/api/health")).json()
+
+    alert = next(a for a in body["freshness_alerts"] if a["signal"] == "backup")
+    assert alert["severity"] == "critical"
+    assert body["status"] == "degraded"
+
+
+@pytest.mark.anyio
+async def test_unreadable_backup_marker_is_not_a_stale_backup(client, monkeypatch, tmp_path) -> None:
+    """Garbage in the marker must read as no signal, not as an ancient dump,
+    and must never make /health raise."""
+    from app.core.settings import settings
+
+    marker = tmp_path / ".last_success_epoch"
+    marker.write_text("no-soy-un-epoch", encoding="utf-8")
+    monkeypatch.setattr(settings, "health_backup_marker_path", str(marker))
+
+    body = (await client.get("/api/health")).json()
+
+    assert body["backup_age_seconds"] is None
+    assert not [a for a in body["freshness_alerts"] if a["signal"] == "backup"]
+    assert body["status"] == "ok"

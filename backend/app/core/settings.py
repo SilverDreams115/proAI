@@ -53,6 +53,13 @@ class Settings(BaseModel):
     health_backtest_critical_age_seconds: int = Field(default=1209600)
     health_worker_poll_warning_age_seconds: int = Field(default=120)
     health_worker_poll_critical_age_seconds: int = Field(default=300)
+    # Marker the postgres-backup job refreshes after each successful dump.
+    # Empty string disables the check entirely.
+    health_backup_marker_path: str = Field(default="/backups/.last_success_epoch")
+    # The job dumps every 24h; 30h leaves a full cycle plus slack before
+    # warning, matching the container's own healthcheck window.
+    health_backup_warning_age_seconds: int = Field(default=108000)
+    health_backup_critical_age_seconds: int = Field(default=172800)
     auth_required: bool = Field(default=False)
     auth_api_key: str | None = Field(default=None)
     auth_password_hash: str | None = Field(default=None)
@@ -225,6 +232,15 @@ def load_settings() -> Settings:
         ),
         health_worker_poll_critical_age_seconds=int(
             os.getenv("PROAI_HEALTH_WORKER_POLL_CRITICAL_AGE_SECONDS", "300")
+        ),
+        health_backup_marker_path=os.getenv(
+            "PROAI_HEALTH_BACKUP_MARKER_PATH", "/backups/.last_success_epoch"
+        ),
+        health_backup_warning_age_seconds=int(
+            os.getenv("PROAI_HEALTH_BACKUP_WARNING_AGE_SECONDS", "108000")
+        ),
+        health_backup_critical_age_seconds=int(
+            os.getenv("PROAI_HEALTH_BACKUP_CRITICAL_AGE_SECONDS", "172800")
         ),
         auth_required=_get_bool("PROAI_AUTH_REQUIRED", environment.lower() == "production"),
         auth_api_key=os.getenv("PROAI_AUTH_API_KEY"),

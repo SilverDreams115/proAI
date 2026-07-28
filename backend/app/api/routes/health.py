@@ -31,6 +31,30 @@ def _parse_iso_datetime(value: object) -> datetime | None:
     return parsed.astimezone(timezone.utc)
 
 
+def _read_backup_marker() -> datetime | None:
+    """Timestamp of the last successful pg_dump, or None if unknowable.
+
+    The backup job writes an epoch into a marker file on the shared volume
+    after each dump. Returning None covers every "we cannot tell" case —
+    volume not mounted, fresh install, unreadable or malformed file — and
+    callers must treat None as *no signal*, never as a stale backup. A test
+    run or a dev box without the volume would otherwise report degraded
+    forever.
+
+    Never raises: /health must not fail because of an optional probe.
+    """
+    marker = settings.health_backup_marker_path
+    if not marker:
+        return None
+    try:
+        raw = Path(marker).read_text(encoding="utf-8").strip()
+        if not raw:
+            return None
+        return datetime.fromtimestamp(float(raw), tz=timezone.utc)
+    except (OSError, ValueError, OverflowError):
+        return None
+
+
 def _freshness_alert(
     *,
     signal: str,
@@ -93,6 +117,8 @@ def _collect_operational_signals() -> dict[str, object]:
         "worker_last_polled_at": None,
         "worker_last_polled_age_seconds": None,
         "worker_status": "unknown",
+        "backup_last_success_at": None,
+        "backup_age_seconds": None,
         "freshness_alerts": [],
         "unregistered_parser_sources": 0,
     }
@@ -165,6 +191,11 @@ def _collect_operational_signals() -> dict[str, object]:
         signals.get("worker_last_polled_age_seconds"),
     )
 
+    backup_at = _read_backup_marker()
+    if backup_at is not None:
+        signals["backup_last_success_at"] = backup_at.isoformat()
+        signals["backup_age_seconds"] = round((now - backup_at).total_seconds(), 1)
+
     alerts = []
     for alert in (
         _freshness_alert(
@@ -184,6 +215,15 @@ def _collect_operational_signals() -> dict[str, object]:
             age_seconds=signals.get("worker_last_polled_age_seconds"),
             warning_threshold=settings.health_worker_poll_warning_age_seconds,
             critical_threshold=settings.health_worker_poll_critical_age_seconds,
+        ),
+        # Only alerts when the marker was actually read; a missing marker
+        # leaves backup_age_seconds as None and _freshness_alert returns None
+        # for anything that is not a number.
+        _freshness_alert(
+            signal="backup",
+            age_seconds=signals.get("backup_age_seconds"),
+            warning_threshold=settings.health_backup_warning_age_seconds,
+            critical_threshold=settings.health_backup_critical_age_seconds,
         ),
     ):
         if alert is not None:
