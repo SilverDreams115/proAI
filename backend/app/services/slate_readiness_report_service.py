@@ -18,6 +18,7 @@ from app.models.tables import MatchFeatureSnapshotModel
 from app.models.tables import PredictionModel
 from app.models.tables import ProgolSlateModel
 from app.services.slate_service import SlateService
+from app.services.team_row_split_detection import find_split_candidates
 from app.services.team_name_quality_service import suspicious_team_names
 from app.services.team_name_quality_service import team_name_issue_flags
 
@@ -30,6 +31,7 @@ _HARD_REVIEW_FLAGS = frozenset(
         "BLOCKED_INSUFFICIENT_DATA",
         "PLACEHOLDER_TEAM",
         "SUSPICIOUS_TEAM_NAME",
+        "SPLIT_TEAM_ROW",
     }
 )
 
@@ -162,6 +164,20 @@ def build_slate_readiness_report(
         matches: list[dict[str, Any]] = []
         safe_candidates: list[int] = []
         suspicious_positions: list[int] = []
+        split_positions: list[int] = []
+
+        # One scan per slate rather than per position: a thin team row
+        # whose history sits under a second spelling is repairable, and
+        # nothing used to tell it apart from a club we simply have no
+        # data for. See app.services.team_row_split_detection.
+        split_candidates = find_split_candidates(
+            session,
+            [
+                team_id
+                for link in slate.matches
+                for team_id in (link.match.home_team_id, link.match.away_team_id)
+            ],
+        )
 
         for link in sorted(slate.matches, key=lambda item: item.position):
             match = link.match
@@ -180,6 +196,13 @@ def build_slate_readiness_report(
                     + team_name_issue_flags(match.away_team.name, is_placeholder=bool(match.away_team.is_placeholder))
                 )
             )
+            splits = [
+                split_candidates[team_id].as_dict()
+                for team_id in (match.home_team_id, match.away_team_id)
+                if team_id in split_candidates
+            ]
+            if splits:
+                data_flags = sorted(set(data_flags) | {"SPLIT_TEAM_ROW"})
             report_flags = flags + [flag for flag in data_flags if flag not in flags]
             suspicious = suspicious_team_names(match.home_team.name, match.away_team.name)
             recent_results_count = int(feature_payload.get("recent_results_count") or 0)
@@ -205,6 +228,8 @@ def build_slate_readiness_report(
                 safe_candidates.append(link.position)
             if suspicious:
                 suspicious_positions.append(link.position)
+            if splits:
+                split_positions.append(link.position)
 
             matches.append(
                 {
@@ -221,6 +246,7 @@ def build_slate_readiness_report(
                     "recent_results_count": recent_results_count,
                     "head_to_head_results_count": head_to_head_results_count,
                     "suspicious_team_names": suspicious,
+                    "split_team_rows": splits,
                     "actionable_blockers": actionable_blockers,
                     "safe_revisar_to_listo_candidate": candidate,
                 }
@@ -239,6 +265,7 @@ def build_slate_readiness_report(
                 "flag_counts": dict(flag_counts),
                 "safe_revisar_to_listo_candidates": safe_candidates,
                 "suspicious_team_name_positions": suspicious_positions,
+                "split_team_row_positions": split_positions,
                 "matches": matches,
             }
         )
