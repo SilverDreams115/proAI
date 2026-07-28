@@ -39,6 +39,16 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PROAI_DOCS_ENABLED=false \
     PATH="/opt/venv/bin:$PATH"
 
+# The image runs as the unprivileged `proai` user while /app belongs to root,
+# so the settings default of `sqlite:///./proai.db` — relative to WORKDIR —
+# lands in a directory this user cannot write. Startup then dies creating the
+# migration lock next to the database, before the app binds a port, and with
+# `docker run --rm` the container is gone before anyone can read the log.
+# That is what has failed CI's docker-smoke on every commit since 2026-07-13.
+# Compose overrides this with the Postgres URL; the standalone image needs a
+# writable fallback, and /data is created and chowned below.
+ENV PROAI_DATABASE_URL="sqlite:////data/proai.db"
+
 WORKDIR /app
 
 RUN addgroup --system proai && adduser --system --ingroup proai --home /home/proai proai
