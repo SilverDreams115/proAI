@@ -10,7 +10,7 @@ from sqlalchemy.engine import Engine
 
 from app.db.base import Base
 
-SCHEMA_VERSION = 29
+SCHEMA_VERSION = 30
 POSTGRES_MIGRATION_LOCK_ID = 791796
 ALEMBIC_VERSION_PATTERN = re.compile(r"^0*(?P<version>\d+)_.*\.py$")
 
@@ -156,6 +156,9 @@ def _run_migrations_unlocked(engine: Engine) -> None:
         if current_version < 29:
             _migrate_to_v29(connection)
             current_version = 29
+        if current_version < 30:
+            _migrate_to_v30(connection)
+            current_version = 30
         connection.execute(text("UPDATE schema_migrations SET version = :version"), {"version": current_version})
 
 
@@ -219,6 +222,7 @@ def _bootstrap_schema(engine: Engine) -> None:
         _migrate_to_v27(connection)
         _migrate_to_v28(connection)
         _migrate_to_v29(connection)
+        _migrate_to_v30(connection)
         connection.execute(text("CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER NOT NULL)"))
         has_row = connection.execute(text("SELECT 1 FROM schema_migrations LIMIT 1")).scalar_one_or_none()
         if has_row is None:
@@ -1317,6 +1321,44 @@ _GUIDE_PLACEHOLDER_MERGES: tuple[tuple[str, str], ...] = (
 # ones already written stayed put, and each one contributed an evidence
 # item to a men's match's recent-form features.
 _WOMENS_TITLE_MARKERS = ("femenil", "femenino", "femenina", "women")
+
+
+# Two more club rows split across ingestion sources, both found on the
+# live PG-2344 slate. (placeholder row, row that holds the history).
+# Each pair was verified to share a competition, which is what the note
+# above _CONTINENTAL_SPLIT_MERGES requires before any merge:
+#
+#   Manchester United (3, E0)  -> Man United (114, E0)
+#   Seattle (3, MLS)           -> Seattle Sounders (87, MLS)
+#
+# Manchester City is deliberately NOT here. Its two rows sit in different
+# competitions (Man City in E0, Manchester City FC in UEFA Champions
+# League), which is the cross-competition case that note warns about, and
+# its slate position is blocked by unclassified_competition anyway — the
+# merge would not unblock it.
+_SOURCE_SPLIT_MERGES = (
+    ("Manchester United", "Man United"),
+    ("Seattle", "Seattle Sounders"),
+)
+
+
+def _migrate_to_v30(connection) -> None:
+    """Consolidate two club rows that two ingestion sources split.
+
+    PG-2344 came out with 5 of 14 positions blocked. Two of them —
+    "Man United vs Atletico de Madrid" and "Portland Timbers vs Seattle"
+    — were blocked on insufficient_data_anchors purely because the slate
+    resolved to the 3-match placeholder row instead of the one carrying
+    the club's real history. 111 and 84 matches respectively were sitting
+    unused on the other row.
+
+    Same contract as v14/v16/v21/v27: _merge_team_into re-points matches
+    and aliases, skips anything that would collide with an existing
+    fixture identity, never deletes the source row, and is a no-op when
+    either side is absent. Mirrors alembic 0030.
+    """
+    for placeholder_name, canonical_name in _SOURCE_SPLIT_MERGES:
+        _merge_team_into(connection, placeholder_name, canonical_name)
 
 
 def _migrate_to_v29(connection) -> None:
