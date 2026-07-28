@@ -43,6 +43,12 @@ def main() -> int:
             "--disable-dev-shm-usage",
             f"--user-data-dir={user_data_dir}",
             "--virtual-time-budget=5000",
+            # A cold headless launch on a CI runner spends most of its time
+            # here: no warm profile, no shader cache, no prefetched fonts.
+            "--no-first-run",
+            "--no-default-browser-check",
+            "--disable-extensions",
+            "--disable-background-networking",
             "--dump-dom",
             f"{base_url}/",
         ]
@@ -51,7 +57,12 @@ def main() -> int:
             check=False,
             capture_output=True,
             text=True,
-            timeout=20,
+            # 20s was enough on a developer machine with a warm browser and
+            # not on a GitHub runner, where the first headless launch is cold:
+            # CI failed here with TimeoutExpired after the container itself was
+            # already answering /api/ready. Overridable so a slow runner can be
+            # given more room without a code change.
+            timeout=float(os.getenv("PROAI_SMOKE_BROWSER_TIMEOUT", "90")),
         )
     if completed.returncode != 0:
         print(completed.stderr, file=sys.stderr)
