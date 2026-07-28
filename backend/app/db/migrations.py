@@ -10,7 +10,7 @@ from sqlalchemy.engine import Engine
 
 from app.db.base import Base
 
-SCHEMA_VERSION = 26
+SCHEMA_VERSION = 27
 POSTGRES_MIGRATION_LOCK_ID = 791796
 ALEMBIC_VERSION_PATTERN = re.compile(r"^0*(?P<version>\d+)_.*\.py$")
 
@@ -147,6 +147,9 @@ def _run_migrations_unlocked(engine: Engine) -> None:
         if current_version < 26:
             _migrate_to_v26(connection)
             current_version = 26
+        if current_version < 27:
+            _migrate_to_v27(connection)
+            current_version = 27
         connection.execute(text("UPDATE schema_migrations SET version = :version"), {"version": current_version})
 
 
@@ -207,6 +210,7 @@ def _bootstrap_schema(engine: Engine) -> None:
         _migrate_to_v24(connection)
         _migrate_to_v25(connection)
         _migrate_to_v26(connection)
+        _migrate_to_v27(connection)
         connection.execute(text("CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER NOT NULL)"))
         has_row = connection.execute(text("SELECT 1 FROM schema_migrations LIMIT 1")).scalar_one_or_none()
         if has_row is None:
@@ -1265,6 +1269,45 @@ _FEMENIL_TEAM_ALIASES: tuple[tuple[str, str], ...] = (
     ("León Femenil", "Leon Femenil"),
     ("Atlético de San Luis Femenil", "Atletico de San Luis Femenil"),
 )
+
+
+# Placeholder rows the PG-2344 promotion minted because the Progol guide
+# names clubs in short form and the short form resolved to nothing. Each
+# placeholder holds exactly one fixture — the slate's — while the real row
+# holds between 23 and 137, so the position was scored as if the club had no
+# history: positions 12 and 13 came out BLOQUEADO with 86 and 85 matches
+# sitting unused on the real rows.
+#
+# Every pair is verified against the fixture's competition, never by name
+# similarity: "San Luis" is in a Liga MX fixture against Tijuana, "Barracas"
+# in an Argentine one against Deportivo Riestra, "Salt Lake" and "Portland"
+# in MLS ones, "Inter De Milán" in a Champions League tie against Manchester
+# City. No competing club exists in the database for any of them.
+#
+# "Aberdeen" and "Hearts" are deliberately absent: both are placeholders with
+# no real row behind them, because no registered source covers Scottish
+# football. That is missing data, not a naming mismatch, and a merge would
+# have nothing to merge into.
+_GUIDE_PLACEHOLDER_MERGES: tuple[tuple[str, str], ...] = (
+    ("San Luis", "Atletico de San Luis"),
+    ("Inter De Milán", "FC Internazionale Milano"),
+    ("Boca Jrs", "CA Boca Juniors"),
+    ("Barracas", "Barracas Central"),
+    ("Salt Lake", "Real Salt Lake"),
+    ("Portland", "Portland Timbers"),
+)
+
+
+def _migrate_to_v27(connection) -> None:
+    """Fold the PG-2344 guide placeholders into the clubs they name.
+
+    Same contract as v14/v16/v21: ``_merge_team_into`` re-points matches and
+    aliases, skips anything that would collide with an existing fixture
+    identity, never deletes the source row, and is a no-op when either side
+    is absent. Mirrors alembic 0027.
+    """
+    for placeholder_name, canonical_name in _GUIDE_PLACEHOLDER_MERGES:
+        _merge_team_into(connection, placeholder_name, canonical_name)
 
 
 def _migrate_to_v26(connection) -> None:

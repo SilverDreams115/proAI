@@ -587,3 +587,80 @@ def test_v26_respects_the_unique_slug_constraint(tmp_path) -> None:
             ).fetchall()
         ]
     assert slugs == ["america-femenil"], slugs
+
+
+def test_v27_folds_guide_placeholders_into_the_real_club(tmp_path) -> None:
+    """The Progol guide names clubs in short form; when the short form does
+    not resolve, slate promotion mints an empty placeholder beside the real
+    row and the position is scored as if the club had no history."""
+    from datetime import datetime, timezone
+
+    from sqlalchemy import text
+
+    from app.db import session as db_session
+    from app.db.migrations import _migrate_to_v27, run_migrations
+    from app.models import tables  # noqa: F401
+
+    db_session.configure_session(f"sqlite:///{tmp_path / 'guide_placeholders.db'}")
+    run_migrations(db_session.engine)
+
+    with db_session.engine.begin() as connection:
+        connection.execute(
+            text("INSERT INTO competitions (id, name, is_placeholder) VALUES ('c-mls', 'MLS', 0)")
+        )
+        for tid, name, ph in (
+            ("t-ph", "Salt Lake", 1),
+            ("t-real", "Real Salt Lake", 0),
+            ("t-riv", "St. Louis City SC", 0),
+        ):
+            connection.execute(
+                text("INSERT INTO teams (id, name, is_placeholder) VALUES (:i, :n, :p)"),
+                {"i": tid, "n": name, "p": ph},
+            )
+        connection.execute(
+            text(
+                "INSERT INTO matches (id, competition_id, home_team_id, away_team_id, kickoff_at)"
+                " VALUES ('m-1', 'c-mls', 't-riv', 't-ph', :k)"
+            ),
+            {"k": datetime(2026, 8, 2, tzinfo=timezone.utc)},
+        )
+
+    with db_session.engine.begin() as connection:
+        _migrate_to_v27(connection)
+        away = connection.execute(
+            text("SELECT t.name FROM matches m JOIN teams t ON t.id = m.away_team_id WHERE m.id = 'm-1'")
+        ).scalar_one()
+    assert away == "Real Salt Lake"
+
+    # The placeholder row survives — merges never delete, so nothing dangles.
+    with db_session.engine.begin() as connection:
+        survives = connection.execute(
+            text("SELECT COUNT(*) FROM teams WHERE name = 'Salt Lake'")
+        ).scalar_one()
+    assert survives == 1
+
+
+def test_v27_leaves_a_placeholder_with_no_real_row_alone(tmp_path) -> None:
+    """Aberdeen and Hearts have no real row behind them — no source covers
+    Scottish football — so there is nothing to merge into and the migration
+    must not invent one."""
+    from sqlalchemy import text
+
+    from app.db import session as db_session
+    from app.db.migrations import _migrate_to_v27, run_migrations
+    from app.models import tables  # noqa: F401
+
+    db_session.configure_session(f"sqlite:///{tmp_path / 'guide_scotland.db'}")
+    run_migrations(db_session.engine)
+
+    with db_session.engine.begin() as connection:
+        connection.execute(
+            text("INSERT INTO teams (id, name, is_placeholder) VALUES ('t-abe', 'Aberdeen', 1)")
+        )
+
+    with db_session.engine.begin() as connection:
+        _migrate_to_v27(connection)
+        rows = connection.execute(
+            text("SELECT COUNT(*) FROM teams WHERE name LIKE 'Aberdeen%'")
+        ).scalar_one()
+    assert rows == 1
