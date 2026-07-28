@@ -9,7 +9,7 @@ Pins the guarantees from the PG-2338 draw-prior phase:
 """
 from __future__ import annotations
 
-from app.services.draw_calibration import (
+from app.services.draw_calibration_math import (
     FALLBACK_DRAW_PRIOR,
     MIN_SAMPLE_MEDIUM,
     DrawPrior,

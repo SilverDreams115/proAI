@@ -1,7 +1,7 @@
 """DB-aware wrapper that builds conservative draw priors from official,
 comparable, FINAL results only — never demos / unverified slates.
 
-Pure math lives in ``draw_calibration``; this module just sources the
+Pure math lives in ``draw_calibration_math``; this module just sources the
 observations (real canonical results for slates with official LN lineage) and
 hands them to ``compute_draw_priors``. Read-only.
 """
@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.repositories.canonical_result_repository import CanonicalResultRepository
 from app.repositories.slate_repository import SlateRepository
-from app.services.draw_calibration import DrawPrior, compute_draw_priors
+from app.services.draw_calibration_math import DrawPrior, compute_draw_priors
 from app.services.slate_classification_service import classify_slate
 
 

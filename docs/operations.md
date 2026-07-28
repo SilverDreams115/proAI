@@ -134,6 +134,19 @@ curl -H "X-API-Key: $PROAI_AUTH_API_KEY" \
 # Full confidence report
 make confidence-report
 
+# Distribution diagnostic for one slate: spots systemic problems the
+# per-match view hides — everything went to the visitor, many near-zero
+# class probabilities, a FIJO sitting on a low-evidence match. Reads the
+# live API by default, or a saved predictions payload with --input.
+docker compose exec --workdir /app/backend proai \
+  python -m scripts.slate_diagnostic_report --from-db --slate-id $SLATE_ID
+
+# Per-match reasons behind LISTO / REVISAR / BLOQUEADO for the active
+# slates, plus suspicious names and safe candidates. Same report the
+# publication gate consumes, on the command line.
+docker compose exec --workdir /app/backend proai \
+  python -m scripts.active_slate_readiness_report
+
 # Report from the Docker stack, writing to the host's ./reports
 make confidence-report-docker
 ```

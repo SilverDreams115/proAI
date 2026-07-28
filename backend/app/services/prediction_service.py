@@ -11,7 +11,7 @@ from app.models.tables import ProgolSlateModel
 from app.repositories.evidence_dedupe import dedupe_evidence_items
 from app.repositories.feature_repository import FeatureRepository
 from app.repositories.result_repository import ResultRepository
-from app.services.draw_calibration import DrawPrior, calibrate_draw, compute_draw_priors
+from app.services.draw_calibration_math import DrawPrior, calibrate_draw, compute_draw_priors
 from app.services.feature_service import FeatureService
 from app.services.draw_calibration_service import build_draw_priors, prior_for_week_type
 from app.services.model_training_service import ModelTrainingService
