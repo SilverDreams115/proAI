@@ -10,7 +10,7 @@ from sqlalchemy.engine import Engine
 
 from app.db.base import Base
 
-SCHEMA_VERSION = 27
+SCHEMA_VERSION = 29
 POSTGRES_MIGRATION_LOCK_ID = 791796
 ALEMBIC_VERSION_PATTERN = re.compile(r"^0*(?P<version>\d+)_.*\.py$")
 
@@ -150,6 +150,12 @@ def _run_migrations_unlocked(engine: Engine) -> None:
         if current_version < 27:
             _migrate_to_v27(connection)
             current_version = 27
+        if current_version < 28:
+            _migrate_to_v28(connection)
+            current_version = 28
+        if current_version < 29:
+            _migrate_to_v29(connection)
+            current_version = 29
         connection.execute(text("UPDATE schema_migrations SET version = :version"), {"version": current_version})
 
 
@@ -211,6 +217,8 @@ def _bootstrap_schema(engine: Engine) -> None:
         _migrate_to_v25(connection)
         _migrate_to_v26(connection)
         _migrate_to_v27(connection)
+        _migrate_to_v28(connection)
+        _migrate_to_v29(connection)
         connection.execute(text("CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER NOT NULL)"))
         has_row = connection.execute(text("SELECT 1 FROM schema_migrations LIMIT 1")).scalar_one_or_none()
         if has_row is None:
@@ -1207,6 +1215,11 @@ def _false_for_dialect(connection):
     return False if connection.engine.dialect.name != "sqlite" else 0
 
 
+def _true_for_dialect(connection):
+    """Counterpart of :func:`_false_for_dialect` for truthy comparisons."""
+    return "TRUE" if connection.engine.dialect.name != "sqlite" else "1"
+
+
 # The reverse direction of the same collision v23/v24 addressed: with
 # "femenil" stripped, "Cruz Azul Femenil" resolved to the men's Cruz Azul, so
 # most of Liga MX Femenil was ingested straight onto men's rows. 18 men's rows
@@ -1296,6 +1309,109 @@ _GUIDE_PLACEHOLDER_MERGES: tuple[tuple[str, str], ...] = (
     ("Salt Lake", "Real Salt Lake"),
     ("Portland", "Portland Timbers"),
 )
+
+
+# Women's fixture documents that were linked to the men's row of the same
+# club, back when the normalizer stripped "femenil" from team names. The
+# gender_mismatch blocker added alongside v23-v26 stops new links, but the
+# ones already written stayed put, and each one contributed an evidence
+# item to a men's match's recent-form features.
+_WOMENS_TITLE_MARKERS = ("femenil", "femenino", "femenina", "women")
+
+
+def _migrate_to_v29(connection) -> None:
+    """Unlink women's documents from men's matches and drop the evidence
+    they produced.
+
+    Match results are NOT touched and were never wrong: every result on
+    the affected fixtures came from the men's own source (TSDB Liga MX),
+    so the scores are genuine. The damage was confined to evidence — 25
+    documents linked onto 21 men's Liga MX matches, each adding a
+    women's fixture to the men's form window.
+
+    The documents are only unlinked, never deleted: they are real
+    documents about real matches, and the next ingestion run can link
+    them correctly now that gender_mismatch blocks the bad pairing.
+    Idempotent — re-running finds nothing left to unlink. Mirrors
+    alembic 0029.
+    """
+    marker_clause = " OR ".join(
+        f"LOWER(d.title) LIKE '%{marker}%'" for marker in _WOMENS_TITLE_MARKERS
+    )
+    team_clause = " AND ".join(
+        f"LOWER(ht.name) NOT LIKE '%{marker}%' AND LOWER(at.name) NOT LIKE '%{marker}%'"
+        for marker in _WOMENS_TITLE_MARKERS
+    )
+    select_bad = f"""
+        SELECT d.id AS document_id, d.linked_evidence_id AS evidence_id
+        FROM source_documents d
+        JOIN matches m ON m.id = d.matched_match_id
+        JOIN teams ht ON ht.id = m.home_team_id
+        JOIN teams at ON at.id = m.away_team_id
+        WHERE ({marker_clause}) AND ({team_clause})
+    """
+    rows = connection.execute(text(select_bad)).fetchall()
+    if not rows:
+        return
+
+    document_ids = [row[0] for row in rows]
+    evidence_ids = [row[1] for row in rows if row[1]]
+
+    for document_id in document_ids:
+        connection.execute(
+            text(
+                "UPDATE source_documents "
+                "SET matched_match_id = NULL, linked_evidence_id = NULL "
+                "WHERE id = :id"
+            ),
+            {"id": document_id},
+        )
+    for evidence_id in evidence_ids:
+        connection.execute(
+            text("DELETE FROM evidence_items WHERE id = :id"), {"id": evidence_id}
+        )
+
+
+def _migrate_to_v28(connection) -> None:
+    """Persist the competition stage/round a fixture belongs to.
+
+    TheSportsDB already returns ``strRound`` on every event and we threw
+    it away. Without it nothing can tell a Champions League group match
+    from a semi-final, or a Liga MX week-3 fixture from a liguilla
+    final, because both sides of each pair carry the same competition
+    name. That gap is why the knockout flag stayed a manual chore and
+    why the knockout draw-rate anchor could not be refit from our own
+    results.
+
+    Nullable and additive: every existing row keeps a NULL stage and
+    every consumer treats NULL as "unknown", so nothing changes until
+    the connector starts populating it. Mirrors alembic 0028.
+    """
+    _add_column_if_missing(
+        connection,
+        "matches",
+        "stage",
+        "stage VARCHAR(64)",
+    )
+    # Who decided is_knockout. Stage data usually arrives after the
+    # slate is built, so something has to be allowed to revise the flag
+    # later — but it must never overwrite a human. 'operator' rows are
+    # frozen; 'auto' rows stay open to better evidence. Existing rows
+    # default to 'auto', which is accurate: before this column the only
+    # two flagged positions in production were set by hand, and they
+    # are re-marked as operator rows by the backfill below.
+    _add_column_if_missing(
+        connection,
+        "progol_slate_matches",
+        "knockout_source",
+        "knockout_source VARCHAR(16) NOT NULL DEFAULT 'auto'",
+    )
+    connection.execute(
+        text(
+            "UPDATE progol_slate_matches SET knockout_source = 'operator' "
+            f"WHERE is_knockout = {_true_for_dialect(connection)}"
+        )
+    )
 
 
 def _migrate_to_v27(connection) -> None:

@@ -243,6 +243,13 @@ class TheSportsDbSeasonConnector(SourceConnector):
             "home_goals": home_goals,
             "away_goals": away_goals,
         }
+        # strRound is the only field in the feed that separates a group
+        # match from a semi-final, or a league week from a liguilla tie.
+        # Leagues report a bare number here, cups report a phase name;
+        # both are kept verbatim and interpreted downstream.
+        stage = (event.get("strRound") or "").strip()
+        if stage:
+            fixture["stage"] = stage
         return SourceDocument(
             source_name=self.name,
             source_url=source_url,

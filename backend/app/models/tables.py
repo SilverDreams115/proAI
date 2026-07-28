@@ -77,6 +77,11 @@ class MatchModel(Base):
     away_team_id: Mapped[str] = mapped_column(ForeignKey("teams.id"), nullable=False)
     kickoff_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
     venue: Mapped[str | None] = mapped_column(String(255))
+    # Competition phase as the fixture feed reports it ("Final",
+    # "Semi-Final", "Group Stage", or a plain round number for a
+    # league). NULL means we have not seen a stage for this fixture and
+    # consumers must fall back to the competition name.
+    stage: Mapped[str | None] = mapped_column(String(64))
 
     competition: Mapped["CompetitionModel"] = relationship(back_populates="matches")
     home_team: Mapped["TeamModel"] = relationship(
@@ -372,12 +377,21 @@ class ProgolSlateMatchModel(Base):
     slate_id: Mapped[str] = mapped_column(ForeignKey("progol_slates.id"), nullable=False, index=True)
     match_id: Mapped[str] = mapped_column(ForeignKey("matches.id"), nullable=False, index=True)
     position: Mapped[int] = mapped_column(Integer, nullable=False)
-    # Knockout / elimination fixtures must produce a winner; the
-    # boleta semantics in those positions don't accept "X". The flag
-    # lives on the slate-match (not the match itself) because the
-    # same fixture pair could appear in a league weekend in one
-    # concurso and in a final the next one.
+    # Knockout / elimination fixtures must produce a winner, so the
+    # draw probability is trimmed toward the calibrated knockout band —
+    # it is NOT removed. Progol grades every position on the 90-minute
+    # result, so a knockout that ends level is an official "X"; extra
+    # time and penalties do not count. The flag lives on the
+    # slate-match (not the match itself) because the same fixture pair
+    # could appear in a league weekend in one concurso and in a final
+    # the next one.
     is_knockout: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # "operator" once a human has ruled on this position, "auto"
+    # while the flag is only a system inference. Operator rows are
+    # never revised by detection; auto rows stay open to better
+    # evidence, which matters because the fixture feed usually reports
+    # the stage after the slate has already been built.
+    knockout_source: Mapped[str] = mapped_column(String(16), nullable=False, default="auto")
 
     slate: Mapped["ProgolSlateModel"] = relationship(back_populates="matches")
     match: Mapped["MatchModel"] = relationship(back_populates="slate_links")

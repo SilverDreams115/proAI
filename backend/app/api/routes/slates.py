@@ -537,6 +537,10 @@ async def set_slate_match_knockout(
     if row is None:
         raise HTTPException(status_code=404, detail="Slate position not found.")
     row.is_knockout = bool(is_knockout)
+    # A call to this endpoint is a human ruling, so freeze the position
+    # against later auto-detection — including an explicit clear, which
+    # is just as deliberate as turning the flag on.
+    row.knockout_source = "operator"
     session.commit()
     invalidate_slate_prediction_cache(slate_id)
 

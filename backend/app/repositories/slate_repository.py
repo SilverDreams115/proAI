@@ -16,6 +16,7 @@ from app.models.tables import TicketRecommendationSnapshotModel
 from app.repositories.entity_repository import EntityRepository
 from app.schemas.slate import ProgolSlateCreate
 from app.services.entity_resolution_service import EntityResolutionService
+from app.services.knockout_detection import resolve_knockout
 
 logger = logging.getLogger(__name__)
 
@@ -242,6 +243,11 @@ class SlateRepository:
         resolver = EntityResolutionService(EntityRepository(self.session))
         entity_repository = EntityRepository(self.session)
         slate = self.find_by_draw_code(payload.draw_code)
+        # Re-upserting an existing slate deletes and rebuilds its match
+        # rows, which used to discard every operator-set is_knockout
+        # flag. A routine slate refresh therefore silently reverted the
+        # draw trim, with nothing in the response to show it happened.
+        previous_knockout = self._knockout_flags_by_position(slate)
 
         if slate is None:
             slate = ProgolSlateModel(
@@ -325,8 +331,42 @@ class SlateRepository:
                 self.session.flush()
             else:
                 match.venue = item.venue or match.venue
-            slate_link = ProgolSlateMatchModel(position=item.position, match=match, slate=slate)
+            # A position the operator already ruled on keeps that ruling,
+            # including an explicit clear. Only genuinely new positions
+            # fall through to name-based detection, and that detection
+            # abstains (None) whenever the competition name cannot settle
+            # it — see app.services.knockout_detection.
+            previous = previous_knockout.get(item.position)
+            if previous is not None and previous[1] == "operator":
+                is_knockout, knockout_source = previous
+            else:
+                is_knockout = (
+                    resolve_knockout(item.competition.name, match.stage) or False
+                )
+                knockout_source = "auto"
+            slate_link = ProgolSlateMatchModel(
+                position=item.position,
+                match=match,
+                slate=slate,
+                is_knockout=is_knockout,
+                knockout_source=knockout_source,
+            )
             self.session.add(slate_link)
 
         self.session.flush()
         return self.get_slate(slate.id)  # type: ignore[return-value]
+
+    def _knockout_flags_by_position(
+        self, slate: ProgolSlateModel | None
+    ) -> dict[int, tuple[bool, str]]:
+        """Snapshot (flag, source) before the match rows are torn down,
+        keyed by position so operator rulings survive the rebuild."""
+        if slate is None:
+            return {}
+        rows = self.session.scalars(
+            select(ProgolSlateMatchModel).where(ProgolSlateMatchModel.slate_id == slate.id)
+        ).all()
+        return {
+            row.position: (bool(row.is_knockout), row.knockout_source or "auto")
+            for row in rows
+        }
