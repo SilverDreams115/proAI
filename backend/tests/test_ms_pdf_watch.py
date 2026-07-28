@@ -204,3 +204,81 @@ def test_weekend_untouched(db):
     from app.repositories.slate_repository import SlateRepository
     wk2 = next(s for s in SlateRepository(db).list_slates() if s.draw_code == "PG-2340")
     assert wk2.week_type == "weekend"  # unchanged, not merged with MS
+
+
+def _seed_operator_override(db, draw_code: str, closes_at: datetime) -> None:
+    """Record the cierre an operator entered by hand, the way the override
+    endpoint does: against the canonical PGM-xxx code, while LN's PDF names
+    the same concurso with the bare digits."""
+    db.add(
+        ProgolSlateProposalModel(
+            id=f"override-{draw_code}",
+            draw_code=draw_code,
+            week_type="midweek",
+            source_name="operator_date_override",
+            source_url="operator://date-override",
+            registration_closes_at=closes_at,
+            payload_json="{}",
+            status="operator_override",
+            observations=1,
+            first_seen_at=datetime.now(timezone.utc),
+            last_seen_at=datetime.now(timezone.utc),
+        )
+    )
+    db.flush()
+
+
+def test_operator_override_beats_the_provisional_window(db):
+    """The override is recorded against "PGM-802" while the PDF calls the
+    concurso "802". Matching on the trailing digits is what makes it visible;
+    an exact-string lookup misses it and the slate keeps a fabricated close."""
+    slate = _seed_ms_802(
+        db, closes_at=_past(), kickoff_at=datetime.now(timezone.utc) + timedelta(days=2)
+    )
+    official = datetime.now(timezone.utc) + timedelta(days=1)
+    _seed_operator_override(db, "PGM-802", official)
+    conn = _FakeMsConnector(sha="aaa", closes_at=None, accepted=False, rejected_block="800")
+
+    res = run_ms_pdf_watch(db, proposal_service=_svc(db, conn), generate_prediction=False)
+
+    assert res["activated"] is True
+    assert res["registration_close_source"] == "operator_date_override"
+    db.refresh(slate)
+    closes = slate.registration_closes_at
+    if closes.tzinfo is None:
+        closes = closes.replace(tzinfo=timezone.utc)
+    assert abs((closes - official).total_seconds()) < 1
+
+
+def test_accepted_pdf_close_still_outranks_the_override(db):
+    """A cierre LN actually published for THIS concurso wins. The override is
+    a fallback for when the PDF has nothing usable, not a permanent pin."""
+    slate = _seed_ms_802(
+        db, closes_at=_past(), kickoff_at=datetime.now(timezone.utc) + timedelta(days=3)
+    )
+    override = datetime.now(timezone.utc) + timedelta(days=1)
+    _seed_operator_override(db, "PGM-802", override)
+    pdf_close = datetime.now(timezone.utc) + timedelta(days=2)
+    conn = _FakeMsConnector(sha="bbb", closes_at=pdf_close.isoformat(), accepted=True)
+
+    res = run_ms_pdf_watch(db, proposal_service=_svc(db, conn), generate_prediction=False)
+
+    assert res["activated"] is True
+    assert res["registration_close_source"] == "official_pdf_close"
+    db.refresh(slate)
+    closes = slate.registration_closes_at
+    if closes.tzinfo is None:
+        closes = closes.replace(tzinfo=timezone.utc)
+    assert abs((closes - pdf_close).total_seconds()) < 1
+
+
+def test_stale_override_is_ignored(db):
+    """An override whose date already passed must not be honoured — it would
+    archive the slate on sight, which is worse than the provisional window."""
+    _seed_ms_802(db, closes_at=_past(), kickoff_at=datetime.now(timezone.utc) + timedelta(days=2))
+    _seed_operator_override(db, "PGM-802", _past())
+    conn = _FakeMsConnector(sha="aaa", closes_at=None, accepted=False, rejected_block="800")
+
+    res = run_ms_pdf_watch(db, proposal_service=_svc(db, conn), generate_prediction=False)
+
+    assert res["registration_close_source"] == "provisional_ms_pdf_window"

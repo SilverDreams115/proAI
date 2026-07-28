@@ -169,6 +169,18 @@ def run_ms_pdf_watch(
 
     activation_closes_at = closes_at
     activation_source = str(payload.get("registration_close_source") or "official_pdf_close")
+    # An operator override outranks anything that is not an accepted PDF close.
+    # It has to beat a provisional one, not merely a missing one: once
+    # `_mark_provisional_close` stamps the synthetic window into the payload,
+    # later ticks read it back as a normal `registration_closes_at` and it is
+    # indistinguishable from a real cierre. PGM-806 sat on a fabricated close
+    # for three days that way, while an override with the right date had been
+    # recorded on day one and never consulted.
+    if activation_source != "official_pdf_close" or activation_closes_at is None:
+        override_closes_at = _operator_close_override(session, draw_code, now=now)
+        if override_closes_at is not None:
+            activation_closes_at = override_closes_at
+            activation_source = "operator_date_override"
     if activation_closes_at is None and provisional_closes_at is not None:
         activation_closes_at = provisional_closes_at
         activation_source = "provisional_ms_pdf_window"
@@ -263,6 +275,51 @@ def _slate_has_started(session: Any, slate: ProgolSlateModel, now: datetime) -> 
         .limit(1)
     )
     return session.scalar(stmt) is not None
+
+
+def _operator_close_override(
+    session: Any,
+    draw_code: Any,
+    *,
+    now: datetime,
+) -> datetime | None:
+    """Return an operator-recorded cierre for this concurso, if one applies.
+
+    Matched on the trailing digits, the same way ``_find_ms_slate`` matches
+    slates: the PDF calls the concurso "806" while the operator records the
+    override against "PGM-806", and an exact-string lookup silently misses it.
+
+    Only a close still in the future is honoured — a stale override is worse
+    than the provisional window, since it would archive the slate on sight.
+    """
+    import re
+
+    digits = re.search(r"(\d+)$", str(draw_code or ""))
+    if digits is None:
+        return None
+    target = digits.group(1)
+
+    rows = session.scalars(
+        select(ProgolSlateProposalModel)
+        .where(
+            ProgolSlateProposalModel.week_type == "midweek",
+            ProgolSlateProposalModel.source_name == "operator_date_override",
+            ProgolSlateProposalModel.registration_closes_at.is_not(None),
+        )
+        .order_by(ProgolSlateProposalModel.last_seen_at.desc())
+    )
+    for row in rows:
+        m = re.search(r"(\d+)$", row.draw_code or "")
+        if not m or m.group(1) != target:
+            continue
+        closes_at = row.registration_closes_at
+        if closes_at is None:
+            continue
+        if closes_at.tzinfo is None:
+            closes_at = closes_at.replace(tzinfo=timezone.utc)
+        if closes_at > now:
+            return closes_at
+    return None
 
 
 def _find_ms_slate(session: Any, draw_code: Any) -> ProgolSlateModel | None:
