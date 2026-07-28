@@ -136,7 +136,15 @@ jobs:
           sed -i 's|POSTGRES_PASSWORD=.*|POSTGRES_PASSWORD=ci-db-credential-1234567890|' .env
           sed -i 's|proai:proai@postgres|proai:ci-db-credential-1234567890@postgres|' .env
           sed -i 's|PROAI_AUTH_API_KEY=.*|PROAI_AUTH_API_KEY=ci-auth-key-1234567890-abcdef|' .env
-          sed -i "s|PROAI_AUTH_PASSWORD_HASH=.*|PROAI_AUTH_PASSWORD_HASH='pbkdf2_sha256\\$390000\\$ca8d2fb5aa00353673f60720a4717bc3\\$8a7f2dfcaac18b46b8862a2d213cf974e4a4710849992bae8a88e5ce9c57b58f'|" .env
+          # Single-quoted so the shell leaves the $ segments alone: this is a
+          # literal YAML block, so a double-quoted sed script had $3 expand to
+          # an empty positional parameter and left sed reading \9 as a
+          # backreference. `$` is not special in a sed replacement.
+          # The $ are doubled because compose interpolates .env values: with a
+          # single $, `$ca8d...` resolved to an unset variable and the salt
+          # disappeared from the hash entirely. Compose unescapes $$ back to $
+          # when it hands the value to the container.
+          sed -i 's|PROAI_AUTH_PASSWORD_HASH=.*|PROAI_AUTH_PASSWORD_HASH=pbkdf2_sha256$$390000$$ca8d2fb5aa00353673f60720a4717bc3$$8a7f2dfcaac18b46b8862a2d213cf974e4a4710849992bae8a88e5ce9c57b58f|' .env
           sed -i 's|PROAI_SESSION_SECRET=.*|PROAI_SESSION_SECRET=7zP5-sT8fP4j2Dlh5UJAG924-FxNGeFINWDTeO-G0hVioOol|' .env
           docker compose -f docker-compose.prod.yml config > /tmp/proai-prod-compose.yaml
 
@@ -146,7 +154,15 @@ jobs:
           sed -i 's|POSTGRES_PASSWORD=.*|POSTGRES_PASSWORD=ci-db-credential-1234567890|' .env
           sed -i 's|proai:proai@postgres|proai:ci-db-credential-1234567890@postgres|' .env
           sed -i 's|PROAI_AUTH_API_KEY=.*|PROAI_AUTH_API_KEY=ci-auth-key-1234567890-abcdef|' .env
-          sed -i "s|PROAI_AUTH_PASSWORD_HASH=.*|PROAI_AUTH_PASSWORD_HASH='pbkdf2_sha256\\$390000\\$ca8d2fb5aa00353673f60720a4717bc3\\$8a7f2dfcaac18b46b8862a2d213cf974e4a4710849992bae8a88e5ce9c57b58f'|" .env
+          # Single-quoted so the shell leaves the $ segments alone: this is a
+          # literal YAML block, so a double-quoted sed script had $3 expand to
+          # an empty positional parameter and left sed reading \9 as a
+          # backreference. `$` is not special in a sed replacement.
+          # The $ are doubled because compose interpolates .env values: with a
+          # single $, `$ca8d...` resolved to an unset variable and the salt
+          # disappeared from the hash entirely. Compose unescapes $$ back to $
+          # when it hands the value to the container.
+          sed -i 's|PROAI_AUTH_PASSWORD_HASH=.*|PROAI_AUTH_PASSWORD_HASH=pbkdf2_sha256$$390000$$ca8d2fb5aa00353673f60720a4717bc3$$8a7f2dfcaac18b46b8862a2d213cf974e4a4710849992bae8a88e5ce9c57b58f|' .env
           sed -i 's|PROAI_SESSION_SECRET=.*|PROAI_SESSION_SECRET=7zP5-sT8fP4j2Dlh5UJAG924-FxNGeFINWDTeO-G0hVioOol|' .env
           docker compose -f docker-compose.prod.yml up -d
           for attempt in $(seq 1 30); do
