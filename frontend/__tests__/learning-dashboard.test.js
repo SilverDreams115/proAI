@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { JSDOM } from "jsdom";
-import { renderHistoricalDataSummary, renderLearningDashboard, renderLearningSummary } from "../learning-dashboard.js";
+import { renderLearningDashboard, renderLearningSummary } from "../learning-dashboard.js";
 
 function dom(html) {
   return new JSDOM(`<!doctype html><body>${html}</body>`).window.document;
@@ -154,24 +154,5 @@ describe("renderLearningDashboard", () => {
     expect(doc.body.textContent).toContain("12");
     expect(doc.body.textContent).toContain("con resultado canónico");
     expect(doc.body.textContent).toContain("67%");
-  });
-});
-
-describe("renderHistoricalDataSummary", () => {
-  it("surfaces restored historical counts without hiding non-comparable slates", () => {
-    const doc = dom(renderHistoricalDataSummary(
-      inventory([PENDING, COMPARABLE]),
-      { total_slates_scored: 4, total_rows: 14 },
-      { training_ready: false },
-    ));
-    expect(doc.body.textContent).toContain("2");
-    expect(doc.body.textContent).toContain("4");
-    expect(doc.body.textContent).toContain("14");
-    expect(doc.body.textContent).toContain("Histórico restaurado visible");
-  });
-
-  it("shows an explicit API error instead of a blank panel", () => {
-    const doc = dom(renderHistoricalDataSummary(null, null, null));
-    expect(doc.body.textContent).toContain("No se pudo cargar el histórico restaurado");
   });
 });

@@ -197,6 +197,37 @@ describe("renderLiveDashboard", () => {
     const html = renderLiveDashboard({ closed: [], open: [] });
     expect(html).toContain("Sin quinielas.");
   });
+
+  it("drops slates with nothing to compare", () => {
+    // The only action on a card is "Ver comparación". A slate with no finished
+    // and no live result opens an empty table, so it gets no card.
+    const html = renderLiveDashboard({
+      closed: [
+        entry({ draw_code: "PG-2336" }),
+        entry({ slate_id: "pend", draw_code: "PG-SINRES", completed_count: 0, live_count: 0, pending_count: 14 }),
+      ],
+      open: [],
+    });
+    expect(html).toContain("PG-2336");
+    expect(html).not.toContain("PG-SINRES");
+    expect((html.match(/track-card/g) || []).length).toBe(1);
+  });
+
+  it("keeps a partially played slate, and one that is only live", () => {
+    // "Nothing to compare" means zero results, not "not finished yet":
+    // half-played and in-progress slates are exactly what an operator opens.
+    const html = renderLiveDashboard({
+      closed: [
+        entry({ draw_code: "PG-MEDIA", match_count: 14, completed_count: 3, pending_count: 11, is_complete: false }),
+      ],
+      open: [
+        entry({ slate_id: "s3", draw_code: "PG-VIVO", match_count: 14, completed_count: 0, live_count: 2, pending_count: 12, is_complete: false }),
+      ],
+    });
+    expect(html).toContain("PG-MEDIA");
+    expect(html).toContain("PG-VIVO");
+    expect((html.match(/track-card/g) || []).length).toBe(2);
+  });
 });
 
 import { initLiveTracking } from "../live-tracking.js";

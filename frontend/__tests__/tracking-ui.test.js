@@ -10,7 +10,6 @@ import {
   renderComparisonDetail,
   renderLiveDashboard,
   renderDashboardEntry,
-  renderNoComparableResults,
   learningBadge,
 } from "../live-tracking.js";
 
@@ -158,18 +157,19 @@ describe("empty-state when no comparable results", () => {
     ...over,
   });
 
-  it("shows the explicit empty-state when 0 slates have results", () => {
+  it("says how many slates are waiting when none has results yet", () => {
+    // A slate with no result compares nothing, so it gets no card; the count of
+    // what is waiting is still reported instead of a bare "sin quinielas".
     const html = renderLiveDashboard({ closed: [noResultEntry()], open: [noResultEntry({ slate_id: "s2", draw_code: "PGM-800", week_type: "midweek", match_count: 9, pending_count: 9 })] });
-    expect(html).toContain("Aún no hay resultados comparables");
-    expect(html).toContain("no hay resultados reales ingeridos");
-    expect(html).toContain("ingest-results");
+    expect(html).toContain("Ninguna jornada tiene resultados todavía");
+    expect(html).toContain("(2 en espera)");
+    expect(html).not.toContain("track-card");
   });
 
-  it("does not look like a fatal error (no error-copy), still lists slates", () => {
+  it("does not look like a fatal error when nothing has results", () => {
     const html = renderLiveDashboard({ closed: [noResultEntry()], open: [] });
     expect(html).not.toContain("error-copy");
     expect(html).toContain("Seguimiento de quinielas");
-    expect(html).toContain("PG-2337"); // the slate still renders
   });
 
   it("no learning-ready signal when there are no results", () => {
@@ -180,12 +180,13 @@ describe("empty-state when no comparable results", () => {
 
   it("Seguimiento still renders when results overlap is absent", () => {
     expect(() => renderLiveDashboard({ closed: [noResultEntry()], open: [] })).not.toThrow();
-    expect(renderNoComparableResults()).toContain("Aún no hay resultados comparables");
   });
 
-  it("hides the empty-state once any slate has results", () => {
+  it("lists a slate as soon as it has any result", () => {
     const withResult = renderLiveDashboard({ closed: [noResultEntry({ completed_count: 9, match_count: 9 })], open: [] });
-    expect(withResult).not.toContain("Aún no hay resultados comparables");
+    expect(withResult).not.toContain("Ninguna jornada tiene resultados todavía");
+    expect(withResult).toContain("track-card");
+    expect(withResult).toContain("PG-2337");
   });
 });
 
