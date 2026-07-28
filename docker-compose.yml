@@ -84,9 +84,16 @@ services:
       PROAI_BACKUP_INTERVAL_SECONDS: "86400"
       PROAI_BACKUP_RETENTION_DAYS: "7"
     volumes:
-      - ./deploy/postgres_backup.sh:/opt/postgres_backup.sh:ro
+      # Mount the DIRECTORY, not the script file. A single-file bind mount
+      # dies on restart under Docker Desktop + WSL: the daemon stages the
+      # host file behind /run/desktop/mnt/host/wsl/docker-desktop-bind-mounts,
+      # and when that staged path no longer resolves it tries to mount a
+      # directory onto a file and the container exits 127 before the shell
+      # ever runs — silently, with empty logs. This service sat dead from
+      # 2026-07-25 that way. Directory mounts re-resolve cleanly.
+      - ./deploy:/opt/proai-deploy:ro
       - proai-backups:/backups
-    entrypoint: ["/bin/sh", "/opt/postgres_backup.sh"]
+    entrypoint: ["/bin/sh", "/opt/proai-deploy/postgres_backup.sh"]
     restart: unless-stopped
     healthcheck:
       # Probe checks that the last successful backup is fresher than

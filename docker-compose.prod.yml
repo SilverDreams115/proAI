@@ -101,9 +101,12 @@ services:
       PROAI_BACKUP_DIR: /backups
       PROAI_BACKUP_INTERVAL_SECONDS: ${PROAI_BACKUP_INTERVAL_SECONDS:-86400}
       PROAI_BACKUP_RETENTION_DAYS: ${PROAI_BACKUP_RETENTION_DAYS:-7}
-    command: ["sh", "/scripts/postgres_backup.sh"]
+    command: ["sh", "/opt/proai-deploy/postgres_backup.sh"]
     volumes:
-      - ./deploy/postgres_backup.sh:/scripts/postgres_backup.sh:ro
+      # Directory, not the script file — see the note on the same service in
+      # docker-compose.yml. A single-file bind mount exits 127 on restart
+      # under Docker Desktop + WSL, before the shell runs and with no logs.
+      - ./deploy:/opt/proai-deploy:ro
       - proai-backups:/backups
     depends_on:
       postgres:
