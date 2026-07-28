@@ -173,15 +173,20 @@ jobs:
           # skip the redirect. Production sets a real hostname and keeps TLS.
           sed -i 's|PROAI_PUBLIC_HOSTNAME=.*|PROAI_PUBLIC_HOSTNAME=http://localhost|' .env
           docker compose -f docker-compose.prod.yml up -d
+          # Address the stack by the hostname Caddy actually serves. Hitting
+          # 127.0.0.1 sends a Host header that matches no site block, so Caddy
+          # answered with a page that had none of the app's assets in it and
+          # frontend_smoke reported them all missing.
           for attempt in $(seq 1 30); do
-            if curl -fsS http://127.0.0.1/api/ready; then
+            if curl -fsS http://localhost/api/ready; then
               break
             fi
             sleep 2
           done
-          curl -fsS http://127.0.0.1/api/metrics -H 'X-API-Key: ci-auth-key-1234567890-abcdef' > /tmp/proai-metrics.txt
-          curl -fsS http://127.0.0.1/api/operations/publication-gate -H 'X-API-Key: ci-auth-key-1234567890-abcdef' > /tmp/proai-publication-gate.json
-          PROAI_BASE_URL=http://127.0.0.1 python backend/scripts/frontend_smoke.py
+          curl -fsS http://localhost/api/ready
+          curl -fsS http://localhost/api/metrics -H 'X-API-Key: ci-auth-key-1234567890-abcdef' > /tmp/proai-metrics.txt
+          curl -fsS http://localhost/api/operations/publication-gate -H 'X-API-Key: ci-auth-key-1234567890-abcdef' > /tmp/proai-publication-gate.json
+          PROAI_BASE_URL=http://localhost python backend/scripts/frontend_smoke.py
           PROAI_BASE_URL=http://127.0.0.1 PROAI_AUTH_API_KEY=ci-auth-key-1234567890-abcdef PROAI_LOAD_REQUESTS=40 python backend/scripts/http_load_smoke.py
           docker inspect --format '{{json .State.Health}}' proai-backup
           docker inspect --format '{{json .State.Health}}' proai-worker
