@@ -10,7 +10,7 @@ from sqlalchemy.engine import Engine
 
 from app.db.base import Base
 
-SCHEMA_VERSION = 30
+SCHEMA_VERSION = 31
 POSTGRES_MIGRATION_LOCK_ID = 791796
 ALEMBIC_VERSION_PATTERN = re.compile(r"^0*(?P<version>\d+)_.*\.py$")
 
@@ -159,6 +159,9 @@ def _run_migrations_unlocked(engine: Engine) -> None:
         if current_version < 30:
             _migrate_to_v30(connection)
             current_version = 30
+        if current_version < 31:
+            _migrate_to_v31(connection)
+            current_version = 31
         connection.execute(text("UPDATE schema_migrations SET version = :version"), {"version": current_version})
 
 
@@ -223,6 +226,7 @@ def _bootstrap_schema(engine: Engine) -> None:
         _migrate_to_v28(connection)
         _migrate_to_v29(connection)
         _migrate_to_v30(connection)
+        _migrate_to_v31(connection)
         connection.execute(text("CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER NOT NULL)"))
         has_row = connection.execute(text("SELECT 1 FROM schema_migrations LIMIT 1")).scalar_one_or_none()
         if has_row is None:
@@ -1340,6 +1344,45 @@ _SOURCE_SPLIT_MERGES = (
     ("Manchester United", "Man United"),
     ("Seattle", "Seattle Sounders"),
 )
+
+
+# Every remaining split the detector found, pre-emptively folded before a
+# Progol guide happens to use the short form and blocks a position.
+# (thin row, row holding the history). All seven were reported by
+# team_row_split_detection, which only proposes a pair that shares a
+# competition, so each one already satisfies the check the note above
+# _CONTINENTAL_SPLIT_MERGES requires.
+_DETECTED_ROW_SPLITS = (
+    ("Vancouver", "Vancouver Whitecaps"),
+    ("Minnesota", "Minnesota United"),
+    ("San Jose", "San Jose Earthquakes"),
+    ("New England", "New England Revolution"),
+    ("Malm\u00f6", "Malmo FF"),
+    ("Shimizu", "Shimizu S-Pulse"),
+    ("Kalmar", "Kalmar FF"),
+)
+
+
+def _migrate_to_v31(connection) -> None:
+    """Fold the seven remaining split club rows before they cost a slate.
+
+    v30 repaired two splits after they had already blocked two PG-2344
+    positions. These seven are the same defect caught before it lands:
+    each is a thin row (0-10 matches) sitting beside the row that holds
+    the club's real history in the same competition.
+
+        Vancouver (2)    -> Vancouver Whitecaps (91)      MLS
+        Minnesota (3)    -> Minnesota United (88)         MLS
+        San Jose (2)     -> San Jose Earthquakes (82)     MLS
+        New England (2)  -> New England Revolution (82)   MLS
+        Malmo (10)       -> Malmo FF (72)                 Allsvenskan
+        Shimizu (3)      -> Shimizu S-Pulse (58)          J1 League
+        Kalmar (10)      -> Kalmar FF (39)                Allsvenskan
+
+    Same contract as v14/v16/v21/v27/v30. Mirrors alembic 0031.
+    """
+    for placeholder_name, canonical_name in _DETECTED_ROW_SPLITS:
+        _merge_team_into(connection, placeholder_name, canonical_name)
 
 
 def _migrate_to_v30(connection) -> None:
