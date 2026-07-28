@@ -40,7 +40,7 @@ import { renderOperationalMoneyModeStatusPanel } from "./operational-money-mode-
 import { renderExternalResultsPanel } from "./external-results.js";
 import { renderSlateOptionsPanel } from "./slate-options.js";
 import { renderTrackingResultsValidationPanel } from "./tracking-results-validation.js";
-import { renderHistoricalDataSummary, renderLearningDashboard, renderLearningSummary } from "./learning-dashboard.js?v=history-ui-1";
+import { renderLearningDashboard, renderLearningSummary } from "./learning-dashboard.js?v=history-ui-2";
 import { renderSlateReadinessReportPanel } from "./slate-readiness-report.js";
 import { renderOperationalPredictionAuditPanel } from "./operational-prediction-audit.js";
 import {
@@ -1991,12 +1991,10 @@ function activateView(view) {
   document.querySelectorAll(".view").forEach((node) => {
     node.hidden = node.dataset.view !== view;
   });
+  ensureLiveTrackingStarted(view);
   if (view === "aprendizaje") {
     loadLearningDashboard();
     loadLearningSummary();
-  }
-  if (view === "seguimiento" || view === "diagnostico") {
-    loadHistoricalDataSummary();
   }
   // R6.3: the heavy Diagnóstico panels load only when this tab is opened, and
   // only if not already loaded for the active slate (cache makes re-open free).
@@ -2065,39 +2063,6 @@ async function loadLearningSummary() {
   } catch (err) {
     // Best-effort: leave the honest placeholder in place.
   }
-}
-
-let historicalDataSummaryPromise = null;
-let historicalDataSummary = null;
-function renderHistoricalDataPanels() {
-  for (const id of ["tracking-history-body", "diagnostic-history-body"]) {
-    const node = getById(id);
-    if (node && historicalDataSummary) node.innerHTML = historicalDataSummary;
-  }
-}
-
-async function loadHistoricalDataSummary() {
-  if (historicalDataSummary) {
-    renderHistoricalDataPanels();
-    return;
-  }
-  if (historicalDataSummaryPromise) return historicalDataSummaryPromise;
-  historicalDataSummaryPromise = (async () => {
-    try {
-      const [inventory, summary, readiness] = await Promise.all([
-        safeFetch("/learning/completed-slates/inventory"),
-        safeFetch("/adaptive-dataset/summary", { optional: true }),
-        safeFetch("/learning/dataset-readiness", { optional: true }),
-      ]);
-      historicalDataSummary = renderHistoricalDataSummary(inventory, summary, readiness);
-    } catch (_err) {
-      historicalDataSummary = renderHistoricalDataSummary(null, null, null);
-    } finally {
-      historicalDataSummaryPromise = null;
-      renderHistoricalDataPanels();
-    }
-  })();
-  return historicalDataSummaryPromise;
 }
 
 function attachStaticEvents() {
@@ -2318,7 +2283,6 @@ async function loadSlateDetails(slateId) {
 
 let diagnosticsRequestSeq = 0;
 let diagnosticsPreheatRequestSeq = 0;
-let liveTrackingStarted = false;
 
 const LN_RESULTS_SNAPSHOT_KEY = "proai.lnResultsObserverSnapshot";
 
@@ -2530,28 +2494,34 @@ async function boot() {
   renderTransitionBanner();
   renderProductionStatus();
   attachEvents();
-  ensureLiveTrackingStarted();
 }
 
-function ensureLiveTrackingStarted() {
-  if (liveTrackingStarted || !state.authenticated) return;
-  liveTrackingStarted = true;
-  import("./live-tracking.js?v=history-ui-2")
+// The slate browser lives in Seguimiento and nowhere else. It used to be
+// mounted in three tabs at once, which fired /slates/live/dashboard three
+// times over the same data; lazy mounting cut that to one call per tab
+// opened, and dropping the two copies cuts it to one, full stop.
+const LIVE_TRACKING_MOUNTS = {
+  seguimiento: ["live-tracking-panel", "live-tracking-detail"],
+};
+const liveTrackingMounted = new Set();
+
+function ensureLiveTrackingStarted(view) {
+  const mount = LIVE_TRACKING_MOUNTS[view];
+  if (!mount || !state.authenticated || liveTrackingMounted.has(view)) return;
+  const [containerId, detailId] = mount;
+  const container = document.getElementById(containerId);
+  if (!container) return;
+  liveTrackingMounted.add(view);
+  import("./live-tracking.js?v=history-ui-3")
     .then(({ initLiveTracking }) => {
-      for (const [containerId, detailId] of [
-        ["live-tracking-panel", "live-tracking-detail"],
-        ["learning-history-browser", "learning-history-detail"],
-        ["diagnostic-history-browser", "diagnostic-history-detail"],
-      ]) {
-        initLiveTracking({
-          container: document.getElementById(containerId),
-          detailContainer: document.getElementById(detailId),
-          fetchJson: (path) => safeFetch(path, { optional: true }),
-        });
-      }
+      initLiveTracking({
+        container,
+        detailContainer: document.getElementById(detailId),
+        fetchJson: (path) => safeFetch(path, { optional: true }),
+      });
     })
     .catch((error) => {
-      liveTrackingStarted = false;
+      liveTrackingMounted.delete(view);
       console.error("live-tracking module failed to load", error);
     });
 }
@@ -2750,9 +2720,6 @@ checkSession().then(() => {
   boot().then(() => {
     pollActiveSlate();
     pollProposals();
-    // Live tracking is best-effort and fully isolated: a load/link error
-    // or a failing dashboard fetch must never break the main selector.
-    ensureLiveTrackingStarted();
   }).catch((error) => {
     // Last-resort guard: boot() should never leave the UI stuck on the
     // static "Cargando…" placeholder. Clear loading and render whatever

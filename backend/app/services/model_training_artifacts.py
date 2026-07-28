@@ -38,6 +38,12 @@ class ModelTrainingArtifactsMixin:
     READY_MIN_CONFIDENT_PICKS: ClassVar[int]
     COMPETITION_ALIASES: ClassVar[dict[str, str]]
     COMPETITION_POLICY_OVERRIDES: ClassVar[dict[str, dict[str, Any]]]
+    # Per-instance scoring memos. A service object is built per request and
+    # scores every match in the slate with the same artifact and booster;
+    # re-reading both per match was 65% of a cold prediction build.
+    _artifact_memo: dict[str, dict[str, Any] | None] | None = None
+    _artifact_run_ids: dict[str, str | None] | None = None
+    _booster_memo: tuple[str, Any] | None = None
     # Versioning of the feature engineering layer. Bumped any time
     # FEATURE_NAMES changes shape or a feature's semantics drift; the
     # artifact stores this number so a replayed prediction can verify
@@ -237,10 +243,41 @@ class ModelTrainingArtifactsMixin:
         }
 
     def latest_artifact(self, model_name: str | None = None) -> dict[str, Any] | None:
-        run = self.training_repository.latest_run(model_name or self.MODEL_NAME)
-        if run is None:
-            return None
-        return json.loads(run.artifact_json)
+        """Latest trained artifact, memoized for the life of this service.
+
+        ``score_match`` calls this once per match and ``current_model_artifact_id``
+        hits ``latest_run`` again, so scoring a 14-position slate used to run 28
+        queries that each re-read and re-parsed the whole artifact — ratings,
+        team profiles, calibration curves for 19 leagues, the booster
+        descriptor. That was 4.9s of the 7.6s a cold
+        ``build_slate_predictions`` took, and the operator paid it on the first
+        page load after every restart, since the prediction cache starts empty.
+
+        The artifact cannot change under a live service instance: the only
+        writer is ``train()`` on this same object, which clears the memo.
+        """
+        name = model_name or self.MODEL_NAME
+        cached = self._artifact_memo
+        if cached is not None and name in cached:
+            return cached[name]
+        run = self.training_repository.latest_run(name)
+        artifact = json.loads(run.artifact_json) if run is not None else None
+        if cached is None:
+            cached = {}
+            self._artifact_memo = cached
+        cached[name] = artifact
+        run_ids = self._artifact_run_ids
+        if run_ids is None:
+            run_ids = {}
+            self._artifact_run_ids = run_ids
+        run_ids[name] = getattr(run, "id", None)
+        return artifact
+
+    def invalidate_artifact_memo(self) -> None:
+        """Drop the memoized artifact and booster. Called after a new run."""
+        self._artifact_memo = None
+        self._artifact_run_ids = None
+        self._booster_memo = None
 
     def score_match(self, match: MatchModel) -> dict[str, float]:
         artifact = self.latest_artifact()
@@ -255,8 +292,13 @@ class ModelTrainingArtifactsMixin:
         None when no trained artifact exists (heuristic-only fallback).
 
         Used to stamp prediction audits so a row can be traced back to the
-        exact training run that produced it."""
+        exact training run that produced it. Reuses the id recorded by
+        ``latest_artifact`` so stamping an audit costs no extra query — this
+        is called once per match too."""
         try:
+            run_ids = self._artifact_run_ids
+            if run_ids is not None and self.MODEL_NAME in run_ids:
+                return run_ids[self.MODEL_NAME]
             run = self.training_repository.latest_run(self.MODEL_NAME)
         except Exception:  # pragma: no cover - defensive; audit must never crash scoring
             return None
@@ -903,18 +945,42 @@ class ModelTrainingArtifactsMixin:
         inline = artifact.get("booster_json")
         return inline if isinstance(inline, str) else None
 
-    def _score_with_xgboost(self, match: MatchModel, artifact: dict[str, Any]) -> dict[str, float] | None:
+    def _booster_for(self, artifact: dict[str, Any]) -> Any | None:
+        """Deserialized XGBoost booster, memoized for the life of this service.
+
+        Scoring re-read the booster from disk and re-deserialized it on every
+        call — twice per match, 64ms a time. Keyed on the storage descriptor's
+        sha256, which is exactly what identifies a booster; a legacy inline
+        artifact has no stable key, so it is loaded every time as before.
+        """
+        descriptor = artifact.get("booster_storage")
+        key = ""
+        if isinstance(descriptor, dict):
+            key = str(descriptor.get("sha256") or descriptor.get("path") or "")
+        memo = self._booster_memo
+        if memo is not None and key and memo[0] == key:
+            return memo[1]
         booster_json = self._load_booster_json(artifact)
-        feature_names = artifact.get("feature_names", self.FEATURE_NAMES)
-        if not isinstance(booster_json, str) or not isinstance(feature_names, list):
-            # Legacy artifacts may still carry pickle blobs. They are only
-            # loadable when explicitly allowed; default-off in production.
-            return self._score_with_xgboost_legacy_pickle(match, artifact)
+        if not isinstance(booster_json, str):
+            return None
         # XGBoost is a hard runtime dependency: see backend/pyproject.toml.
         import xgboost
 
         booster = xgboost.Booster()
         booster.load_model(bytearray(booster_json, encoding="utf-8"))
+        if key:
+            self._booster_memo = (key, booster)
+        return booster
+
+    def _score_with_xgboost(self, match: MatchModel, artifact: dict[str, Any]) -> dict[str, float] | None:
+        feature_names = artifact.get("feature_names", self.FEATURE_NAMES)
+        booster = self._booster_for(artifact)
+        if booster is None or not isinstance(feature_names, list):
+            # Legacy artifacts may still carry pickle blobs. They are only
+            # loadable when explicitly allowed; default-off in production.
+            return self._score_with_xgboost_legacy_pickle(match, artifact)
+        import xgboost
+
         feature_map = self.feature_service.build_model_features(match, cutoff=match.kickoff_at)
         row = [[float(feature_map.get(str(name), 0.0)) for name in feature_names]]
         probabilities = booster.predict(xgboost.DMatrix(row))[0]

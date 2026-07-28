@@ -441,6 +441,9 @@ class ModelTrainingService(ModelTrainingArtifactsMixin):
                     int(artifact["training_sample_size"]),
                     artifact,
                 )
+        # A newer run is now the latest; drop the memo so this instance does
+        # not keep scoring with the artifact it replaced.
+        self.invalidate_artifact_memo()
         return artifact
 
     def _fit_drift_baseline(self, matches: list[MatchModel]) -> dict[str, Any]:
