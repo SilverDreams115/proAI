@@ -34,6 +34,16 @@ import {
   predictionAllowsConfidentSingle,
   probBarWidthClass,
 } from "./helpers.js";
+import {
+  multipleRuleForSlate as multipleRuleForSlateRule,
+  doubleLimitForSlate as doubleLimitForSlateRule,
+  fixedModelDecision,
+  ticketRecommendationFor as ticketRecommendationForPlan,
+  decisionFromTicket as decisionFromTicketPlan,
+  doublesModelDecision as doublesModelDecisionRule,
+  fullCoverageDecision as fullCoverageDecisionRule,
+  modelDecision as modelDecisionRule,
+} from "./ticket-decision.js";
 import { presentationGuardOf, SIGNAL_LABEL } from "./presentation-guard.js";
 import { renderMoneyModePanel } from "./money-mode.js";
 import { renderOperationalMoneyModeStatusPanel } from "./operational-money-mode-status.js";
@@ -118,37 +128,33 @@ function renderNoSlateState() {
     </div>`;
 }
 
+// Thin wrappers over ticket-decision.js. They exist so the ~40 call
+// sites below keep their signatures and the globals from config.js
+// (state, multipleRules, outcomeOrder) get threaded in from one place.
+function decisionDeps() {
+  return {
+    ticketPlan: state.ticketPlan,
+    modelDoubleMatchIds: state.modelDoubleMatchIds,
+    modelTripleMatchIds: state.modelTripleMatchIds,
+    modelFullDoubleMatchIds: state.modelFullDoubleMatchIds,
+    outcomeOrder,
+  };
+}
+
 function multipleRuleForSlate(slate, matchCount = 0) {
-  const weekType = slate?.week_type || "";
-  if (multipleRules[weekType]) return multipleRules[weekType];
-  if (matchCount >= 14) return multipleRules.weekend;
-  if (matchCount <= 7) return multipleRules.revancha;
-  return multipleRules.fallback;
+  return multipleRuleForSlateRule(multipleRules, slate, matchCount);
 }
 
 function doubleLimitForSlate(slate, matchCount = 0) {
-  return multipleRuleForSlate(slate, matchCount).doublesOnlyMax;
-}
-
-function fixedModelDecision(prediction) {
-  const outcomes = sortedOutcomes(prediction);
-  const best = outcomes[0];
-  return {type: "fixed", picks: [best.key], source: "model"};
+  return doubleLimitForSlateRule(multipleRules, slate, matchCount);
 }
 
 function ticketRecommendationFor(matchId) {
-  return state.ticketPlan?.recommendations?.find((item) => item.match_id === matchId) || null;
+  return ticketRecommendationForPlan(state.ticketPlan, matchId);
 }
 
 function decisionFromTicket(matchId, mode = state.ticketMode) {
-  const recommendation = ticketRecommendationFor(matchId);
-  const decision = recommendation?.decisions?.[mode];
-  if (!decision) return null;
-  return {
-    type: decision.pick_type,
-    picks: decision.picks,
-    source: decision.source || "model",
-  };
+  return decisionFromTicketPlan(state.ticketPlan, matchId, mode);
 }
 
 function drawRiskFor(match) {
@@ -196,45 +202,15 @@ function renderDrawCoverageBlock(risk) {
 }
 
 function doublesModelDecision(prediction, matchId = null) {
-  const outcomes = sortedOutcomes(prediction);
-  const best = outcomes[0];
-  const second = outcomes[1];
-  const bestGap = best.value - second.value;
-  const allowDouble = matchId && state.modelDoubleMatchIds.has(matchId);
-
-  // Confident single only when the backend ticket_strategy is SIMPLE (product
-  // field). A band-high friendly with ticket_strategy NO_DEJAR_SIMPLE no
-  // longer shortcuts to a fixed. Legacy fallback lives inside the helper.
-  if (best.value >= 0.58 && bestGap >= 0.12 && predictionAllowsConfidentSingle(prediction)) {
-    return {type: "fixed", picks: [best.key], source: "model"};
-  }
-  if (allowDouble) {
-    return {type: "double", picks: [best.key, second.key], source: "model"};
-  }
-  return {type: "fixed", picks: [best.key], source: "model"};
+  return doublesModelDecisionRule(prediction, matchId, state.modelDoubleMatchIds);
 }
 
 function fullCoverageDecision(prediction, matchId = null) {
-  const outcomes = sortedOutcomes(prediction);
-  const best = outcomes[0];
-  const second = outcomes[1];
-  if (matchId && state.modelTripleMatchIds.has(matchId)) {
-    return {type: "triple", picks: outcomeOrder, source: "model"};
-  }
-  if (matchId && state.modelFullDoubleMatchIds.has(matchId)) {
-    return {type: "double", picks: [best.key, second.key], source: "model"};
-  }
-  return {type: "fixed", picks: [best.key], source: "model"};
+  return fullCoverageDecisionRule(prediction, matchId, decisionDeps());
 }
 
 function modelDecision(prediction, matchId = null, mode = state.ticketMode) {
-  if (matchId) {
-    const ticketDecision = decisionFromTicket(matchId, mode);
-    if (ticketDecision) return ticketDecision;
-  }
-  if (mode === "simple") return fixedModelDecision(prediction);
-  if (mode === "full") return fullCoverageDecision(prediction, matchId);
-  return doublesModelDecision(prediction, matchId);
+  return modelDecisionRule(prediction, matchId, mode, decisionDeps());
 }
 
 function uncertaintyProfile(match) {
