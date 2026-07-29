@@ -5,6 +5,7 @@ from uuid import uuid4
 
 from sqlalchemy import Boolean
 from sqlalchemy import DateTime
+from sqlalchemy import false as sa_false
 from sqlalchemy import Float
 from sqlalchemy import ForeignKey
 from sqlalchemy import Integer
@@ -82,6 +83,19 @@ class MatchModel(Base):
     # league). NULL means we have not seen a stage for this fixture and
     # consumers must fall back to the competition name.
     stage: Mapped[str | None] = mapped_column(String(64))
+    # True when no feed ever reported this fixture and the Progol promotion
+    # path fabricated it to keep the slate at 9/14 positions. Its kickoff (and
+    # often its competition) is a construction, not an observation — see
+    # app.services.placeholder_fixtures. Consumers must never present a
+    # placeholder kickoff as a real one, and the fixture resolver must never
+    # adopt such a row as the "real match" for a later slate.
+    # server_default, not just a Python-side default: migrations and tests
+    # insert match rows with raw SQL that does not name this column, and the
+    # v32 DDL adds it with a DEFAULT too. Keeping both in step means a freshly
+    # created schema and a migrated one accept the same inserts.
+    is_placeholder: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=sa_false(), nullable=False
+    )
 
     competition: Mapped["CompetitionModel"] = relationship(back_populates="matches")
     home_team: Mapped["TeamModel"] = relationship(

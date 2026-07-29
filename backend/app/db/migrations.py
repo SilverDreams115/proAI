@@ -10,7 +10,7 @@ from sqlalchemy.engine import Engine
 
 from app.db.base import Base
 
-SCHEMA_VERSION = 31
+SCHEMA_VERSION = 32
 POSTGRES_MIGRATION_LOCK_ID = 791796
 ALEMBIC_VERSION_PATTERN = re.compile(r"^0*(?P<version>\d+)_.*\.py$")
 
@@ -162,6 +162,9 @@ def _run_migrations_unlocked(engine: Engine) -> None:
         if current_version < 31:
             _migrate_to_v31(connection)
             current_version = 31
+        if current_version < 32:
+            _migrate_to_v32(connection)
+            current_version = 32
         connection.execute(text("UPDATE schema_migrations SET version = :version"), {"version": current_version})
 
 
@@ -1361,6 +1364,80 @@ _DETECTED_ROW_SPLITS = (
     ("Shimizu", "Shimizu S-Pulse"),
     ("Kalmar", "Kalmar FF"),
 )
+
+
+def _migrate_to_v32(connection) -> None:
+    """Mark the fixtures the Progol promotion path fabricated.
+
+    When ``ProgolFixtureResolver`` finds no ingested match for a pair the LN
+    guide lists, promotion still has to produce 9 or 14 positions, so it builds
+    one: kickoff at ``cierre + 12h``, stepped an hour per position, with a
+    competition inferred from team history. Nothing recorded that the row was a
+    construction, so it sat in ``matches`` looking exactly like a fixture a feed
+    had reported. Three consequences, all live in production before this
+    revision:
+
+    * the pick card printed the invented hour as the fixture's kickoff;
+    * ``find_upcoming_match_for_pair`` returned a previous slate's fabricated
+      row as the "real match" for a new slate, so 16 match rows ended up shared
+      between two slates (PG-2336/PGM-799, PG-2337/PGM-800, PG-2334/PGR-2334);
+    * correcting a cierre never moved the kickoffs derived from the old one —
+      PGM-806 closed 2026-07-28 22:55Z with all 9 kickoffs on 2026-07-30.
+
+    The backfill recognises fabricated rows by their shape, not by recomputing
+    ``cierre + 12h``: once an operator corrects the cierre the stored kickoffs
+    no longer relate to it, and those rows are precisely the ones that most need
+    marking. Within a slate of >= 3 positions, kickoffs spaced at exactly one
+    hour that collapse to a single base are the fabricator's signature — 10 of
+    the 16 slates in production match it, including the active PG-2344, and each
+    of the 9 whose cierre was never corrected also reproduces ``cierre + 12h``
+    exactly, which is what confirms the detection rather than defines it.
+
+    Additive and conservative: a row only gains the mark, defaults are False,
+    and a slate that resolved to real fixtures forms no ladder and is untouched.
+    Mirrors alembic 0032. See app.services.placeholder_fixtures.
+    """
+    _add_column_if_missing(
+        connection,
+        "matches",
+        "is_placeholder",
+        f"is_placeholder BOOLEAN NOT NULL DEFAULT {_false_for_dialect(connection)}",
+    )
+    # One base per slate: kickoff shifted back by (position - 1) hours. A
+    # fabricated ladder collapses to exactly one distinct base; anything with
+    # real kickoffs in it does not.
+    ladders = connection.execute(
+        text(
+            """
+            SELECT sm.slate_id
+            FROM progol_slate_matches sm
+            JOIN matches m ON m.id = sm.match_id
+            GROUP BY sm.slate_id
+            HAVING COUNT(*) >= 3
+               AND COUNT(DISTINCT m.kickoff_at - (sm.position - 1) * INTERVAL '1 hour') = 1
+            """
+        )
+        if connection.dialect.name != "sqlite"
+        else text(
+            """
+            SELECT sm.slate_id
+            FROM progol_slate_matches sm
+            JOIN matches m ON m.id = sm.match_id
+            GROUP BY sm.slate_id
+            HAVING COUNT(*) >= 3
+               AND COUNT(DISTINCT datetime(m.kickoff_at, '-' || (sm.position - 1) || ' hours')) = 1
+            """
+        )
+    ).scalars().all()
+    for slate_id in ladders:
+        connection.execute(
+            text(
+                "UPDATE matches SET is_placeholder = "
+                f"{_true_for_dialect(connection)} WHERE id IN ("
+                "SELECT match_id FROM progol_slate_matches WHERE slate_id = :slate_id)"
+            ),
+            {"slate_id": slate_id},
+        )
 
 
 def _migrate_to_v31(connection) -> None:

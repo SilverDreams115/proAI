@@ -9,7 +9,8 @@ the `_FIXTURE_RE` pattern) without needing live network access.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+import json
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -470,3 +471,69 @@ async def test_proposed_list_shows_is_already_active(client) -> None:
     assert len(proposals_after) == 1
     assert proposals_after[0]["is_already_active"] is True
     assert proposals_after[0]["active_slate_id"] is not None
+
+
+def test_promotion_marks_fabricated_fixtures_and_not_resolved_ones(tmp_path) -> None:
+    """A promoted slate must record which of its fixtures it invented.
+
+    The resolver finds nothing for most pairs the LN guide lists, so promotion
+    fabricates a fixture at `cierre + 12h` stepped an hour per position. Stored
+    unmarked, that construction is indistinguishable from a kickoff a feed
+    reported — it reached the pick card as the real hour and a later slate's
+    resolver adopted it as a real match. Every fabricated row carries
+    `is_placeholder` now; a row backed by an ingested fixture must not.
+    """
+    from app.models.tables import CompetitionModel, MatchModel, TeamModel
+    from app.services.placeholder_fixtures import fallback_kickoff
+    from app.services.slate_proposal_service import SlateProposalService
+
+    session = _make_session(tmp_path)
+    try:
+        service = SlateProposalService(session, connector_factory=lambda: _StubConnector())
+        service.observe()
+        proposal = service.observe()
+        assert proposal is not None and proposal.status == "validated"
+
+        cierre = proposal.registration_closes_at
+        if cierre.tzinfo is None:
+            cierre = cierre.replace(tzinfo=timezone.utc)
+
+        # Give position 1 a real ingested fixture so the resolver matches it.
+        fixtures = json.loads(proposal.payload_json)["fixtures"]
+        first = fixtures[0]
+        competition = CompetitionModel(name="La Liga", country="Spain", season="2026")
+        home = TeamModel(name=first["home"])
+        away = TeamModel(name=first["away"])
+        session.add_all([competition, home, away])
+        session.flush()
+        real_kickoff = cierre + timedelta(hours=37)
+        session.add(
+            MatchModel(
+                competition=competition,
+                home_team=home,
+                away_team=away,
+                kickoff_at=real_kickoff,
+                venue="Santiago Bernabeu",
+            )
+        )
+        session.flush()
+
+        result = service.promote_proposal(proposal)
+        slate = result.slate
+        by_position = {sm.position: sm.match for sm in slate.matches}
+
+        def _utc(value):
+            return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+
+        # Position 1 resolved to the ingested fixture: real kickoff, unmarked.
+        assert by_position[1].is_placeholder is False
+        assert _utc(by_position[1].kickoff_at) == real_kickoff
+
+        # Every other position was fabricated and says so.
+        fabricated = [pos for pos, match in by_position.items() if pos != 1]
+        assert fabricated, "expected the guide to carry more than one fixture"
+        for position in fabricated:
+            assert by_position[position].is_placeholder is True
+            assert _utc(by_position[position].kickoff_at) == fallback_kickoff(cierre, position)
+    finally:
+        session.close()

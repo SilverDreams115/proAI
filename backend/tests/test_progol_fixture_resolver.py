@@ -218,3 +218,76 @@ def test_resolve_many_returns_only_matched_positions(tmp_path) -> None:
         assert resolved[4].competition.name == "La Liga"
     finally:
         session.close()
+
+
+def test_resolver_never_adopts_a_fabricated_fixture(tmp_path) -> None:
+    """A previous slate's placeholder row must not resolve as a real match.
+
+    When no feed reports a pair, promotion fabricates a fixture whose kickoff
+    is derived from THAT slate's cierre. Left visible to the resolver, the
+    next slate for the same pair finds it, reports "real match found" and
+    copies the invented kickoff forward — which is how 16 match rows ended up
+    shared between two slates in production. The pair must keep falling
+    through to the fallback, which at least marks what it builds.
+    """
+    from app.services.progol_fixture_resolver import ProgolFixtureResolver
+
+    session = _make_session(tmp_path)
+    try:
+        cierre = datetime(2026, 5, 31, 3, 0, tzinfo=timezone.utc)
+        fabricated = _seed_match(
+            session,
+            home_name="CORINTHIANS",
+            away_name="PARANAENSE",
+            competition_name="Brasileirao",
+            kickoff_at=cierre + timedelta(hours=12),
+        )
+        fabricated.is_placeholder = True
+        session.flush()
+
+        resolver = ProgolFixtureResolver(session)
+        assert resolver.resolve_pair("CORINTHIANS", "PARANAENSE", cierre) is None
+    finally:
+        session.close()
+
+
+def test_a_real_fixture_still_resolves_for_a_pair_that_also_has_a_placeholder(tmp_path) -> None:
+    """The guard filters placeholders, it does not blind the resolver: once a
+    feed reports the fixture, that row is what the next slate must adopt."""
+    from app.models.tables import CompetitionModel, MatchModel
+    from app.services.progol_fixture_resolver import ProgolFixtureResolver
+
+    session = _make_session(tmp_path)
+    try:
+        cierre = datetime(2026, 5, 31, 3, 0, tzinfo=timezone.utc)
+        fabricated = _seed_match(
+            session,
+            home_name="CORINTHIANS",
+            away_name="PARANAENSE",
+            competition_name="Brasileirao",
+            kickoff_at=cierre + timedelta(hours=12),
+        )
+        fabricated.is_placeholder = True
+        # Same team rows as the fabricated fixture — a second _seed_match would
+        # create duplicate teams and the resolver would look up only one set.
+        real_competition = CompetitionModel(
+            name="Brasileirao Serie A", country="Brazil", season="2026"
+        )
+        session.add(real_competition)
+        session.flush()
+        real = MatchModel(
+            competition=real_competition,
+            home_team=fabricated.home_team,
+            away_team=fabricated.away_team,
+            kickoff_at=cierre + timedelta(hours=30),
+            venue="Neo Quimica Arena",
+        )
+        session.add(real)
+        session.flush()
+
+        resolver = ProgolFixtureResolver(session)
+        resolved = resolver.resolve_pair("CORINTHIANS", "PARANAENSE", cierre)
+        assert resolved is not None
+        assert resolved.id == real.id
+    finally:
+        session.close()

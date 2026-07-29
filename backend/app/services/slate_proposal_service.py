@@ -22,7 +22,7 @@ import hashlib
 import json
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy import select
@@ -39,6 +39,7 @@ from app.schemas.common import CompetitionPayload
 from app.schemas.common import MatchReferencePayload
 from app.schemas.common import TeamPayload
 from app.schemas.slate import ProgolSlateCreate
+from app.services.placeholder_fixtures import fallback_kickoff
 from app.services.progol_fixture_resolver import ProgolFixtureResolver
 from app.services.slate_service import SlateService
 
@@ -203,11 +204,11 @@ class SlateProposalService:
     # Promotion
     # ------------------------------------------------------------------
 
-    # Fallback kickoffs spread across one hour per partido starting
-    # cierre + 12h. Used only when ProgolFixtureResolver can't find a
-    # real match for the pair — typically friendlies or competitions we
-    # don't ingest.
-    FALLBACK_BASE_OFFSET = timedelta(hours=12)
+    # Kickoffs for pairs ProgolFixtureResolver cannot match — typically
+    # friendlies or competitions we don't ingest — are fabricated by
+    # `placeholder_fixtures.fallback_kickoff` (cierre + 12h, one hour per
+    # position). The formula lives there so the promotion path, the ladder
+    # detection and the cierre rebase all read it from one place.
 
     def promote_proposal(
         self,
@@ -258,7 +259,6 @@ class SlateProposalService:
         ]
         resolved = resolver.resolve_many(pairs, cierre)
 
-        fallback_base = cierre + self.FALLBACK_BASE_OFFSET
         placeholder_competition = f"Progol Concurso {proposal.draw_code}"
         matches: list[MatchReferencePayload] = []
         matched_count = 0
@@ -285,6 +285,7 @@ class SlateProposalService:
                         ),
                         kickoff_at=match_model.kickoff_at,
                         venue=match_model.venue,
+                        is_placeholder=False,
                     )
                 )
             else:
@@ -325,8 +326,13 @@ class SlateProposalService:
                         competition=competition_payload,
                         home_team=home_team_payload,
                         away_team=away_team_payload,
-                        kickoff_at=fallback_base + timedelta(hours=max(0, position - 1)),
+                        kickoff_at=fallback_kickoff(cierre, position),
                         venue=None,
+                        # No feed ever reported this fixture. The kickoff above
+                        # is derived from the cierre, and the competition is at
+                        # best inferred from team history — the row must carry
+                        # that so nothing downstream reads it as observed.
+                        is_placeholder=True,
                     )
                 )
 

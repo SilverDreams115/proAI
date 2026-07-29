@@ -244,6 +244,15 @@ class CurrentProgolService:
             ),
             kickoff_at=kickoff_at,
             venue=str(fixture.get("venue") or "") or None,
+            # Absent key -> None ("this context file predates the flag, leave
+            # the stored mark alone"), never False. A False here would assert
+            # that a feed reported the fixture, which is precisely how an
+            # older current.json wiped PG-2344's 14 fabricated kickoffs.
+            is_placeholder=(
+                bool(fixture["fixture_is_placeholder"])
+                if "fixture_is_placeholder" in fixture
+                else None
+            ),
         )
 
     def _parse_datetime(self, value: object) -> datetime | None:

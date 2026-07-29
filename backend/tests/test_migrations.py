@@ -664,3 +664,129 @@ def test_v27_leaves_a_placeholder_with_no_real_row_alone(tmp_path) -> None:
             text("SELECT COUNT(*) FROM teams WHERE name LIKE 'Aberdeen%'")
         ).scalar_one()
     assert rows == 1
+
+
+def _seed_slate_with_kickoffs(connection, *, slate_id, draw_code, kickoffs):
+    """Insert a slate whose positions carry the given kickoffs, 1-indexed."""
+    from sqlalchemy import text
+
+    connection.execute(
+        text(
+            "INSERT INTO competitions (id, name, is_placeholder) "
+            f"VALUES ('c-{slate_id}', 'Brasileirao', 0)"
+        )
+    )
+    connection.execute(
+        text(
+            "INSERT INTO progol_slates (id, label, draw_code, week_type, is_archived, "
+            "created_at, slate_version) VALUES "
+            "(:id, :label, :code, 'midweek', 0, :created, 1)"
+        ),
+        {
+            "id": slate_id,
+            "label": draw_code,
+            "code": draw_code,
+            "created": kickoffs[0],
+        },
+    )
+    for position, kickoff in enumerate(kickoffs, start=1):
+        team_prefix = f"{slate_id}-{position}"
+        connection.execute(
+            text("INSERT INTO teams (id, name, is_placeholder) VALUES (:id, :name, 0)"),
+            {"id": f"h-{team_prefix}", "name": f"Home {team_prefix}"},
+        )
+        connection.execute(
+            text("INSERT INTO teams (id, name, is_placeholder) VALUES (:id, :name, 0)"),
+            {"id": f"a-{team_prefix}", "name": f"Away {team_prefix}"},
+        )
+        connection.execute(
+            text(
+                "INSERT INTO matches (id, competition_id, home_team_id, away_team_id, kickoff_at) "
+                f"VALUES (:id, 'c-{slate_id}', :home, :away, :kickoff)"
+            ),
+            {
+                "id": f"m-{team_prefix}",
+                "home": f"h-{team_prefix}",
+                "away": f"a-{team_prefix}",
+                "kickoff": kickoff,
+            },
+        )
+        # `id` is an autoincrementing integer here, so it is left to the DB.
+        connection.execute(
+            text(
+                "INSERT INTO progol_slate_matches (slate_id, match_id, position, is_knockout, "
+                "knockout_source) VALUES (:slate, :match, :position, 0, 'auto')"
+            ),
+            {
+                "slate": slate_id,
+                "match": f"m-{team_prefix}",
+                "position": position,
+            },
+        )
+
+
+def test_v32_marks_fabricated_kickoff_ladders_and_spares_real_fixtures(tmp_path) -> None:
+    """The promotion path fabricates `cierre + 12h` stepped an hour per
+    position when no feed reported a pair. Those rows sat in `matches`
+    indistinguishable from observed fixtures — printed as real kickoffs and
+    adopted by the next slate's resolver. v32 marks them by their ladder shape,
+    which is what still identifies PGM-806 after its cierre was corrected and
+    its kickoffs no longer relate to it. A slate with real kickoffs forms no
+    ladder and must come out untouched."""
+    from datetime import datetime, timedelta, timezone
+
+    from sqlalchemy import text
+
+    from app.db import session as db_session
+    from app.db.migrations import run_migrations
+    from app.models import tables  # noqa: F401
+
+    db_session.configure_session(f"sqlite:///{tmp_path / 'placeholder_ladder.db'}")
+    run_migrations(db_session.engine)
+
+    base = datetime(2026, 7, 30, 11, 37, 37, tzinfo=timezone.utc)
+    with db_session.engine.begin() as connection:
+        # PGM-806's shape: a perfect hourly ladder, and a cierre it no longer
+        # relates to (the operator corrected it two days earlier).
+        _seed_slate_with_kickoffs(
+            connection,
+            slate_id="s-ladder",
+            draw_code="PGM-806",
+            kickoffs=[base + timedelta(hours=i) for i in range(9)],
+        )
+        # Real feed times: irregular gaps, two fixtures sharing a slot.
+        _seed_slate_with_kickoffs(
+            connection,
+            slate_id="s-real",
+            draw_code="PG-REAL",
+            kickoffs=[
+                datetime(2026, 8, 1, 15, 0, tzinfo=timezone.utc),
+                datetime(2026, 8, 1, 17, 30, tzinfo=timezone.utc),
+                datetime(2026, 8, 1, 17, 30, tzinfo=timezone.utc),
+                datetime(2026, 8, 2, 19, 0, tzinfo=timezone.utc),
+            ],
+        )
+        # Two positions an hour apart is an ordinary broadcast pairing, not
+        # evidence of fabrication — below the ladder threshold.
+        _seed_slate_with_kickoffs(
+            connection,
+            slate_id="s-short",
+            draw_code="PG-SHORT",
+            kickoffs=[base, base + timedelta(hours=1)],
+        )
+
+    from app.db.migrations import _migrate_to_v32
+
+    with db_session.engine.begin() as connection:
+        _migrate_to_v32(connection)
+
+    with db_session.engine.connect() as connection:
+        marked = {
+            row[0]
+            for row in connection.execute(
+                text("SELECT id FROM matches WHERE is_placeholder = 1")
+            )
+        }
+
+    assert len(marked) == 9
+    assert all(match_id.startswith("m-s-ladder") for match_id in marked)

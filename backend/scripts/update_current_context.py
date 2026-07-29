@@ -224,6 +224,11 @@ def export_from_active_slates(path: Path, *, backup: bool = True) -> dict[str, A
                         "away_country": match.away_team.country,
                         "away_is_placeholder": bool(match.away_team.is_placeholder),
                         "kickoff_at": match.kickoff_at.isoformat(),
+                        # The fixture's own mark, alongside the three entity
+                        # ones. Without it the round-trip through this file
+                        # re-imported every fabricated kickoff as if a feed had
+                        # reported it, clearing the mark on re-upsert.
+                        "fixture_is_placeholder": bool(match.is_placeholder),
                         "venue": match.venue,
                     }
                 )

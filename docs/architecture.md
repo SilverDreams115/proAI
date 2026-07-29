@@ -55,7 +55,7 @@ External sources (TheSportsDB, football-data.org, football-data.co.uk)
 Main server. Registers 20 routers under `/api/`. Auth via middleware (API key or signed session cookie). Worker and openapi-schema routes with an additional per-route guard.
 
 ### PostgreSQL
-Main database. `SCHEMA_VERSION = 19`. Automatic migrations at startup (`app/db/migrations.py`), with Alembic as the audit trail (`backend/alembic/`). Never make schema changes outside this mechanism.
+Main database. `SCHEMA_VERSION = 32`. Automatic migrations at startup (`app/db/migrations.py`), with Alembic as the audit trail (`backend/alembic/`). Never make schema changes outside this mechanism.
 
 ### Worker (app/workers/scheduler_worker.py)
 Separate process. Runs scheduled jobs: ingestion refresh, archive/observe/auto-promote of the Progol pipeline. Controllable via `POST /api/worker/scheduler/run-once` (requires auth when credentials exist).
@@ -124,6 +124,7 @@ Active and needed, but modifiable with lower risk if there are tests.
 | `source_service.py` | Source CRUD |
 | `entity_resolution_service.py` | Entity deduplication |
 | `progol_fixture_resolver.py` | Progol fixture resolution |
+| `placeholder_fixtures.py` | Fabricated-fixture formula, ladder detection, cierre rebase |
 | `artifact_storage.py` | S3/local artifact I/O |
 
 ### EXPERIMENTAL_NOT_WIRED
@@ -138,6 +139,33 @@ Present in the repo, accessible via routes or CLI, but marked as non-production.
 ### Removed as confirmed dead code
 - `narrative_extractor.py` — zero production references
 - `stacking.py` — zero production references
+
+---
+
+## Fabricated fixtures (`is_placeholder`)
+
+The LN guide lists pairs, not fixtures. When `ProgolFixtureResolver` finds no
+ingested match for a pair, promotion still has to produce 9 or 14 positions, so
+it fabricates one: kickoff at `cierre + 12h` stepped an hour per position, with a
+competition inferred from team history. That construction is legitimate — the
+slate must be complete — but it is not an observation, and `matches.is_placeholder`
+is what records the difference.
+
+Three rules depend on that flag:
+
+* **The UI never prints a fabricated kickoff as the real one.** `SlateMatchResponse`
+  exposes it as `kickoff_estimated`; the pick card shows the day plus "horario por
+  confirmar" instead of an hour nobody published.
+* **`find_upcoming_match_for_pair` excludes placeholder rows.** Otherwise the next
+  slate for the same pair adopts a previous slate's invention as a real match and
+  copies its kickoff forward.
+* **Correcting a cierre rebases the kickoffs derived from it** — see
+  `placeholder_fixtures.rebase_to_cierre`. Only a fabricated ladder moves; a slate
+  backed by ingested fixtures forms no ladder and is never rewritten.
+
+A real fixture always outranks a fabricated one: a payload backed by a feed clears
+the flag, and a fabricated payload never re-applies it to a row a feed has since
+confirmed. Same one-way rule the team and competition placeholder flags use.
 
 ---
 

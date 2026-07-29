@@ -125,6 +125,15 @@ class EntityRepository:
         # it belongs to. The kickoff_at window is centered on the venta
         # cierre — most fixtures kick off 12-72h after the operator can
         # still register the boleta.
+        #
+        # Placeholder rows are excluded on purpose. A previous slate that
+        # could not resolve this same pair fabricated a row with a kickoff
+        # derived from ITS cierre; returning that here would report an
+        # invented fixture as the real match found and copy the invented
+        # kickoff into the new slate. Sixteen match rows were already shared
+        # between two slates that way (PG-2336/PGM-799, PG-2337/PGM-800).
+        # A pair we have never really ingested must keep falling through to
+        # the fallback, which at least marks what it builds.
         statement = (
             select(MatchModel)
             .where(
@@ -132,6 +141,7 @@ class EntityRepository:
                 MatchModel.away_team_id == away_team_id,
                 MatchModel.kickoff_at >= window_start,
                 MatchModel.kickoff_at <= window_end,
+                MatchModel.is_placeholder.is_(False),
             )
             .options(
                 joinedload(MatchModel.home_team),

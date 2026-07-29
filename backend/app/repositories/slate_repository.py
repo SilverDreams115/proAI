@@ -326,11 +326,20 @@ class SlateRepository:
                     away_team=away_team,
                     kickoff_at=item.kickoff_at,
                     venue=item.venue,
+                    is_placeholder=bool(item.is_placeholder),
                 )
                 self.session.add(match)
                 self.session.flush()
             else:
                 match.venue = item.venue or match.venue
+                # Only an explicit False clears the mark — that is a caller
+                # positively asserting a feed reported this fixture. `None`
+                # means the payload has no opinion and the row keeps whatever
+                # it had; `True` never downgrades a row a feed has confirmed.
+                # Real data outranks a construction, never the reverse, and
+                # silence is not evidence of either.
+                if item.is_placeholder is False:
+                    match.is_placeholder = False
             # A position the operator already ruled on keeps that ruling,
             # including an explicit clear. Only genuinely new positions
             # fall through to name-based detection, and that detection

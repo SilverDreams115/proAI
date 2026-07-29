@@ -266,7 +266,7 @@ docker compose exec proai bash -c \
   "cd /app/backend && python3 -c 'from app.db.migrations import SCHEMA_VERSION; print(SCHEMA_VERSION)'"
 ```
 
-Current SCHEMA_VERSION: **19**. If a migration is added, the number must be incremented in `migrations.py` and the corresponding Alembic revision added under `backend/alembic/versions/`.
+Current SCHEMA_VERSION: **32**. If a migration is added, the number must be incremented in `migrations.py` and the corresponding Alembic revision added under `backend/alembic/versions/`.
 
 ---
 

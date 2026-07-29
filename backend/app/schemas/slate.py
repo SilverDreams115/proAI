@@ -23,6 +23,11 @@ class SlateMatchResponse(BaseModel):
     away_team_name: str
     kickoff_at: datetime
     venue: str | None = None
+    # True when no feed reported this fixture and the promotion path fabricated
+    # it: `kickoff_at` above is then derived from the slate's cierre, not
+    # observed, and the competition may be inferred from team history. Consumers
+    # must label it as estimated rather than print it as the real kickoff.
+    kickoff_estimated: bool = False
 
 
 class ProgolSlateResponse(BaseModel):
