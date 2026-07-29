@@ -157,17 +157,31 @@ describe("empty-state when no comparable results", () => {
     ...over,
   });
 
-  it("says how many slates are waiting when none has results yet", () => {
-    // A slate with no result compares nothing, so it gets no card; the count of
-    // what is waiting is still reported instead of a bare "sin quinielas".
-    const html = renderLiveDashboard({ closed: [noResultEntry()], open: [noResultEntry({ slate_id: "s2", draw_code: "PGM-800", week_type: "midweek", match_count: 9, pending_count: 9 })] });
-    expect(html).toContain("Ninguna jornada tiene resultados todavía");
-    expect(html).toContain("(2 en espera)");
+  it("still lists every slate when none of them has results yet", () => {
+    // Slates awaiting results used to be replaced by a count of what was
+    // hidden. They are the pending work, so each one keeps its own card and
+    // says "Sin resultados aún" on it.
+    const html = renderLiveDashboard({
+      closed: [],
+      open: [
+        noResultEntry({ status_label: "Abierta" }),
+        noResultEntry({ slate_id: "s2", draw_code: "PGM-800", week_type: "midweek", status_label: "Abierta", match_count: 9, pending_count: 9 }),
+      ],
+    });
+    expect(html).toContain("PG-2337");
+    expect(html).toContain("PGM-800");
+    expect((html.match(/track-card/g) || []).length).toBe(2);
+    expect((html.match(/Sin resultados aún/g) || []).length).toBe(2);
+  });
+
+  it("says 'sin quinielas' only when the backend reports none at all", () => {
+    const html = renderLiveDashboard({ closed: [], open: [] });
+    expect(html).toContain("Sin quinielas.");
     expect(html).not.toContain("track-card");
   });
 
   it("does not look like a fatal error when nothing has results", () => {
-    const html = renderLiveDashboard({ closed: [noResultEntry()], open: [] });
+    const html = renderLiveDashboard({ closed: [], open: [noResultEntry({ status_label: "Abierta" })] });
     expect(html).not.toContain("error-copy");
     expect(html).toContain("Seguimiento de quinielas");
   });
@@ -235,5 +249,88 @@ describe("fijo cleanup + main-panel integrity", () => {
     expect(indexHtml).toContain('id="view-prediccion"');
     expect(indexHtml).toContain('id="view-seguimiento"');
     expect(indexHtml).toContain('id="live-tracking-panel"');
+  });
+});
+
+describe("comparison detail before any result exists", () => {
+  const pendingMatch = (over = {}) => ({
+    position: 1,
+    home_team_name: "Atletico de San Luis",
+    away_team_name: "Tijuana",
+    predicted_outcome: "2",
+    result_code: null,
+    prediction_hit: null,
+    is_pending: true,
+    is_live: false,
+    is_final: false,
+    home_probability: 0.26,
+    draw_probability: 0.29,
+    away_probability: 0.45,
+    diagnosis: "pendiente",
+    ...over,
+  });
+
+  const pendingSlate = (over = {}) => ({
+    slate_id: "pg2344",
+    draw_code: "PG-2344",
+    week_type: "weekend",
+    comparable: true,
+    results_ingested: false,
+    match_count: 2,
+    completed_count: 0,
+    live_count: 0,
+    pending_count: 2,
+    score: {},
+    original_snapshot: {},
+    matches: [pendingMatch(), pendingMatch({ position: 2, home_team_name: "FC Juarez", away_team_name: "Pumas" })],
+    ...over,
+  });
+
+  it("shows what the system predicted even with zero results ingested", () => {
+    // "Ver comparación" used to replace the whole detail with the missing-acta
+    // notice, so an operator opening the active concurso got no rows at all —
+    // no L/E/V, no probabilities, nothing to review before it is played.
+    const html = renderComparisonDetail(pendingSlate());
+
+    expect(html).toContain("cmp-table");
+    expect((html.match(/cmp-row/g) || []).length).toBe(2);
+    expect(html).toContain("Atletico de San Luis");
+    expect(html).toContain("FC Juarez");
+  });
+
+  it("renders the 1 / X / 2 chips with the pick marked, per match", () => {
+    const html = renderComparisonDetail(pendingSlate());
+
+    // Three outcome chips per match, and the predicted one is the outlined pick.
+    expect((html.match(/oc-chip/g) || []).length).toBe(6);
+    expect((html.match(/oc-pick/g) || []).length).toBe(2);
+    // No real-result chip can exist yet.
+    expect(html).not.toContain("oc-real-hit");
+    expect(html).not.toContain("oc-real-miss");
+  });
+
+  it("shows the visible probabilities and marks the result as pending", () => {
+    const html = renderComparisonDetail(pendingSlate());
+
+    expect(html).toContain("L 26%");
+    expect(html).toContain("X 29%");
+    expect(html).toContain("V 45%");
+    expect((html.match(/status-pending/g) || []).length).toBe(2);
+  });
+
+  it("keeps the missing-acta notice as a banner instead of replacing the table", () => {
+    const html = renderComparisonDetail(pendingSlate());
+
+    expect(html).toContain("Sin resultados ingeridos todavía");
+    expect(html).toContain("ingest-results");
+    // Both are on screen together — that is the whole point of the fix.
+    expect(html).toContain("cmp-table");
+  });
+
+  it("still shows only the notice when the slate carries no matches at all", () => {
+    const html = renderComparisonDetail(pendingSlate({ matches: [], match_count: 0 }));
+
+    expect(html).toContain("Sin resultados ingeridos todavía");
+    expect(html).not.toContain("cmp-table");
   });
 });

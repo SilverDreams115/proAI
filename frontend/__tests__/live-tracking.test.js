@@ -198,19 +198,75 @@ describe("renderLiveDashboard", () => {
     expect(html).toContain("Sin quinielas.");
   });
 
-  it("drops slates with nothing to compare", () => {
-    // The only action on a card is "Ver comparación". A slate with no finished
-    // and no live result opens an empty table, so it gets no card.
+  it("lists the active concurso even before a single result exists", () => {
+    // PG-2344 was open all week with 0/14 played and no card, so the tab an
+    // operator opens to watch the jornada did not contain the jornada. An open
+    // slate with no results is the one being played next, not noise.
+    const html = renderLiveDashboard({
+      closed: [entry({ draw_code: "PG-2336" })],
+      open: [
+        entry({
+          slate_id: "pg2344",
+          draw_code: "PG-2344",
+          status_label: "Abierta",
+          classification: "official_but_no_results_yet",
+          comparable: true,
+          completed_count: 0,
+          live_count: 0,
+          pending_count: 14,
+          is_complete: false,
+        }),
+      ],
+    });
+    expect(html).toContain("PG-2344");
+    expect(html).toContain("Sin resultados aún");
+    expect((html.match(/track-card/g) || []).length).toBe(2);
+  });
+
+  it("keeps a CLOSED slate whose results were never ingested", () => {
+    // PGM-806: cierre passed, zero results. Nothing else in the app surfaces
+    // it, and the missing acta is precisely what the operator has to act on,
+    // so Seguimiento must list it instead of hiding it.
     const html = renderLiveDashboard({
       closed: [
-        entry({ draw_code: "PG-2336" }),
-        entry({ slate_id: "pend", draw_code: "PG-SINRES", completed_count: 0, live_count: 0, pending_count: 14 }),
+        entry({
+          slate_id: "pgm806",
+          draw_code: "PGM-806",
+          week_type: "midweek",
+          status_label: "Archivada",
+          classification: "official_but_no_results_yet",
+          comparable: true,
+          match_count: 9,
+          completed_count: 0,
+          live_count: 0,
+          pending_count: 9,
+          is_complete: false,
+        }),
       ],
       open: [],
     });
-    expect(html).toContain("PG-2336");
-    expect(html).not.toContain("PG-SINRES");
+    expect(html).toContain("PGM-806");
+    expect(html).toContain("Sin resultados aún");
     expect((html.match(/track-card/g) || []).length).toBe(1);
+    expect((html.match(/Ver comparación/g) || []).length).toBe(1);
+  });
+
+  it("hides nothing: every slate the backend reports gets a card", () => {
+    // The regression guard. Two separate bugs came from filtering this list,
+    // so the contract is now simply that the counts match.
+    const html = renderLiveDashboard({
+      closed: [
+        entry({ slate_id: "c1", draw_code: "PG-A", completed_count: 14 }),
+        entry({ slate_id: "c2", draw_code: "PG-B", completed_count: 0, live_count: 0, pending_count: 14 }),
+      ],
+      open: [
+        entry({ slate_id: "o1", draw_code: "PG-C", status_label: "Abierta", completed_count: 0, live_count: 0, pending_count: 14 }),
+      ],
+    });
+    for (const code of ["PG-A", "PG-B", "PG-C"]) {
+      expect(html).toContain(code);
+    }
+    expect((html.match(/track-card/g) || []).length).toBe(3);
   });
 
   it("keeps a partially played slate, and one that is only live", () => {

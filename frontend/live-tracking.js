@@ -295,11 +295,18 @@ export function renderComparisonDetail(data) {
       </div>`;
   }
 
-  // With zero official results the comparison table still renders when the
-  // external provider already sees finished matches — that is exactly the
-  // "see completed matches automatically" case (e.g. PGM-804's semifinals
-  // before LN publishes the acta).
-  if (!data.results_ingested && !(data.external_results_count > 0)) {
+  // A slate with no results yet still has the half of the comparison that
+  // always exists: what the system predicted. Replacing the whole detail with
+  // the "sin resultados" notice meant "Ver comparación" showed zero rows for
+  // PG-2344 and PGM-806 — no L/E/V, no probabilities, nothing to review before
+  // the jornada is played. The notice is worth keeping, so it becomes a banner
+  // above the table instead of taking its place. Each pending position renders
+  // its prediction with the result column reading "Pendiente".
+  //
+  // Only a slate with no matches at all has nothing to draw.
+  const hasMatches = Array.isArray(data.matches) && data.matches.length > 0;
+  const awaitingResults = !data.results_ingested && !(data.external_results_count > 0);
+  if (awaitingResults && !hasMatches) {
     return `
       <div class="cmp-detail">
         <div class="cmp-head">
@@ -309,6 +316,7 @@ export function renderComparisonDetail(data) {
         ${renderEmptyResults(data)}
       </div>`;
   }
+  const awaitingBanner = awaitingResults ? renderEmptyResults(data) : "";
 
   const counts = `${data.completed_count}/${data.match_count} finalizados` +
     (data.live_count ? ` · ${data.live_count} en vivo` : "") +
@@ -336,6 +344,7 @@ export function renderComparisonDetail(data) {
         ${learningLine}
       </div>
       <div class="cmp-body">
+        ${awaitingBanner}
         <div class="cmp-scoreline">
           <span><strong>${s.simple_hits ?? 0}</strong> simple</span>
           <span><strong>${s.doubles_hits ?? 0}</strong> dobles</span>
@@ -450,25 +459,21 @@ export function renderSummaryBar(data) {
 
 export function renderLiveDashboard(data) {
   if (!data) return "";
-  // Separate real concursos from demo/synthetic ones so demo data is
-  // never presented as a real quiniela. Cerrada/Abierta is still conveyed
-  // by each card's status badge.
-  // The only action on a card is "Ver comparación", and a slate with no
-  // finished or live result compares nothing — it opens an empty table. Those
-  // cards are dropped so the browser lists only slates worth opening; the
-  // upcoming ones are already front and center in the Predicciones tab.
-  // Incomplete and unverified slates that DO have results stay visible and
-  // labelled. Filtering happens before the summary bar too, so its counts
-  // always match the cards on screen.
-  const hasComparable = (entry) =>
-    Number(entry.completed_count || 0) + Number(entry.live_count || 0) > 0;
-  const closed = (data.closed || []).filter(hasComparable);
-  const open = (data.open || []).filter(hasComparable);
+  // Seguimiento lists every slate the backend reports, with no result-based
+  // filtering. Hiding the ones with nothing to compare was meant to keep the
+  // browser to "slates worth opening", but it kept removing exactly the slates
+  // an operator came here to find: PGM-806 vanished the morning after its
+  // cierre with its acta still missing, and PG-2344 — the active concurso —
+  // was absent for the whole week before it was played. A slate with no
+  // results is not noise, it is the pending work, and "Ver comparación" opens
+  // an empty state that names the ingest call to run rather than a dead end.
+  // Demo/unverified slates are still excluded server-side and every card keeps
+  // its own classification badge, so nothing here is presented as more real
+  // than it is.
+  const closed = data.closed || [];
+  const open = data.open || [];
   const all = closed.concat(open);
-  const hidden = (data.closed || []).length + (data.open || []).length - all.length;
-  const emptyCopy = hidden
-    ? `<p class="meta-copy">Ninguna jornada tiene resultados todavía (${hidden} en espera).</p>`
-    : '<p class="meta-copy">Sin quinielas.</p>';
+  const emptyCopy = '<p class="meta-copy">Sin quinielas.</p>';
   return `
     <div class="live-tracking">
       <div class="lt-header"><h2>Seguimiento de quinielas</h2></div>
@@ -539,7 +544,16 @@ export function initLiveTracking({ container, detailContainer, fetchJson }) {
         attachDetailToggle();
       };
       paint();
-      detailContainer.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      // Cosmetic, and deliberately unable to undo the paint above. It used to
+      // sit bare inside the try, so anything it threw was caught below and
+      // replaced a correctly rendered comparison with "no disponible" — the
+      // table was already on screen and got wiped by a scroll. Any host
+      // lacking smooth-scroll support would lose the whole detail that way.
+      try {
+        detailContainer.scrollIntoView?.({ behavior: "smooth", block: "nearest" });
+      } catch {
+        /* scrolling is a nicety; never let it discard the render */
+      }
 
       // Second paint. Guarded on the slate still being the one on screen: a
       // slow response must never overwrite a comparison the operator has since
