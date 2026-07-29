@@ -26,12 +26,10 @@ import {
   riskTone,
   visibleConfidenceLabel,
   headlineConfidence,
-  confidenceTone,
   decisionStatusLabel,
   limitChips,
   isTechAccordionTarget,
   effectiveConfidenceTier,
-  predictionAllowsConfidentSingle,
   probBarWidthClass,
 } from "./helpers.js";
 import {
@@ -2502,6 +2500,27 @@ function ensureLiveTrackingStarted(view) {
     });
 }
 
+// The ops panel reads /health + /ready, and boot() was the only thing that
+// ever filled them. A transient `degraded` — most often the worker-heartbeat
+// warning window right after a restart, where the heartbeat file on /data
+// still holds a write from before the restart and reads older than
+// health_worker_poll_warning_age_seconds — got pinned into the panel and stayed
+// there for the whole session, long after the backend had gone back to `ok`.
+// Re-poll on the slate heartbeat's cadence so the panel tracks reality.
+// Unauthenticated on purpose: both endpoints are public and the panel reports
+// API/DB state on the login screen too.
+async function pollHealth() {
+  const [health, ready] = await Promise.all([
+    safeFetch("/health", {optional: true}),
+    safeFetch("/ready", {optional: true}),
+  ]);
+  // Same semantics as boot(): a failed probe clears the value so the panel
+  // says "sin dato" instead of showing a stale OK for a backend that is down.
+  state.health = health && !Array.isArray(health) ? health : null;
+  state.ready = ready && !Array.isArray(ready) ? ready : null;
+  renderProductionStatus();
+}
+
 async function pollActiveSlate() {
   // Heart-beat. With MULTIPLE active slates (e.g. weekend PG + midweek MS),
   // /slates/active only reports the single most-urgent one — it must NOT drive
@@ -2716,6 +2735,9 @@ checkSession().then(() => {
 setInterval(tickCountdown, 1000);
 // 60 s authoritative re-fetch of the active slate (and transition trigger).
 setInterval(pollActiveSlate, 60000);
+// Same cadence for the ops panel's health/ready probes, so a degraded reading
+// that has since recovered clears itself without a manual reload.
+setInterval(pollHealth, 60000);
 // 5 min refresh of staged proposals — the LN PDF only changes a few
 // times per week so anything more frequent is wasted polling.
 setInterval(pollProposals, 5 * 60 * 1000);

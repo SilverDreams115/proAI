@@ -593,7 +593,7 @@ details.ops-details[open] .ops-summary::after {
   color: var(--muted);
 }
 
-.aside-slate-status.ok { color: var(--ok); }
+.aside-slate-status.ok { color: var(--win); }
 .aside-slate-status.warn { color: var(--warn); }
 .aside-slate-status.muted { color: var(--muted); }
 
@@ -2071,7 +2071,7 @@ details.analysis-block summary h4 {
 .anchor-gap-lead {
   margin: 0 0 10px;
   line-height: 1.55;
-  color: var(--fg);
+  color: var(--ink);
 }
 
 .anchor-gap-list {
