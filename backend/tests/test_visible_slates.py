@@ -248,6 +248,87 @@ def test_date_override_is_traced_and_updates_status(db):
     assert audit.status == "operator_override"
 
 
+def test_second_date_override_upserts_instead_of_violating_unique(db):
+    """A slate can be corrected twice.
+
+    The audit row is keyed (draw_code, source_url) and every override writes
+    the same "operator://date-override" URL, so a blind insert made the second
+    correction raise IntegrityError and roll back the slate update with it.
+    That is the PGM-806 failure: the slate stayed archived on cierre day
+    because an override from three days earlier already held the row.
+    """
+    import asyncio
+    from datetime import datetime, timedelta, timezone
+
+    from sqlalchemy import func, select
+
+    from app.api.routes.slates import DateOverrideRequest, date_override
+    from app.models.tables import ProgolSlateProposalModel
+
+    slate = _seed_slate(db, draw_code="PGM-806", week_type="midweek", n=9, closes_at=_past())
+    _make_official(db, slate)
+
+    first_close = _future()
+    asyncio.run(
+        date_override(
+            slate_id=slate.id,
+            body=DateOverrideRequest(
+                registration_closes_at=first_close,
+                reason="primer cierre confirmado por operador",
+            ),
+            session=db,
+        )
+    )
+
+    # Second correction — this is what used to 500.
+    second_close = first_close + timedelta(hours=4)
+    out = asyncio.run(
+        date_override(
+            slate_id=slate.id,
+            body=DateOverrideRequest(
+                registration_closes_at=second_close,
+                reason="cierre corregido: LN movió la venta",
+                operator_note="segunda corrección el día del cierre",
+            ),
+            session=db,
+        )
+    )
+
+    # SQLite hands back naive datetimes, so compare instants, not the raw
+    # isoformat strings the endpoint echoes.
+    def _utc(value):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+
+    assert out["new_registration_closes_at"] == second_close.isoformat()
+    # The override that was live before this call is what gets reported as old.
+    assert _utc(datetime.fromisoformat(out["old_registration_closes_at"])) == first_close
+
+    # The slate really moved, and stays un-archived for the new future cierre.
+    db.refresh(slate)
+    assert _utc(slate.registration_closes_at) == second_close
+    assert slate.is_archived is False
+
+    # Still exactly one audit row for this (draw_code, source_url), carrying
+    # the latest cierre and a bumped observation count.
+    rows = db.scalars(
+        select(ProgolSlateProposalModel).where(
+            ProgolSlateProposalModel.draw_code == "PGM-806",
+            ProgolSlateProposalModel.source_url == "operator://date-override",
+        )
+    ).all()
+    assert len(rows) == 1
+    assert _utc(rows[0].registration_closes_at) == second_close
+    assert rows[0].status == "operator_override"
+    assert rows[0].observations == 2
+
+    total = db.scalar(
+        select(func.count())
+        .select_from(ProgolSlateProposalModel)
+        .where(ProgolSlateProposalModel.source_name == "operator_date_override")
+    )
+    assert total == 1
+
+
 def test_discovery_reports_latest_observation(db):
     slate = _seed_slate(db, draw_code="PG-2338", n=14, closes_at=_past())
     _make_official(db, slate)
@@ -292,3 +373,92 @@ def test_discovery_does_not_let_stale_ms_observation_displace_newer_active_draw(
 
     assert res.discovery.last_midweek_draw_code == "PGM-805"
     assert res.discovery.last_midweek_status == "promoted"
+
+
+def test_date_override_carries_fabricated_kickoffs_onto_the_new_cierre(db):
+    """Correcting the cierre must move the kickoffs derived from the old one.
+
+    PGM-806 was promoted against a provisional cierre (first_seen + the 5-day
+    MS PDF window), so its 9 kickoffs were fabricated at provisional + 12h,
+    stepped an hour per position. The operator then corrected the cierre to the
+    real one and the kickoffs stayed put — leaving every match stamped a day
+    and a half AFTER the slate had already closed, which is why nothing ever
+    read it as played.
+    """
+    import asyncio
+    from datetime import datetime, timedelta, timezone
+
+    from app.api.routes.slates import DateOverrideRequest, date_override
+    from app.services.placeholder_fixtures import fallback_kickoff
+
+    provisional = datetime(2026, 7, 29, 23, 37, 37, 574632, tzinfo=timezone.utc)
+    slate = _seed_slate(db, draw_code="PGM-806", week_type="midweek", n=9, closes_at=provisional)
+    _make_official(db, slate)
+    for slate_match in slate.matches:
+        slate_match.match.kickoff_at = fallback_kickoff(provisional, slate_match.position)
+        slate_match.match.is_placeholder = True
+    db.flush()
+
+    real_close = _future()
+    out = asyncio.run(
+        date_override(
+            slate_id=slate.id,
+            body=DateOverrideRequest(
+                registration_closes_at=real_close,
+                reason="cierre oficial confirmado por operador",
+            ),
+            session=db,
+        )
+    )
+
+    assert out["rebased_placeholder_kickoffs"] == 9
+
+    def _utc(value):
+        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+
+    db.refresh(slate)
+    for slate_match in sorted(slate.matches, key=lambda sm: sm.position):
+        kickoff = _utc(slate_match.match.kickoff_at)
+        assert kickoff == fallback_kickoff(real_close, slate_match.position)
+        # The point of the whole fix: a match can no longer be stamped before
+        # the registration close it belongs to, nor stranded days after it.
+        assert real_close < kickoff < real_close + timedelta(days=1)
+
+
+def test_date_override_never_rewrites_real_kickoffs(db):
+    """Only a fabricated ladder moves. A slate backed by ingested fixtures has
+    real kickoffs, and an operator's date correction must not touch them —
+    otherwise fixing a cierre would silently corrupt observed data."""
+    import asyncio
+    from datetime import datetime, timezone
+
+    from app.api.routes.slates import DateOverrideRequest, date_override
+
+    slate = _seed_slate(db, draw_code="PG-REAL", n=14, closes_at=_past())
+    _make_official(db, slate)
+    real_kickoffs = {}
+    for offset, slate_match in enumerate(sorted(slate.matches, key=lambda sm: sm.position)):
+        # Irregular, feed-shaped times — deliberately not an hourly ladder.
+        kickoff = datetime(2026, 8, 1, 15 + (offset % 5), 30 * (offset % 2), tzinfo=timezone.utc)
+        slate_match.match.kickoff_at = kickoff
+        real_kickoffs[slate_match.position] = kickoff
+    db.flush()
+
+    out = asyncio.run(
+        date_override(
+            slate_id=slate.id,
+            body=DateOverrideRequest(
+                registration_closes_at=_future(),
+                reason="cierre corregido",
+            ),
+            session=db,
+        )
+    )
+
+    assert out["rebased_placeholder_kickoffs"] == 0
+
+    db.refresh(slate)
+    for slate_match in slate.matches:
+        stored = slate_match.match.kickoff_at
+        stored = stored if stored.tzinfo else stored.replace(tzinfo=timezone.utc)
+        assert stored == real_kickoffs[slate_match.position]

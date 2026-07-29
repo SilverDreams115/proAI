@@ -35,6 +35,7 @@ from app.schemas.slate_refresh import SlateAutoRefreshRequest
 from app.schemas.slate_refresh import SlateAutoRefreshResponse
 from app.services.current_progol_service import CurrentProgolService
 from app.services.operational_prediction_audit_service import OperationalPredictionAuditService
+from app.services.placeholder_fixtures import rebase_to_cierre
 from app.services.slate_discovery_service import SlateDiscoveryService
 from app.services.slate_proposal_service import SlateProposalService
 from app.services.slate_readiness_report_service import build_slate_readiness_report
@@ -138,6 +139,7 @@ def _serialize_slate(
                 away_team_name=slate_match.match.away_team.name,
                 kickoff_at=slate_match.match.kickoff_at,
                 venue=slate_match.match.venue,
+                kickoff_estimated=bool(slate_match.match.is_placeholder),
             )
             for slate_match in sorted(slate.matches, key=lambda item: item.position)
         ],
@@ -437,6 +439,24 @@ async def date_override(
         slate.is_archived = False
     session.add(slate)
 
+    # Fabricated kickoffs are derived from the cierre, so correcting the cierre
+    # has to carry them along. Leaving them behind is how PGM-806 ended up
+    # closed on 2026-07-28 with all 9 of its kickoffs on 2026-07-30 — stranded
+    # a day and a half after its own registration close. Only a fabricated
+    # ladder moves; a slate backed by ingested fixtures forms no ladder and
+    # `rebase_to_cierre` returns nothing for it, so real kickoffs are never
+    # rewritten by an operator's date correction.
+    slate_matches = [sm for sm in slate.matches if sm.match is not None]
+    rebased = rebase_to_cierre(
+        new_closes,
+        [(sm.position, sm.match.kickoff_at) for sm in slate_matches],
+    )
+    for slate_match in slate_matches:
+        target = rebased.get(slate_match.position)
+        if target is not None:
+            slate_match.match.kickoff_at = target
+            session.add(slate_match.match)
+
     audit = {
         "event": "operator_date_override",
         "slate_id": slate.id,
@@ -447,20 +467,45 @@ async def date_override(
         "operator_note": body.operator_note,
         "old_registration_closes_at": old_closes.isoformat() if old_closes else None,
         "new_registration_closes_at": new_closes.isoformat(),
+        "rebased_placeholder_kickoffs": len(rebased),
         "observed_at": datetime.now(timezone.utc).isoformat(),
     }
     # Persist a traceable proposal-style record (queryable + visible in debug).
-    session.add(
-        ProgolSlateProposalModel(
-            draw_code=slate.draw_code,
-            week_type=slate.week_type,
-            source_name="operator_date_override",
-            source_url="operator://date-override",
-            status="operator_override",
-            registration_closes_at=new_closes,
-            payload_json=json.dumps(audit),
+    # Upsert, not a blind insert: the proposal table is unique on
+    # (draw_code, source_url) and every override for a slate lands on the
+    # same "operator://date-override" URL, so a second correction used to
+    # raise IntegrityError and roll back the whole request — including the
+    # slate update. PGM-806 hit exactly that on the day of its cierre.
+    override_url = "operator://date-override"
+    existing = session.scalar(
+        select(ProgolSlateProposalModel).where(
+            ProgolSlateProposalModel.draw_code == slate.draw_code,
+            ProgolSlateProposalModel.source_url == override_url,
         )
     )
+    if existing is None:
+        session.add(
+            ProgolSlateProposalModel(
+                draw_code=slate.draw_code,
+                week_type=slate.week_type,
+                source_name="operator_date_override",
+                source_url=override_url,
+                status="operator_override",
+                registration_closes_at=new_closes,
+                payload_json=json.dumps(audit),
+            )
+        )
+    else:
+        # Keep first_seen_at as the original override; bump the observation
+        # counter so the audit trail shows how many corrections this slate took.
+        existing.week_type = slate.week_type
+        existing.source_name = "operator_date_override"
+        existing.status = "operator_override"
+        existing.registration_closes_at = new_closes
+        existing.payload_json = json.dumps(audit)
+        existing.observations = (existing.observations or 0) + 1
+        existing.last_seen_at = datetime.now(timezone.utc)
+        session.add(existing)
     logging.getLogger(__name__).info("operator_date_override", extra=audit)
     session.commit()
     from app.services.date_sanity_service import slate_date_status
