@@ -43,6 +43,29 @@ export function formatDate(value) {
   }
 }
 
+// Kickoff line for a pick card. A fixture the LN guide listed but no feed ever
+// reported has no published kickoff: the backend derives one from the slate's
+// cierre purely to keep the position ordered. Printing that as a precise hour
+// sells an invention as a fact, so a `kickoff_estimated` match shows the date
+// alone, explicitly marked. Exact hours are only ever shown for observed ones.
+export function kickoffLabel(match) {
+  const value = match && match.kickoff_at;
+  if (!match || !match.kickoff_estimated) return formatDate(value);
+  if (value === null || value === undefined || value === "") return "horario por confirmar";
+  try {
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) return "horario por confirmar";
+    const day = parsed.toLocaleString("es-MX", {
+      weekday: "short",
+      day: "2-digit",
+      month: "short",
+    });
+    return `${day} · horario por confirmar`;
+  } catch {
+    return "horario por confirmar";
+  }
+}
+
 export function formatRelativeAge(value) {
   // Human-readable "actualizado hace X" for a timestamp. Caller passes
   // the predictionResponse.generated_at; we surface staleness so the

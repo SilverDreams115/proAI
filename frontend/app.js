@@ -8,6 +8,7 @@ import {
   escapeHtml,
   formatPercent,
   formatDate,
+  kickoffLabel,
   formatRelativeAge,
   availabilityStatusLabel,
   availabilityCategoryLabel,
@@ -685,7 +686,7 @@ function buildMatchCard(match) {
       </div>
       <div class="pick-meta">
         <h3>${escapeHtml(pred.home_team_name)} vs ${escapeHtml(pred.away_team_name)}</h3>
-        <p class="pick-sub">${escapeHtml(formatDate(match.kickoff_at))} · ${escapeHtml(translateCompetition(pred.competition_name || ""))}<span class="freshness-tag" title="Cuándo se calculó esta probabilidad">Actualizado ${escapeHtml(formatRelativeAge(pred.generated_at))}</span></p>
+        <p class="pick-sub">${escapeHtml(kickoffLabel(match))} · ${escapeHtml(translateCompetition(pred.competition_name || ""))}<span class="freshness-tag" title="Cuándo se calculó esta probabilidad">Actualizado ${escapeHtml(formatRelativeAge(pred.generated_at))}</span></p>
         <div class="signal-row">
           <span class="badge-signal" title="Señal base del modelo">${escapeHtml(basePick.label)}</span>
           <span class="badge-strategy tone-${strategy.tone}" title="Estrategia de boleta recomendada">${escapeHtml(strategy.label)}</span>
@@ -2238,6 +2239,11 @@ async function loadSlateDetails(slateId) {
       availability: Array.isArray(availabilityMap[prediction.match_id]) ? availabilityMap[prediction.match_id] : [],
       results: Array.isArray(resultsMap[prediction.match_id]) ? resultsMap[prediction.match_id] : [],
       kickoff_at: slateMatch?.kickoff_at || prediction.generated_at,
+      // No feed ever reported this fixture's kickoff — the backend derived it
+      // from the slate's cierre. It must read as an estimate, never as the hour
+      // the match starts. A missing slateMatch means we fell back to
+      // generated_at above, which is not a kickoff at all, so that counts too.
+      kickoff_estimated: slateMatch ? Boolean(slateMatch.kickoff_estimated) : true,
       venue: slateMatch?.venue || null,
       match_id: prediction.match_id,
       position: prediction.position,

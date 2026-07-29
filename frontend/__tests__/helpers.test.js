@@ -3,6 +3,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
   formatPercent,
   formatDate,
+  kickoffLabel,
   formatRelativeAge,
   availabilityStatusLabel,
   availabilityCategoryLabel,
@@ -529,5 +530,47 @@ describe("probBarWidthClass (CSP-safe prob bars — no inline style)", () => {
     expect(probBarWidthClass(null)).toBe("w-0");
     expect(probBarWidthClass(undefined)).toBe("w-0");
     expect(probBarWidthClass(NaN)).toBe("w-0");
+  });
+});
+
+describe("kickoffLabel", () => {
+  it("shows the exact hour for a fixture a feed actually reported", () => {
+    const label = kickoffLabel({
+      kickoff_at: "2026-08-01T15:00:00Z",
+      kickoff_estimated: false,
+    });
+    expect(label).toBe(formatDate("2026-08-01T15:00:00Z"));
+    expect(label).not.toContain("por confirmar");
+  });
+
+  it("never prints an invented hour as the kickoff", () => {
+    // The promotion path fabricates `cierre + 12h + position` when no feed
+    // reported the fixture. That hour is a construction, so the card shows the
+    // day and says the time is unconfirmed instead of stating a false one.
+    const label = kickoffLabel({
+      kickoff_at: "2026-07-30T13:37:37.574632Z",
+      kickoff_estimated: true,
+    });
+    expect(label).toContain("horario por confirmar");
+    expect(label).not.toContain("13:37");
+    expect(label).not.toMatch(/\d{2}:\d{2}/);
+  });
+
+  it("keeps the date visible on an estimated kickoff", () => {
+    const label = kickoffLabel({
+      kickoff_at: "2026-07-30T13:37:37.574632Z",
+      kickoff_estimated: true,
+    });
+    expect(label).toContain("jul");
+  });
+
+  it("degrades to the plain fallback when there is no date at all", () => {
+    expect(kickoffLabel({ kickoff_at: null, kickoff_estimated: true })).toBe(
+      "horario por confirmar",
+    );
+    expect(kickoffLabel({ kickoff_at: "no-es-fecha", kickoff_estimated: true })).toBe(
+      "horario por confirmar",
+    );
+    expect(kickoffLabel(null)).toBe("sin fecha");
   });
 });
