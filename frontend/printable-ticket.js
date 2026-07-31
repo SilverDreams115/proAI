@@ -205,7 +205,12 @@ function summarySection(slateOptions, moneyMode) {
     action ? badge("Acción", action) : "",
   ].filter(Boolean);
   if (!badges.length) return "";
-  return `<section class="summary">${badges.join("")}</section>`;
+  // Named after what it describes, so the combination count and the price are
+  // read as the recommended ticket's, never as the marked grid's.
+  const ticketName = option?.name ? ` · ${option.name}` : "";
+  return `
+    <p class="section-caption">Boleto recomendado${escapeHtml(ticketName)}</p>
+    <section class="summary">${badges.join("")}</section>`;
 }
 
 function nameWarningsSummary(warnings) {
@@ -231,13 +236,24 @@ function nameWarningsSummary(warnings) {
 // which CSP does not police.
 export const PRINTABLE_TICKET_STYLES = `
   :root {
+    /* The boleta is a light document and says so. Without this a browser that
+       forces dark rendering on undeclared pages — Opera GX does — repaints the
+       grey that frames the sheet as near-black, which shows up as a dark band
+       above it. Declaring the scheme opts the document out at the source
+       instead of covering the band with something. */
+    color-scheme: light;
     --green: #28a57a;
     --green-dark: #19785a;
     --green-ink: #06231a;
     --ink: #1f2933;
-    --ink-soft: #5b6b73;
+    /* Secondary text: dark enough to read on paper and on the zebra rows,
+       still clearly a step below --ink. */
+    --ink-soft: #52616b;
     --line: #dce3e1;
     --zebra: #f5f7f7;
+    --warn: #b4741a;
+    --warn-ink: #7a4d0c;
+    --warn-bg: #fdf4e6;
   }
   * { box-sizing: border-box; }
   html, body {
@@ -318,7 +334,7 @@ export const PRINTABLE_TICKET_STYLES = `
   .gate-pos { font-weight: 700; color: var(--ink); }
 
   /* Grid */
-  .grid-card { margin-top: 10px; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  .grid-card { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
   table { width: 100%; border-collapse: collapse; table-layout: fixed; }
   /* Column widths belong here, not in a style="" attribute on <col>: the CSP
      governing this popup drops inline styles, which left every column an equal
@@ -397,13 +413,26 @@ export const PRINTABLE_TICKET_STYLES = `
   .box.on { border: 2px solid var(--green-dark); background: var(--green); color: var(--green-ink); }
 
   /* Summary + footer */
-  .summary { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 9px; }
+  /* Two captions, because the grid and the summary answer different questions:
+     the grid is the play as marked, the summary is the ticket proAI recommends
+     buying — on a slate of fourteen simples sitting beside a 3888-combination
+     recommendation, the two were easy to read as one. */
+  .section-caption {
+    margin: 10px 0 4px;
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+    color: var(--ink-soft);
+  }
+  .summary { display: flex; flex-wrap: wrap; gap: 6px; }
   .badge { padding: 4px 9px; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
-  .badge.warn { border-color: #d19a3a; background: #fdf8ef; }
+  .badge.warn { border: 1.5px solid var(--warn); background: var(--warn-bg); }
+  .badge.warn .badge-label, .badge.warn .badge-value { color: var(--warn-ink); }
   .badge-label { display: block; font-size: 8.5px; font-weight: 700; letter-spacing: 0.07em; text-transform: uppercase; color: var(--ink-soft); }
   .badge-value { font-size: 11.5px; font-weight: 700; }
   .notice { display: flex; gap: 8px; align-items: baseline; margin-top: 8px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 8px; font-size: 10.5px; }
-  .notice.warn { border-color: #d19a3a; background: #fdf8ef; }
+  .notice.warn { border: 1.5px solid var(--warn); background: var(--warn-bg); color: var(--warn-ink); }
   .notice strong { white-space: nowrap; }
   .foot { display: flex; justify-content: space-between; gap: 12px; margin: 10px 0 0; padding-top: 7px; border-top: 1px solid var(--line); font-size: 9.5px; color: var(--ink-soft); }
 
@@ -481,6 +510,7 @@ export function buildPrintableTicketHtml({
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="light" />
   <title>${escapeHtml(drawCode)} boleta</title>
 </head>
 <body>
@@ -501,6 +531,7 @@ export function buildPrintableTicketHtml({
     <div class="chips">${chips.join("")}</div>
     ${publishGateBanner(publishGate)}
     ${moneyModeCard(moneyMode)}
+    <p class="section-caption">Jugada base · marca estos signos</p>
     <div class="grid-card">
       <table>
         <colgroup>

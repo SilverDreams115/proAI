@@ -352,6 +352,59 @@ describe("mountPrintableTicket", () => {
   });
 });
 
+describe("buildPrintableTicketHtml legibility and framing", () => {
+  it("declares itself a light document so no browser force-darkens it", () => {
+    // Opera GX repaints undeclared pages dark, which turned the grey framing
+    // the sheet into a black band above it.
+    const page = doc(buildPrintableTicketHtml(BASE));
+
+    expect(page.querySelector('meta[name="color-scheme"]').getAttribute("content")).toBe("light");
+    expect(PRINTABLE_TICKET_STYLES).toMatch(/:root\s*{[^}]*color-scheme:\s*light/);
+  });
+
+  it("opens with the print control, with nothing above it", () => {
+    const body = doc(buildPrintableTicketHtml(BASE)).body;
+
+    expect(body.firstElementChild.className).toBe("actions");
+    expect(body.firstElementChild.querySelector("[data-print]")).not.toBeNull();
+  });
+
+  it("keeps secondary text dark enough to read", () => {
+    expect(PRINTABLE_TICKET_STYLES).toContain("--ink-soft: #52616b");
+  });
+
+  it("separates the marked play from the ticket it recommends buying", () => {
+    const page = doc(buildPrintableTicketHtml({
+      ...BASE,
+      slateOptions: {
+        recommended_action: "COMPRAR_CONSERVADORA",
+        options: [{ name: "Conservadora", recommended: true, combinations: 3888, price_status: "unverified" }],
+      },
+    }));
+    const captions = [...page.querySelectorAll(".section-caption")].map((node) => node.textContent.trim());
+
+    expect(captions[0]).toContain("Jugada base");
+    expect(captions[1]).toContain("Boleto recomendado");
+    // The recommendation carries the name of the ticket its numbers belong to.
+    expect(captions[1]).toContain("Conservadora");
+  });
+
+  it("makes the unverified price stand out without taking the page over", () => {
+    const page = doc(buildPrintableTicketHtml({
+      ...BASE,
+      slateOptions: { options: [{ name: "Conservadora", recommended: true, combinations: 3888, price_status: "unverified" }] },
+    }));
+    const warn = [...page.querySelectorAll(".badge.warn")];
+
+    expect(warn).toHaveLength(1);
+    expect(warn[0].textContent).toContain("no verificado");
+    // It is a badge among badges, not a banner.
+    expect(page.querySelectorAll(".summary .badge").length).toBeGreaterThan(1);
+    expect(PRINTABLE_TICKET_STYLES).toMatch(/\.badge\.warn\s*{[^}]*border:\s*1\.5px solid var\(--warn\)/);
+    expect(PRINTABLE_TICKET_STYLES).toContain("--warn-ink: #7a4d0c");
+  });
+});
+
 describe("buildPrintableTicketHtml print rules", () => {
   it("targets a single A4 portrait page", () => {
     expect(PRINTABLE_TICKET_STYLES).toContain("@page { size: A4 portrait; margin: 12mm; }");
