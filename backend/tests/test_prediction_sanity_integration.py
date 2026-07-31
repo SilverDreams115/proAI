@@ -146,3 +146,85 @@ def test_local_label_tracks_home_team_end_to_end() -> None:
     assert response.recommended_outcome == "1"  # home favoured
     assert response.probabilities["L"] >= response.probabilities["V"]
     assert response.fallback_used is False
+
+
+def test_gated_heuristic_is_not_penalised_as_a_fallback() -> None:
+    """The walk-forward gate routes a competition to the heuristic exactly
+    when the heuristic BEATS the booster there. Flagging that result as
+    FALLBACK_USED would cap its confidence and forbid a simple pick over a
+    measurement that chose it — the contradiction that turned every gated
+    position into REVISAR the first time a verdict was published."""
+    service = PredictionService(
+        _StubTrainingService(
+            {"home": 0.55, "draw": 0.25, "away": 0.20},
+            friendly=False,
+            engine="heuristic_blend_gated",
+        )
+    )
+    service.feature_service = _StubFeatureService(
+        {
+            "evidence_count": 2.0,
+            "home_recent_matches": 6.0,
+            "away_recent_matches": 6.0,
+            "head_to_head_matches": 5.0,
+        }
+    )
+
+    response = service.build_slate_predictions(_build_slate("Premier League"))[0]
+    assert response.fallback_used is False
+    assert "FALLBACK_USED" not in response.flags
+    assert response.visible_confidence != "media-baja"
+
+
+def test_degraded_heuristic_is_still_penalised() -> None:
+    """The other side of the same contract: a bare heuristic_blend means
+    the booster was wanted and unavailable, and must keep its penalty."""
+    service = PredictionService(
+        _StubTrainingService(
+            {"home": 0.55, "draw": 0.25, "away": 0.20},
+            friendly=False,
+            engine="heuristic_blend",
+        )
+    )
+    service.feature_service = _StubFeatureService(
+        {
+            "evidence_count": 2.0,
+            "home_recent_matches": 6.0,
+            "away_recent_matches": 6.0,
+            "head_to_head_matches": 5.0,
+        }
+    )
+
+    response = service.build_slate_predictions(_build_slate("Premier League"))[0]
+    assert response.fallback_used is True
+    assert "FALLBACK_USED" in response.flags
+
+
+def test_prediction_engine_is_persisted_in_the_audit_trace() -> None:
+    """A stored prediction must say which engine scored it, so a later
+    audit can tell a gated heuristic from a degraded one without replaying
+    whatever verdict happened to be live at the time."""
+    service = PredictionService(
+        _StubTrainingService(
+            {"home": 0.55, "draw": 0.25, "away": 0.20},
+            friendly=False,
+            engine="heuristic_blend_gated",
+        )
+    )
+    service.feature_service = _StubFeatureService(
+        {
+            "evidence_count": 2.0,
+            "home_recent_matches": 6.0,
+            "away_recent_matches": 6.0,
+            "head_to_head_matches": 5.0,
+        }
+    )
+
+    captured: dict[str, object] = {}
+    service._persist_prediction_audit = lambda **kwargs: captured.update(kwargs)  # type: ignore[method-assign]
+
+    service.build_slate_predictions(_build_slate("Premier League"))
+    audit = captured["sanity_audit"]
+    assert isinstance(audit, dict)
+    assert audit["prediction_engine"] == "heuristic_blend_gated"
+    assert audit["fallback_used"] is False

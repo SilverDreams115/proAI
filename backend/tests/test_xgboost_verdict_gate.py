@@ -13,6 +13,8 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 
 def _stub_match(competition_name: str = "Test League") -> SimpleNamespace:
     return SimpleNamespace(
@@ -180,3 +182,55 @@ def test_score_uses_xgboost_when_no_verdict_file_present(tmp_path, monkeypatch) 
     }
     scored = service._score_match_with_artifact(_stub_match("Any League"), artifact)
     assert scored == {"home": 0.6, "draw": 0.25, "away": 0.15}
+
+
+def test_gated_heuristic_is_reported_as_its_own_engine(tmp_path, monkeypatch) -> None:
+    """A competition the verdict disqualified must report
+    ``heuristic_blend_gated``, not the bare ``heuristic_blend`` reserved
+    for "we wanted the booster and could not have it".
+
+    The distinction is what keeps the sanity layer from flagging a
+    deliberately-chosen, more accurate engine as a degradation."""
+    monkeypatch.chdir(tmp_path)
+    _isolate_verdict_paths(monkeypatch, tmp_path)
+    _write_verdict(tmp_path, approved_keys=["other-league"])
+    service = _build_service()
+    service.reset_xgboost_verdict_cache()
+
+    monkeypatch.setattr(
+        service,
+        "latest_artifact",
+        lambda: {"model_type": "xgboost_multiclass", "booster_json": "{}"},
+    )
+    # If the booster were consulted at all the gate would not be short-
+    # circuiting, so make it loud rather than silently returning a vector.
+    monkeypatch.setattr(
+        service,
+        "_score_with_xgboost",
+        lambda match, artifact: pytest.fail("booster consulted for a disqualified league"),
+    )
+
+    assert service.prediction_engine_for_match(_stub_match("Disapproved League")) == (
+        "heuristic_blend_gated"
+    )
+
+
+def test_booster_failure_still_reports_a_degraded_fallback(tmp_path, monkeypatch) -> None:
+    """When the league IS approved but the booster cannot produce a
+    vector, we wanted ML and did not get it — that stays ``heuristic_blend``
+    so the sanity layer keeps penalising it."""
+    monkeypatch.chdir(tmp_path)
+    _isolate_verdict_paths(monkeypatch, tmp_path)
+    _write_verdict(tmp_path, approved_keys=["approved-league"])
+    service = _build_service()
+    service.reset_xgboost_verdict_cache()
+    service.COMPETITION_ALIASES["approved-league"] = "approved-league"  # type: ignore[index]
+
+    monkeypatch.setattr(
+        service,
+        "latest_artifact",
+        lambda: {"model_type": "xgboost_multiclass", "booster_json": "{}"},
+    )
+    monkeypatch.setattr(service, "_score_with_xgboost", lambda match, artifact: None)
+
+    assert service.prediction_engine_for_match(_stub_match("Approved League")) == "heuristic_blend"

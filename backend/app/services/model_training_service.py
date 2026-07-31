@@ -228,6 +228,22 @@ class ModelTrainingService(ModelTrainingArtifactsMixin):
             "blend_weights": {"elo": 0.32, "poisson": 0.23, "profile": 0.45},
             "draw_bias": 0.015,
         },
+        "uefa-champions-league": {
+            "competition_readiness": "covered",
+            "live_pick_allowed": False,
+            "policy_reason": (
+                "Walk-forward benchmark published for the Champions League "
+                "(365 fixtures evaluated, XGBoost brier 0.5598 vs heuristic 0.5721 "
+                "— the strongest of any competition in the index). Coverage is "
+                "audited, so predictions are shown with caution rather than "
+                "blocked; live picks still wait for a graded Progol history."
+            ),
+            # Deliberately the global defaults: the verdict approves the booster
+            # for this competition, so the blend only runs if the booster fails
+            # to load, and there is no per-competition tuning evidence to encode.
+            "blend_weights": {"elo": 0.30, "poisson": 0.25, "profile": 0.45},
+            "draw_bias": 0.0,
+        },
         "rus-cup": {
             "competition_readiness": "context_only",
             "live_pick_allowed": False,

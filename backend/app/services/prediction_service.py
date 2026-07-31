@@ -251,7 +251,8 @@ class PredictionService:
             # raw numbers silently — both raw and final are surfaced.
             evidence_level = self._evidence_level(feature_map, evidence_count)
             is_friendly = self._is_international_friendly(competition_policy)
-            fallback_used = self._fallback_used(match)
+            prediction_engine = self._prediction_engine(match)
+            fallback_used = self._fallback_used(prediction_engine)
             sanity = apply_sanity_layer(
                 probabilities={
                     "home": adjusted_home,
@@ -390,6 +391,12 @@ class PredictionService:
                 "sanity_policy_version": SANITY_POLICY_VERSION,
                 "model_artifact_id": model_artifact_id,
                 "fallback_used": fallback_used,
+                # Which engine actually scored the row. `fallback_used` is a
+                # judgement derived from it; keeping the raw engine makes a
+                # persisted prediction self-describing, so a later audit can
+                # tell a gated heuristic apart from a degraded one without
+                # replaying the verdict that was live at the time.
+                "prediction_engine": prediction_engine,
                 "is_international_friendly": is_friendly,
                 "draw_calibration_applied": draw_calibration_applied,
                 "draw_calibration_reason": draw_calibration_reason,
@@ -952,19 +959,47 @@ class PredictionService:
     def _is_international_friendly(competition_policy: dict[str, object]) -> bool:
         return str(competition_policy.get("competition_key", "")) == "international-friendlies"
 
-    def _fallback_used(self, match: MatchModel) -> bool:
-        """True when the prediction came from a non-ML heuristic fallback
-        rather than the trained XGBoost booster."""
+    # Engines that represent the pipeline scoring a match with the best
+    # tool it has, rather than settling for less. `heuristic_blend_gated`
+    # is here because the walk-forward gate routes to it precisely when
+    # the published verdict says the heuristic BEATS the booster in that
+    # competition — penalising the result for "not being ML" would
+    # contradict the measurement that chose it. Anything else means we
+    # wanted the booster and could not have it.
+    NON_DEGRADED_ENGINES = frozenset({"xgboost", "heuristic_blend_gated"})
+
+    def _prediction_engine(self, match: MatchModel) -> str | None:
+        """The engine that scored this match, or None when the training
+        service does not expose the dispatch (several test stubs)."""
         if self.training_service is None:
-            return True
+            return "placeholder"
         engine_fn = getattr(self.training_service, "prediction_engine_for_match", None)
         if engine_fn is None:
-            return False
+            return None
         try:
-            return engine_fn(match) != "xgboost"
+            engine = engine_fn(match)
         except Exception:  # pragma: no cover - defensive; never block a prediction
             logger.exception("fallback engine lookup failed", extra={"match_id": match.id})
+            return None
+        # A non-string answer means the dispatch exists but told us nothing
+        # usable (a Mock in tests, a future refactor returning an enum). We
+        # cannot claim the booster scored it, and the lineage contract
+        # requires a row to be traceable to either an artifact id or an
+        # admitted fallback — so name it and let it count as degraded.
+        return engine if isinstance(engine, str) else "unknown"
+
+    def _fallback_used(self, engine: str | None) -> bool:
+        """True when the prediction is DEGRADED — the booster was wanted
+        and unavailable — not merely when it came from the heuristic.
+
+        A gated heuristic prediction is the pipeline's most accurate
+        available engine for that competition, so it is not a fallback.
+        ``None`` means the training service exposes no dispatch at all,
+        which keeps the historical "not a fallback" answer rather than
+        inventing a penalty for a service that never claimed to route."""
+        if engine is None:
             return False
+        return engine not in self.NON_DEGRADED_ENGINES
 
     def _competition_policy_for_match(self, match: MatchModel) -> dict[str, object]:
         if self.training_service is None or not hasattr(self.training_service, "competition_operating_policy"):

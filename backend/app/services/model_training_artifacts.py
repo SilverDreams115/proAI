@@ -308,11 +308,27 @@ class ModelTrainingArtifactsMixin:
         """Return the engine that ``score_match`` *would* use for this
         match, without recomputing the score.
 
-        Mirrors the dispatch in ``_score_match_with_artifact`` so the
-        sanity layer can flag heuristic-fallback predictions. Returns one
-        of ``"xgboost"``, ``"heuristic_blend"``, ``"similarity_knn"`` or
-        ``"placeholder"``. Anything other than ``"xgboost"`` is treated
-        as a non-ML fallback by ``fallback_used``."""
+        Mirrors the dispatch in ``_score_match_with_artifact``. Returns one
+        of ``"xgboost"``, ``"heuristic_blend_gated"``, ``"heuristic_blend"``,
+        ``"similarity_knn"`` or ``"placeholder"``.
+
+        ``"heuristic_blend_gated"`` and ``"heuristic_blend"`` run the SAME
+        code — the difference is why we got there, and only the caller that
+        judges prediction quality cares:
+
+        * ``heuristic_blend_gated`` — the Fase 2.6 walk-forward gate routed
+          here on purpose, because the published verdict says the heuristic
+          beats the booster in this competition. That is the pipeline
+          picking its most accurate engine, so it is NOT a degradation and
+          ``fallback_used`` stays False.
+        * ``heuristic_blend`` — we wanted the booster and could not have it:
+          no artifact was ever trained, or the booster failed to load and
+          produce a 3-class vector. That IS a degradation.
+
+        Collapsing the two is what made every gated position read as
+        "Modelo heurístico" with capped confidence right after the first
+        verdict was published, even though the gate had just moved those
+        matches onto the engine the walk-forward measured as better."""
         artifact = self.latest_artifact()
         if artifact is None:
             built = self._build_heuristic_artifact(self.entity_repository.list_matches())
@@ -325,7 +341,7 @@ class ModelTrainingArtifactsMixin:
             verdict_available = bool(self._xgboost_verdict_cache.get("available", False))
             competition_key = self._competition_key(getattr(match.competition, "name", ""))
             if verdict_available and competition_key not in approved:
-                return "heuristic_blend"
+                return "heuristic_blend_gated"
             # Only treat the booster as the engine when it can actually
             # load and produce a 3-class vector; otherwise the dispatch
             # falls through to the heuristic branch.
