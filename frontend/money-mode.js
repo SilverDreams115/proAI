@@ -26,7 +26,9 @@ const DECISION_LABEL = {
   NO_JUGAR: "NO JUGAR",
 };
 
-const TICKET_LABEL = {
+// Exported so the printable boleta names the recommended ticket the same way
+// the panel does, instead of printing the raw API key.
+export const TICKET_LABEL = {
   aggressive: "Agresivo",
   balanced: "Balanceado",
   conservative: "Conservador",

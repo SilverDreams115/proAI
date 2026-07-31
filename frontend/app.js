@@ -64,7 +64,7 @@ import {
   setCachedDiagnostics,
   clearDiagnosticsCache,
 } from "./slate-panel-cache.js";
-import { buildPrintableTicketHtml } from "./printable-ticket.js";
+import { buildPrintableTicketHtml, mountPrintableTicket } from "./printable-ticket.js";
 import { buildWhatsAppShareUrl, buildWhatsAppTicketText } from "./whatsapp-share.js";
 import { resolveActiveSelection, resolveVisibleSelection, selectedSlateCountdownMs, slateBadges, suspectSlateDiagnostics, pdfSourceDiagnosticLines, msPdfWatchStatus, blockedMidweekSlateDiagnostic } from "./slate-selection.js";
 // NOTE: live-tracking is loaded via a guarded dynamic import in the
@@ -1059,6 +1059,7 @@ function buildPrintableTicket() {
     moneyMode: moneyModeForActiveSlate(),
     slateOptions: slateOptionsForActiveSlate(),
     nameWarnings: auditTicketRows(rows),
+    publishGate: state.operationalPredictionAudit?.publish_gate || null,
   });
 }
 
@@ -2115,9 +2116,10 @@ function attachStaticEvents() {
       renderProductionStatus();
       return;
     }
-    win.document.open();
-    win.document.write(buildPrintableTicket());
-    win.document.close();
+    // The popup inherits this page's CSP, so the boleta cannot carry its own
+    // <style> or inline handlers — mountPrintableTicket writes it and wires
+    // both in a way the policy allows.
+    mountPrintableTicket(win, buildPrintableTicket());
     state.authStatusMessage = "Boleta PDF abierta en una pestaña nueva.";
     recordTicketExport("pdf");
     updateAuthControls();
