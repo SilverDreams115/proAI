@@ -127,3 +127,87 @@ describe("Money Mode executive UI", () => {
     expect(doc.getElementById("slate-switcher").outerHTML).toBe(before);
   });
 });
+
+describe("Money Mode recommended-ticket selections", () => {
+  const PLAY_REPORT = {
+    ...MM_REPORT,
+    decision: {
+      status: "JUGAR_SOLO_CONSERVADOR",
+      reason: "Solo el boleto conservador acota el riesgo.",
+      confidence: "cautious",
+      recommended_ticket: "conservative",
+    },
+    matches: [
+      { position: 1, match: "San Luis vs Tijuana", money_mode_pick: ["V"], money_mode_pick_type: "no_simple", risk: "high", reason: [], simple_allowed: false },
+      { position: 2, match: "Juarez vs Pumas", money_mode_pick: ["L"], money_mode_pick_type: "triple", risk: "high", reason: [], simple_allowed: false },
+      { position: 3, match: "Atlas vs Monterrey", money_mode_pick: ["L"], money_mode_pick_type: "simple", risk: "medium", reason: [], simple_allowed: true },
+    ],
+    tickets: {
+      aggressive: mmTicket(),
+      balanced: mmTicket(),
+      conservative: mmTicket({
+        recommended: true,
+        uncovered_no_simple_positions: [1],
+        simple_count: 1, no_simple_count: 1, double_count: 0, triple_count: 1,
+        estimated_combinations: 3888,
+        selections: [
+          { position: 3, pick: ["L"], type: "simple" },
+          { position: 1, pick: ["V"], type: "no_simple" },
+          { position: 2, pick: ["L", "E", "V"], type: "triple" },
+        ],
+      }),
+    },
+  };
+
+  it("lists what the recommended ticket actually marks, in position order", () => {
+    const doc = dom(renderMoneyModePanel(PLAY_REPORT));
+    const table = doc.querySelector(".mm-selections-table");
+    expect(table).not.toBeNull();
+    const positions = [...table.querySelectorAll("tbody tr")].map(
+      (tr) => tr.querySelector("td").textContent.trim(),
+    );
+    // Payload order is 3,1,2 — the operator reads a marking sheet top to bottom.
+    expect(positions).toEqual(["1", "2", "3"]);
+    expect(doc.body.textContent).toContain("San Luis vs Tijuana");
+    expect(doc.body.textContent).toContain("Qué marca el boleto conservador");
+  });
+
+  it("shows every pick of a triple, not just the top one", () => {
+    const doc = dom(renderMoneyModePanel(PLAY_REPORT));
+    const rows = [...doc.querySelectorAll(".mm-selections-table tbody tr")];
+    const triple = rows.find((tr) => tr.querySelector("td").textContent.trim() === "2");
+    const marks = triple.querySelectorAll("td")[3].textContent;
+    expect(marks).toContain("L");
+    expect(marks).toContain("E");
+    expect(marks).toContain("V");
+  });
+
+  it("flags the positions the ticket cannot cover", () => {
+    const doc = dom(renderMoneyModePanel(PLAY_REPORT));
+    const rows = [...doc.querySelectorAll(".mm-selections-table tbody tr")];
+    const uncovered = rows.find((tr) => tr.querySelector("td").textContent.trim() === "1");
+    expect(uncovered.className).toContain("row-changed");
+    expect(uncovered.querySelector(".tone-danger")).not.toBeNull();
+    expect(uncovered.textContent).toContain("Sin cobertura");
+    // The label is not duplicated by a second badge saying the same thing.
+    expect(uncovered.textContent.match(/[Ss]in cobertura/g)).toHaveLength(1);
+    // A covered position carries no such warning.
+    const covered = rows.find((tr) => tr.querySelector("td").textContent.trim() === "3");
+    expect(covered.querySelector(".tone-danger")).toBeNull();
+  });
+
+  it("summarises the composition under the list", () => {
+    const doc = dom(renderMoneyModePanel(PLAY_REPORT));
+    const text = doc.querySelector(".mm-selections").textContent;
+    expect(text).toContain("1 simple(s)");
+    expect(text).toContain("1 triple(s)");
+    expect(text).toContain("3888 combinación(es)");
+  });
+
+  it("never prints a marking sheet when the decision is NO JUGAR", () => {
+    // Under NO JUGAR every ticket is a simulation; rendering one as a list of
+    // marks would invite playing it.
+    const doc = dom(renderMoneyModePanel(MM_REPORT));
+    expect(doc.querySelector(".mm-selections-table")).toBeNull();
+  });
+});

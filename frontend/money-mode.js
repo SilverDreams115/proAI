@@ -126,6 +126,58 @@ function ticketTechRow(key, ticket) {
   </tr>`;
 }
 
+// The recommended ticket's actual per-position selections. The payload has
+// carried `selections` all along; naming the ticket "Conservador" without
+// listing what that means left the operator to reconstruct 14 rows from the
+// counts. Marks the positions the ticket admits it cannot cover.
+function recommendedSelections(report, ticketKey, ticket) {
+  const selections = (ticket && ticket.selections) || [];
+  if (!selections.length) return "";
+  const nameByPosition = new Map(
+    (report.matches || []).map((m) => [m.position, m.match]),
+  );
+  const uncovered = new Set(ticket.uncovered_no_simple_positions || []);
+  const rows = selections
+    .slice()
+    .sort((a, b) => Number(a.position) - Number(b.position))
+    .map((sel) => {
+      const picks = Array.isArray(sel.pick) ? sel.pick : [];
+      const isUncovered = uncovered.has(sel.position);
+      const marks = picks.map((p) => `<span class="mono">${escapeHtml(p)}</span>`).join(" · ") || "—";
+      const typeLabel = escapeHtml(PICK_TYPE_LABEL[sel.type] || sel.type);
+      // An uncovered position already reads "Sin cobertura" as its type; wrap
+      // that label in the danger badge rather than appending a second copy.
+      const typeCell = isUncovered
+        ? `<span class="badge-risk tone-danger">${typeLabel}</span>`
+        : typeLabel;
+      return `<tr${isUncovered ? ' class="row-changed"' : ""}>
+        <td class="mono">${escapeHtml(sel.position)}</td>
+        <td>${escapeHtml(nameByPosition.get(sel.position) || "—")}</td>
+        <td>${typeCell}</td>
+        <td>${marks}</td>
+      </tr>`;
+    })
+    .join("");
+  const summary = [
+    `${escapeHtml(ticket.simple_count)} simple(s)`,
+    `${escapeHtml(ticket.double_count)} doble(s)`,
+    `${escapeHtml(ticket.triple_count)} triple(s)`,
+    `${escapeHtml(ticket.no_simple_count)} sin cobertura`,
+    `${escapeHtml(ticket.estimated_combinations)} combinación(es)`,
+  ].join(" · ");
+  return `
+    <div class="mm-selections">
+      <div class="mm-tickets-heading">Qué marca el boleto ${escapeHtml(
+        (TICKET_LABEL[ticketKey] || ticketKey).toLowerCase(),
+      )}</div>
+      <table class="dryrun-table mm-selections-table">
+        <thead><tr><th>#</th><th>Partido</th><th>Tipo</th><th>Marcar</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+      <p class="meta-copy">${summary}</p>
+    </div>`;
+}
+
 export function renderMoneyModePanel(report) {
   if (!report || !report.slate || !report.decision) {
     return `<div class="empty-state">Sin Money Mode para la papeleta activa.</div>`;
@@ -163,6 +215,16 @@ export function renderMoneyModePanel(report) {
   const recommendedLine = noPlay
     ? `<div class="mm-recommended mm-recommended-none">Boleto recomendado: <strong>ninguno</strong> · Motivo: riesgo no cubrible.</div>`
     : `<div class="mm-recommended">Boleto recomendado: <strong>${recommended}</strong></div>`;
+  // Only for a ticket the system actually recommends: under NO JUGAR every
+  // ticket is a simulation, and printing one as a marking sheet would invite
+  // playing it.
+  const selectionsBlock = noPlay
+    ? ""
+    : recommendedSelections(
+        report,
+        d.recommended_ticket,
+        (report.tickets || {})[d.recommended_ticket],
+      );
 
   // --- Ticket simulations ----------------------------------------------------
   const tickets = report.tickets || {};
@@ -220,6 +282,7 @@ export function renderMoneyModePanel(report) {
       ${hero}
       ${liveNote}
       ${recommendedLine}
+      ${selectionsBlock}
       ${ticketsHeading}
       <div class="shadow-cards money-tickets">${cards}</div>
       ${technical}
