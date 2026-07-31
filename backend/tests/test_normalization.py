@@ -86,3 +86,116 @@ def test_other_team_stopwords_still_apply() -> None:
 
     assert service.normalize_team_name("FC Barcelona") == service.normalize_team_name("Barcelona")
     assert service.normalize_team_name("Club Tijuana") == service.normalize_team_name("Tijuana")
+
+
+def test_serie_a_short_forms_land_on_the_canonical_rows() -> None:
+    """football-data.co.uk writes Serie A clubs short; the rows already in
+    the database came from the UCL feed under their long names. Both forms
+    have to reach the same slug or the CSV ingest splits every club's form
+    across two rows."""
+    service = NormalizationService()
+
+    assert service.normalize_team_name("Inter") == service.normalize_team_name(
+        "FC Internazionale Milano"
+    )
+    assert service.normalize_team_name("Atalanta") == service.normalize_team_name("Atalanta BC")
+    # These two need no pin — `fc` and `ac` are team stopwords — but the
+    # ingest depends on it, so assert the behaviour rather than trust it.
+    assert service.normalize_team_name("Juventus") == service.normalize_team_name("Juventus FC")
+    assert service.normalize_team_name("Milan") == service.normalize_team_name("AC Milan")
+
+
+def test_inter_pin_does_not_swallow_the_other_inters() -> None:
+    """Bare "Inter" is Internazionale, but the Brazilian and MLS clubs that
+    start with the same token must keep their own slugs."""
+    service = NormalizationService()
+
+    internazionale = service.normalize_team_name("Inter")
+    for other in ("Internacional", "Inter P.A.", "Internacional Porto Alegre", "Inter Miami"):
+        assert service.normalize_team_name(other) != internazionale, other
+
+
+def test_argentine_short_forms_land_on_the_canonical_rows() -> None:
+    """football-data.co.uk's ARG.csv abbreviates Argentine clubs. Each short
+    form has to reach the row the TheSportsDB ingests already built, or the
+    CSV mints a parallel row and splits the club's form in two."""
+    service = NormalizationService()
+
+    for short, canonical in (
+        ("Dep. Riestra", "Deportivo Riestra"),
+        ("Estudiantes L.P.", "Estudiantes de La Plata"),
+        ("Gimnasia L.P.", "Gimnasia y Esgrima de La Plata"),
+        ("Gimnasia Mendoza", "Gimnasia y Esgrima de Mendoza"),
+        ("Ind. Rivadavia", "CS Independiente Rivadavia"),
+        ("San Martin S.J.", "San Martín de San Juan"),
+        ("Sarmiento Junin", "Sarmiento"),
+        ("Union de Santa Fe", "Union"),
+    ):
+        assert service.normalize_team_name(short) == service.normalize_team_name(
+            canonical
+        ), f"{short} does not reach {canonical}"
+
+
+def test_argentine_pins_keep_distinct_clubs_apart() -> None:
+    """The two Gimnasias are different clubs, and so are the Unións. A pin
+    that collapsed either pair would merge unrelated histories."""
+    service = NormalizationService()
+
+    assert service.normalize_team_name("Gimnasia L.P.") != service.normalize_team_name(
+        "Gimnasia Mendoza"
+    )
+    union_santa_fe = service.normalize_team_name("Union de Santa Fe")
+    for other in ("Unión La Calera", "Unión Española"):
+        assert service.normalize_team_name(other) != union_santa_fe, other
+    # Estudiantes de Río Cuarto is not Estudiantes de La Plata.
+    assert service.normalize_team_name("Estudiantes Rio Cuarto") != service.normalize_team_name(
+        "Estudiantes L.P."
+    )
+
+
+def test_argentine_league_labels_share_one_competition_slug() -> None:
+    """ARG.csv calls the Argentine top flight "Liga Profesional"; the TSDB
+    ingests built it as "Argentinian Primera Division". A second competition
+    row would halve the median-gap window, the competition profile and the
+    walk-forward verdict key."""
+    service = NormalizationService()
+
+    canonical = service.normalize_competition_name("Argentinian Primera Division")
+    assert service.normalize_competition_name("Liga Profesional") == canonical
+    # The CSV emits a trailing-space variant on some rows.
+    assert service.normalize_competition_name("Liga Profesional ") == canonical
+    assert service.normalize_competition_name("Argentina Primera Division") == canonical
+
+
+def test_the_argentine_league_cup_stays_its_own_competition() -> None:
+    """Copa de la Liga Profesional is a different tournament and must not be
+    folded into the league by the pin above."""
+    service = NormalizationService()
+
+    assert service.normalize_competition_name(
+        "Copa De La Liga Profesional"
+    ) != service.normalize_competition_name("Argentinian Primera Division")
+
+
+def test_manchester_city_spellings_share_one_slug() -> None:
+    """The E0 feed writes "Man City", the Champions League feed writes
+    "Manchester City FC". Without a pin the long form lands on
+    "manchester-city" and never meets the row holding the club's league
+    history — the split v35 folds."""
+    service = NormalizationService()
+
+    canonical = service.normalize_team_name("Man City")
+    assert service.normalize_team_name("Manchester City FC") == canonical
+    assert service.normalize_team_name("Manchester City") == canonical
+
+
+def test_manchester_city_pin_does_not_swallow_the_womens_side() -> None:
+    """Gender markers are deliberately not stopwords; a women's Manchester
+    City must keep its own slug even though the pin targets the men's row."""
+    service = NormalizationService()
+
+    mens = service.normalize_team_name("Man City")
+    for womens in ("Manchester City Femenil", "Manchester City Femenino"):
+        assert service.normalize_team_name(womens) != mens, womens
+    # And a different Manchester club is untouched.
+    assert service.normalize_team_name("Man United") != mens

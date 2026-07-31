@@ -790,3 +790,316 @@ def test_v32_marks_fabricated_kickoff_ladders_and_spares_real_fixtures(tmp_path)
 
     assert len(marked) == 9
     assert all(match_id.startswith("m-s-ladder") for match_id in marked)
+
+
+def test_v33_folds_the_argentine_splits_toward_the_live_feed_name(tmp_path) -> None:
+    """ARG.csv writes "Argentinos Jrs", which today resolves to a one-match
+    placeholder sitting beside the club's real 21-match row. Ingesting before
+    the merge would pile a season onto the wrong row.
+
+    The surviving row must be the one the LIVE feeds write, even when it is
+    currently the thinner of the two — otherwise the next ingest reopens the
+    split."""
+    from datetime import datetime, timezone
+
+    from sqlalchemy import text
+
+    from app.db import session as db_session
+    from app.db.migrations import _migrate_to_v33, run_migrations
+    from app.models import tables  # noqa: F401
+
+    db_session.configure_session(f"sqlite:///{tmp_path / 'argentine_splits.db'}")
+    run_migrations(db_session.engine)
+
+    with db_session.engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO competitions (id, name, is_placeholder)"
+                " VALUES ('c-arg', 'Argentinian Primera Division', 0)"
+            )
+        )
+        for tid, name, ph in (
+            ("t-jrs", "Argentinos Jrs", 1),
+            ("t-juniors", "Argentinos Juniors", 0),
+            ("t-inst-acc", "Instituto ACC", 0),
+            ("t-inst", "Instituto", 0),
+            ("t-rival", "Sarmiento", 0),
+        ):
+            connection.execute(
+                text("INSERT INTO teams (id, name, is_placeholder) VALUES (:i, :n, :p)"),
+                {"i": tid, "n": name, "p": ph},
+            )
+        for mid, home, away, day in (
+            ("m-jrs", "t-rival", "t-jrs", 26),
+            ("m-acc", "t-inst-acc", "t-rival", 27),
+        ):
+            connection.execute(
+                text(
+                    "INSERT INTO matches (id, competition_id, home_team_id, away_team_id, kickoff_at)"
+                    " VALUES (:i, 'c-arg', :h, :a, :k)"
+                ),
+                {"i": mid, "h": home, "a": away, "k": datetime(2026, 7, day, tzinfo=timezone.utc)},
+            )
+
+    with db_session.engine.begin() as connection:
+        _migrate_to_v33(connection)
+        away_name = connection.execute(
+            text("SELECT t.name FROM matches m JOIN teams t ON t.id = m.away_team_id WHERE m.id = 'm-jrs'")
+        ).scalar_one()
+        home_name = connection.execute(
+            text("SELECT t.name FROM matches m JOIN teams t ON t.id = m.home_team_id WHERE m.id = 'm-acc'")
+        ).scalar_one()
+
+    assert away_name == "Argentinos Juniors"
+    # Direction follows the live feed name, not the richer row.
+    assert home_name == "Instituto"
+
+    # Merges never delete: both source rows survive so nothing dangles.
+    with db_session.engine.begin() as connection:
+        survivors = connection.execute(
+            text("SELECT COUNT(*) FROM teams WHERE name IN ('Argentinos Jrs', 'Instituto ACC')")
+        ).scalar_one()
+    assert survivors == 2
+
+
+def test_v33_is_idempotent_and_spares_absent_rows(tmp_path) -> None:
+    """Re-running must not move anything a second time, and a database that
+    never had the split rows must come out untouched."""
+    from datetime import datetime, timezone
+
+    from sqlalchemy import text
+
+    from app.db import session as db_session
+    from app.db.migrations import _migrate_to_v33, run_migrations
+    from app.models import tables  # noqa: F401
+
+    db_session.configure_session(f"sqlite:///{tmp_path / 'argentine_idempotent.db'}")
+    run_migrations(db_session.engine)
+
+    with db_session.engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO competitions (id, name, is_placeholder)"
+                " VALUES ('c-arg', 'Argentinian Primera Division', 0)"
+            )
+        )
+        for tid, name in (("t-a", "Argentinos Juniors"), ("t-b", "Sarmiento")):
+            connection.execute(
+                text("INSERT INTO teams (id, name, is_placeholder) VALUES (:i, :n, 0)"),
+                {"i": tid, "n": name},
+            )
+        connection.execute(
+            text(
+                "INSERT INTO matches (id, competition_id, home_team_id, away_team_id, kickoff_at)"
+                " VALUES ('m-1', 'c-arg', 't-a', 't-b', :k)"
+            ),
+            {"k": datetime(2026, 7, 23, tzinfo=timezone.utc)},
+        )
+
+    for _ in range(2):
+        with db_session.engine.begin() as connection:
+            _migrate_to_v33(connection)
+
+    with db_session.engine.begin() as connection:
+        home = connection.execute(
+            text("SELECT t.name FROM matches m JOIN teams t ON t.id = m.home_team_id WHERE m.id = 'm-1'")
+        ).scalar_one()
+        teams = connection.execute(text("SELECT COUNT(*) FROM teams")).scalar_one()
+    assert home == "Argentinos Juniors"
+    assert teams == 2
+
+
+def test_v34_corrects_only_the_guide_mislabelled_pgm806_positions(tmp_path) -> None:
+    """The promotion path infers a competition from shared team history when
+    no fixture resolves. For PGM-806 that put a Copa Sudamericana playoff under
+    "Brasileirao". v34 replaces the inference with what the official LN guide
+    states — and must leave the positions the guide already agrees with alone."""
+    from datetime import datetime, timezone
+
+    from sqlalchemy import text
+
+    from app.db import session as db_session
+    from app.db.migrations import _migrate_to_v34, run_migrations
+    from app.models import tables  # noqa: F401
+
+    db_session.configure_session(f"sqlite:///{tmp_path / 'pgm806_labels.db'}")
+    run_migrations(db_session.engine)
+
+    with db_session.engine.begin() as connection:
+        for cid, name, ph in (
+            ("c-ph", "Progol Concurso 806", 1),
+            ("c-bra", "Brasileirao", 0),
+            ("c-lib", "Copa Libertadores", 0),
+            ("c-sud", "Copa Sudamericana", 0),
+            ("c-exp", "Liga de Expansion MX", 0),
+            ("c-arg", "Argentinian Primera Division", 0),
+        ):
+            connection.execute(
+                text("INSERT INTO competitions (id, name, is_placeholder) VALUES (:i, :n, :p)"),
+                {"i": cid, "n": name, "p": ph},
+            )
+        for tid in ("t-a", "t-b"):
+            connection.execute(
+                text("INSERT INTO teams (id, name, is_placeholder) VALUES (:i, :i, 0)"), {"i": tid}
+            )
+        connection.execute(
+            text(
+                "INSERT INTO progol_slates (id, label, draw_code, week_type, is_archived, slate_version, created_at)"
+                " VALUES ('s-806', 'Progol 806', 'PGM-806', 'midweek', 1, 1, :c)"
+            ),
+            {"c": datetime(2026, 7, 28, tzinfo=timezone.utc)},
+        )
+        # position -> competition it currently sits under
+        seeded = {2: "c-ph", 3: "c-bra", 5: "c-bra", 6: "c-ph", 8: "c-lib", 9: "c-ph"}
+        for position, cid in seeded.items():
+            connection.execute(
+                text(
+                    "INSERT INTO matches (id, competition_id, home_team_id, away_team_id, kickoff_at)"
+                    " VALUES (:i, :c, 't-a', 't-b', :k)"
+                ),
+                {"i": f"m-{position}", "c": cid, "k": datetime(2026, 7, 30, 11 + position, tzinfo=timezone.utc)},
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO progol_slate_matches (slate_id, match_id, position, is_knockout, knockout_source)"
+                    " VALUES ('s-806', :m, :p, 0, 'auto')"
+                ),
+                {"m": f"m-{position}", "p": position},
+            )
+
+    def competitions_by_position():
+        with db_session.engine.begin() as connection:
+            return dict(
+                connection.execute(
+                    text(
+                        "SELECT sm.position, c.name FROM progol_slate_matches sm"
+                        " JOIN matches m ON m.id = sm.match_id"
+                        " JOIN competitions c ON c.id = m.competition_id"
+                        " WHERE sm.slate_id = 's-806'"
+                    )
+                ).all()
+            )
+
+    before = competitions_by_position()
+    with db_session.engine.begin() as connection:
+        _migrate_to_v34(connection)
+    after = competitions_by_position()
+
+    assert after[2] == "Liga de Expansion MX"
+    assert after[5] == "Copa Sudamericana"
+    assert after[6] == "Copa Sudamericana"
+    assert after[8] == "Argentinian Primera Division"
+    assert after[9] == "Argentinian Primera Division"
+    # Position 3 already agreed with the guide and must be untouched.
+    assert after[3] == before[3] == "Brasileirao"
+
+    # Idempotent: a second run changes nothing.
+    with db_session.engine.begin() as connection:
+        _migrate_to_v34(connection)
+    assert competitions_by_position() == after
+
+
+def test_v34_leaves_other_slates_alone(tmp_path) -> None:
+    """The corrections are anchored by (draw_code, position); a different
+    concurso holding the same pair under the same competition must not move."""
+    from datetime import datetime, timezone
+
+    from sqlalchemy import text
+
+    from app.db import session as db_session
+    from app.db.migrations import _migrate_to_v34, run_migrations
+    from app.models import tables  # noqa: F401
+
+    db_session.configure_session(f"sqlite:///{tmp_path / 'other_slate.db'}")
+    run_migrations(db_session.engine)
+
+    with db_session.engine.begin() as connection:
+        for cid, name in (("c-bra", "Brasileirao"), ("c-sud", "Copa Sudamericana")):
+            connection.execute(
+                text("INSERT INTO competitions (id, name, is_placeholder) VALUES (:i, :n, 0)"),
+                {"i": cid, "n": name},
+            )
+        for tid in ("t-a", "t-b"):
+            connection.execute(
+                text("INSERT INTO teams (id, name, is_placeholder) VALUES (:i, :i, 0)"), {"i": tid}
+            )
+        connection.execute(
+            text(
+                "INSERT INTO progol_slates (id, label, draw_code, week_type, is_archived, slate_version, created_at)"
+                " VALUES ('s-805', 'Progol 805', 'PGM-805', 'midweek', 1, 1, :c)"
+            ),
+            {"c": datetime(2026, 7, 21, tzinfo=timezone.utc)},
+        )
+        connection.execute(
+            text(
+                "INSERT INTO matches (id, competition_id, home_team_id, away_team_id, kickoff_at)"
+                " VALUES ('m-5', 'c-bra', 't-a', 't-b', :k)"
+            ),
+            {"k": datetime(2026, 7, 23, tzinfo=timezone.utc)},
+        )
+        connection.execute(
+            text(
+                "INSERT INTO progol_slate_matches (slate_id, match_id, position, is_knockout, knockout_source)"
+                " VALUES ('s-805', 'm-5', 5, 0, 'auto')"
+            )
+        )
+
+    with db_session.engine.begin() as connection:
+        _migrate_to_v34(connection)
+        name = connection.execute(
+            text("SELECT c.name FROM matches m JOIN competitions c ON c.id = m.competition_id WHERE m.id = 'm-5'")
+        ).scalar_one()
+    assert name == "Brasileirao"
+
+
+def test_v35_folds_manchester_city_toward_the_league_history_row(tmp_path) -> None:
+    """v30 left this pair alone because the rows share no competition and the
+    position was blocked by policy anyway. With the Champions League now
+    carrying a published benchmark, thin history is what remains — so the
+    21-match UCL row folds into the 114-match E0 one."""
+    from datetime import datetime, timezone
+
+    from sqlalchemy import text
+
+    from app.db import session as db_session
+    from app.db.migrations import _migrate_to_v35, run_migrations
+    from app.models import tables  # noqa: F401
+
+    db_session.configure_session(f"sqlite:///{tmp_path / 'man_city.db'}")
+    run_migrations(db_session.engine)
+
+    with db_session.engine.begin() as connection:
+        for cid, name in (("c-e0", "E0"), ("c-ucl", "UEFA Champions League")):
+            connection.execute(
+                text("INSERT INTO competitions (id, name, is_placeholder) VALUES (:i, :n, 0)"),
+                {"i": cid, "n": name},
+            )
+        for tid, name in (
+            ("t-short", "Man City"),
+            ("t-long", "Manchester City FC"),
+            ("t-rival", "Real Madrid"),
+        ):
+            connection.execute(
+                text("INSERT INTO teams (id, name, is_placeholder) VALUES (:i, :n, 0)"),
+                {"i": tid, "n": name},
+            )
+        connection.execute(
+            text(
+                "INSERT INTO matches (id, competition_id, home_team_id, away_team_id, kickoff_at)"
+                " VALUES ('m-ucl', 'c-ucl', 't-long', 't-rival', :k)"
+            ),
+            {"k": datetime(2026, 8, 1, tzinfo=timezone.utc)},
+        )
+
+    with db_session.engine.begin() as connection:
+        _migrate_to_v35(connection)
+        home = connection.execute(
+            text("SELECT t.name FROM matches m JOIN teams t ON t.id = m.home_team_id WHERE m.id = 'm-ucl'")
+        ).scalar_one()
+        survivors = connection.execute(
+            text("SELECT COUNT(*) FROM teams WHERE name = 'Manchester City FC'")
+        ).scalar_one()
+
+    assert home == "Man City"
+    # Merges never delete; the source row stays so nothing dangles.
+    assert survivors == 1

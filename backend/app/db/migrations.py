@@ -10,7 +10,7 @@ from sqlalchemy.engine import Engine
 
 from app.db.base import Base
 
-SCHEMA_VERSION = 32
+SCHEMA_VERSION = 35
 POSTGRES_MIGRATION_LOCK_ID = 791796
 ALEMBIC_VERSION_PATTERN = re.compile(r"^0*(?P<version>\d+)_.*\.py$")
 
@@ -165,6 +165,15 @@ def _run_migrations_unlocked(engine: Engine) -> None:
         if current_version < 32:
             _migrate_to_v32(connection)
             current_version = 32
+        if current_version < 33:
+            _migrate_to_v33(connection)
+            current_version = 33
+        if current_version < 34:
+            _migrate_to_v34(connection)
+            current_version = 34
+        if current_version < 35:
+            _migrate_to_v35(connection)
+            current_version = 35
         connection.execute(text("UPDATE schema_migrations SET version = :version"), {"version": current_version})
 
 
@@ -1364,6 +1373,170 @@ _DETECTED_ROW_SPLITS = (
     ("Shimizu", "Shimizu S-Pulse"),
     ("Kalmar", "Kalmar FF"),
 )
+
+
+# (draw_code, position, competition the LN guide states) for fixtures whose
+# competition was INFERRED by the promotion path rather than observed.
+_GUIDE_COMPETITION_CORRECTIONS = (
+    ("PGM-806", 2, "Liga de Expansion MX"),
+    ("PGM-806", 5, "Copa Sudamericana"),
+    ("PGM-806", 6, "Copa Sudamericana"),
+    ("PGM-806", 8, "Argentinian Primera Division"),
+    ("PGM-806", 9, "Argentinian Primera Division"),
+)
+
+
+def _migrate_to_v34(connection) -> None:
+    """Correct five PGM-806 competitions against the official LN guide.
+
+    When ``ProgolFixtureResolver`` finds no ingested fixture for a pair, it
+    infers the competition from the teams' shared history — documented
+    behaviour, and honest as far as it goes, but an inference. For PGM-806 the
+    inference was wrong on five of nine positions, and the official
+    ``guiamedia.pdf`` for concurso 806 states each one outright:
+
+        pos 2  Oaxaca vs Sinaloa            "Jornada 2 de la Liga de Expansión"
+        pos 5  Vasco da Gama vs I. Medellín "Playoffs de la Copa Sudamericana"
+        pos 6  O'Higgins vs Boca Jrs        "Playoffs de la Copa Sudamericana"
+        pos 8  Talleres vs Vélez            "Jornada 2 de la Liga Argentina"
+        pos 9  Central Córdoba vs Tucumán   "Jornada 2 de la Liga Argentina"
+
+    Positions 5 and 8 are the ones that matter most: they were not merely
+    unresolved, they were confidently wrong. A Sudamericana playoff sat under
+    "Brasileirao" and a league fixture under "Copa Libertadores", because that
+    is where each pair had most often met before. Positions 2, 6 and 9 sat
+    under the "Progol Concurso 806" placeholder.
+
+    This does NOT touch ``composition_hash``. That hash is computed from the
+    RAW PROMOTION PAYLOAD before entity resolution — see the contract on
+    ``SlateRepository._compute_composition_hash`` — so it is a fingerprint of
+    what was promoted, not of the competition rows the DB holds now. Existing
+    predictions and ticket snapshots keep their linkage untouched.
+
+    Positions 1, 3, 4 and 7 are deliberately left alone: 3, 4 and 7 already
+    carry the competition the guide states, and 1 is the MLS/Liga MX All-Star
+    exhibition, which belongs to no league and correctly stays under the
+    concurso placeholder.
+
+    Anchored by (draw_code, position) so it can only ever touch these five
+    rows, with the same fixture-identity guard v15 uses. Idempotent: re-running
+    finds the competition already correct and writes nothing. Mirrors
+    alembic 0034.
+    """
+    for draw_code, position, competition_name in _GUIDE_COMPETITION_CORRECTIONS:
+        target = connection.execute(
+            text("SELECT id FROM competitions WHERE name = :name AND is_placeholder = false LIMIT 1"),
+            {"name": competition_name},
+        ).fetchone()
+        if target is None:
+            continue
+        connection.execute(
+            text("""
+                UPDATE matches
+                SET competition_id = :target_id
+                WHERE id IN (
+                    SELECT sm.match_id
+                    FROM progol_slate_matches sm
+                    JOIN progol_slates s ON s.id = sm.slate_id
+                    WHERE s.draw_code = :draw_code AND sm.position = :position
+                )
+                AND competition_id != :target_id
+                AND NOT EXISTS (
+                    SELECT 1 FROM matches m2
+                    WHERE m2.id != matches.id
+                      AND m2.competition_id = :target_id
+                      AND m2.home_team_id = matches.home_team_id
+                      AND m2.away_team_id = matches.away_team_id
+                      AND m2.kickoff_at = matches.kickoff_at
+                )
+            """),
+            {"target_id": target[0], "draw_code": draw_code, "position": position},
+        )
+
+
+def _migrate_to_v35(connection) -> None:
+    """Fold the Manchester City split that v30 deferred.
+
+    v30 looked at this pair and deliberately left it alone, for two stated
+    reasons. Both have since stopped holding:
+
+    * *"its rows are split ACROSS competitions"* — Man City (114, E0) and
+      Manchester City FC (21, UEFA Champions League) share no competition, so
+      the shared-competition guard that protects against name-similarity
+      false positives ("Real Sociedad" -> "Real Madrid") had nothing to check.
+      The evidence here is not name similarity: the UCL row's opponents are
+      Real Madrid, Inter, PSG, Juventus, Dortmund and Leverkusen, which is the
+      senior men's Manchester City and no one else. The LN guide for concurso
+      2344 writes the same club both ways — "MANCHESTER CITY" in casillero 5,
+      "Man. City" in its own context line.
+    * *"blocked by unclassified_competition rather than by thin history, so
+      the merge would not have unblocked it"* — true until today's published
+      walk-forward gave the Champions League an audited benchmark, which
+      moved it off `unclassified`. With that gone, thin history is exactly
+      what is left holding position 5 down: the slate points at the 21-match
+      row while 114 matches, four of them inside the active form window, sit
+      on the other.
+
+    Direction follows the richer row and the league feed that keeps writing
+    it: FD-UK's E0 emits "Man City" every season. The normalization pins added
+    alongside this migration make the UCL feed resolve there too, so the split
+    cannot reopen on the next ingest.
+
+    Same contract as v14/v16/v21/v27/v30/v31/v33: additive, nothing deleted,
+    no-op when a row is absent. Does not touch composition_hash, which
+    fingerprints the promotion payload rather than the DB rows. Mirrors
+    alembic 0035.
+    """
+    _merge_team_into(connection, "Manchester City FC", "Man City")
+
+
+_ARGENTINE_ROW_SPLITS = (
+    ("Argentinos Jrs", "Argentinos Juniors"),
+    ("Instituto ACC", "Instituto"),
+    ("Gimnasia LP", "Gimnasia y Esgrima de La Plata"),
+)
+
+
+def _migrate_to_v33(connection) -> None:
+    """Fold the three split rows in the Argentine Primera before the
+    football-data.co.uk feed lands on top of them.
+
+    The TheSportsDB free tier caps ``eventsday.php`` at three events per
+    call, so the Argentine league arrives with holes — Barracas Central's
+    2026-07-25 fixture never came through, which is one of the two reasons
+    PG-2344 position 10 is blocked. The repair is to ingest ARG.csv, which
+    has no cap. But that CSV writes club names in short form, and three of
+    them currently land on the wrong row:
+
+        Argentinos Jrs (1, placeholder)  -> Argentinos Juniors (21)
+        Instituto ACC (13, last 2024)    -> Instituto (8, last 2026)
+        Gimnasia LP (10, last 2024)      -> Gimnasia y Esgrima de La Plata (7, last 2026)
+
+    "Argentinos Jrs" is the live trap: the CSV writes exactly that string,
+    so ingesting first would have piled a season onto a one-match
+    placeholder while the club's real history sat beside it. The other two
+    are temporal splits — one source named the club until 2024, another
+    names it now — so each side holds half the history.
+
+    Direction is chosen by which name the LIVE feeds write, not by which
+    row is currently richer: the surviving row has to be the one the next
+    ingest will resolve to, or the split simply reopens. That is why
+    Instituto ACC (13 matches) folds into Instituto (8) and not the
+    reverse.
+
+    All three pairs sit inside "Argentinian Primera Division", which is the
+    shared-competition check the note above ``_CONTINENTAL_SPLIT_MERGES``
+    requires before any merge. Same contract as v14/v16/v21/v27/v30/v31:
+    additive, nothing deleted, no-op when a row is absent. Mirrors
+    alembic 0033.
+
+    Deliberately NOT included, for the reasons v30 already recorded:
+    Manchester City FC (21, UCL) / Man City (114, E0) share no competition,
+    and position 5 is blocked by unclassified_competition rather than by
+    thin history, so folding them would repair nothing.
+    """
+    for split_name, canonical_name in _ARGENTINE_ROW_SPLITS:
+        _merge_team_into(connection, split_name, canonical_name)
 
 
 def _migrate_to_v32(connection) -> None:

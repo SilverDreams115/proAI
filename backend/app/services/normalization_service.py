@@ -188,6 +188,49 @@ class NormalizationService:
         "cerro": "ca-cerro",
         "ca cerro": "ca-cerro",
         "club atletico cerro": "ca-cerro",
+        # Serie A short forms (football-data.co.uk I1.csv). The canonical
+        # rows came from the UCL feed under their long names, so without
+        # these pins the CSV ingest would mint a second row per club and
+        # split each side's form — the defect v30/v31 had to fold by hand.
+        # Only these two collide: "Juventus FC" and "AC Milan" already
+        # normalize onto the CSV's "Juventus"/"Milan" because `fc` and `ac`
+        # are team stopwords, and the remaining Italian clubs have no row yet.
+        #
+        # Bare "inter" is pinned to Internazionale, not to Internacional
+        # (Porto Alegre): no feed we ingest emits "Inter" for the Brazilian
+        # club — TSDB Brasileirao writes "Internacional", and "Inter P.A." /
+        # "Internacional Porto Alegre" are pinned separately above.
+        "inter": "internazionale-milano",
+        "atalanta": "atalanta-bc",
+        # Argentine Primera short forms (football-data.co.uk ARG.csv). We
+        # ingest that file because TheSportsDB's free tier caps eventsday.php
+        # at three events per call and drops most of a matchday. Only the
+        # abbreviations below fail to reach their canonical row on their own;
+        # "Boca Juniors", "Atl. Tucuman", "Lanus", "Rosario Central",
+        # "Platense" and "Newells Old Boys" already resolve through alias rows
+        # the earlier TSDB ingests created.
+        #
+        # "Union de Santa Fe" pins to the bare "union" row rather than the
+        # other way round: that is the row the TSDB feed writes and the one
+        # carrying the club's 20 matches. The Chilean Unións (La Calera,
+        # Española) keep their own slugs and are unaffected.
+        "dep riestra": "deportivo-riestra",
+        "estudiantes l p": "estudiantes-la-plata",
+        "gimnasia l p": "gimnasia-y-esgrima-la-plata",
+        "gimnasia mendoza": "gimnasia-y-esgrima-mendoza",
+        "ind rivadavia": "cs-independiente-rivadavia",
+        "san martin s j": "san-martin-san-juan",
+        "sarmiento junin": "sarmiento",
+        "union de santa fe": "union",
+        # Manchester City arrives under two names from two feeds:
+        # football-data.co.uk's E0 writes "Man City" (the row holding the
+        # club's league history), the Champions League feed writes
+        # "Manchester City FC". `fc` is a stopword, so the long form lands on
+        # "manchester-city" and never meets "man-city" — the split v35 folds.
+        # Pinning both spellings keeps the next UCL ingest from reopening it.
+        # Women's sides carry their gender marker and keep separate slugs.
+        "manchester city": "man-city",
+        "manchester city fc": "man-city",
     }
     COMPETITION_ALIAS_SLUGS = {
         "copa de alemania": "german-cup",
@@ -218,6 +261,20 @@ class NormalizationService:
         "primera division uruguay": "uruguayan-primera-division",
         "ligapro serie a": "ecuador-serie-a",
         "ecuador serie a": "ecuador-serie-a",
+        # football-data.co.uk's ARG.csv labels the Argentine top flight by its
+        # sponsor-era name, "Liga Profesional". Both COMPETITION_STOPWORDS
+        # entries in it ("liga") strip away, leaving the slug "profesional",
+        # which would stand up a second competition row beside the
+        # "Argentinian Primera Division" the TheSportsDB ingests built.
+        #
+        # That split costs more than tidiness: the recent-form window is sized
+        # from the competition's own median match gap, competition_profiles
+        # drives the knockout draw calibration, and the published walk-forward
+        # verdict is keyed per competition — all three would see half a league.
+        # "Copa De La Liga Profesional" is a genuinely different tournament and
+        # keeps its own slug.
+        "liga profesional": "argentinian",
+        "argentina primera division": "argentinian",
         # New leagues (Fase 6.6) — without these explicit aliases the
         # generic _normalize() strips "liga"/"la" as stopwords and the
         # resulting slug ("de-expansion-mx", "spanish-la-2") no longer
