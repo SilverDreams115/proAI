@@ -537,3 +537,123 @@ def test_promotion_marks_fabricated_fixtures_and_not_resolved_ones(tmp_path) -> 
             assert _utc(by_position[position].kickoff_at) == fallback_kickoff(cierre, position)
     finally:
         session.close()
+
+
+# --- Operator capture -------------------------------------------------
+# Path used when a concurso is live but LN has not published its guía yet:
+# the scrapers have nothing to observe, so an operator transcribes the
+# programa from an official reseller and the row still carries official
+# lineage.
+
+
+def _capture_kwargs(**overrides):
+    payload = {
+        "draw_code": "807",
+        "week_type": "midweek",
+        "source_url": "https://tulotero.mx/resultados/progol-media-semana",
+        "fixtures": [
+            {"position": 1, "home": "Cincinnati", "away": "Pachuca"},
+            {"position": 2, "home": "Columbus Crew", "away": "Atlas"},
+        ],
+        "closes_at_iso": "2026-08-04T23:00:00+00:00",
+    }
+    payload.update(overrides)
+    return payload
+
+
+def test_operator_capture_lands_validated_with_official_lineage(tmp_path) -> None:
+    """A TuLotero-sourced capture validates on the first write — a human
+    transcribing the programa IS the confirming sighting the two-observation
+    rule exists to obtain."""
+    from app.services.slate_classification_service import is_official_source_url
+    from app.services.slate_proposal_service import SlateProposalService
+
+    session = _make_session(tmp_path)
+    try:
+        proposal = SlateProposalService(session).record_operator_capture(**_capture_kwargs())
+        assert proposal.status == "validated"
+        assert proposal.draw_code == "807"
+        assert proposal.week_type == "midweek"
+        # The whole point: classify_slate must read this as official lineage.
+        assert is_official_source_url(proposal.source_url)
+        stored = json.loads(proposal.payload_json)
+        assert [f["home"] for f in stored["fixtures"]] == ["Cincinnati", "Columbus Crew"]
+        assert stored["capture"]["actor"] == "operator"
+    finally:
+        session.close()
+
+
+def test_operator_capture_refuses_unofficial_source(tmp_path) -> None:
+    """The allow-list is the only thing standing between a hand-typed
+    programa and the dashboard's "official concurso" badge, so a capture
+    citing a non-official host is refused rather than written."""
+    from app.services.slate_proposal_service import SlateProposalService
+
+    session = _make_session(tmp_path)
+    try:
+        service = SlateProposalService(session)
+        with pytest.raises(ValueError, match="official Progol source URL"):
+            service.record_operator_capture(
+                **_capture_kwargs(source_url="https://quinielaposible.com/pronostico-807/")
+            )
+        assert service.list_proposals() == []
+    finally:
+        session.close()
+
+
+def test_operator_capture_rejects_gapped_positions(tmp_path) -> None:
+    """Positions must be a dense 1..N run. A gap means the operator
+    dropped a fixture mid-transcription, which would silently produce a
+    short concurso."""
+    from app.services.slate_proposal_service import SlateProposalService
+
+    session = _make_session(tmp_path)
+    try:
+        service = SlateProposalService(session)
+        with pytest.raises(ValueError, match="positions must be"):
+            service.record_operator_capture(
+                **_capture_kwargs(
+                    fixtures=[
+                        {"position": 1, "home": "Cincinnati", "away": "Pachuca"},
+                        {"position": 3, "home": "Columbus Crew", "away": "Atlas"},
+                    ]
+                )
+            )
+        assert service.list_proposals() == []
+    finally:
+        session.close()
+
+
+def test_operator_capture_is_promotable(tmp_path) -> None:
+    """A capture must go through the same promote path as a PDF proposal —
+    that is what guarantees fixture resolution and placeholder marking
+    behave identically for both lineages."""
+    from app.services.slate_proposal_service import SlateProposalService
+
+    session = _make_session(tmp_path)
+    try:
+        service = SlateProposalService(session)
+        proposal = service.record_operator_capture(**_capture_kwargs())
+        result = service.promote_proposal(proposal)
+        assert result.slate.draw_code == "PGM-807"
+        assert len(result.slate.matches) == 2
+        assert proposal.status == "promoted"
+    finally:
+        session.close()
+
+
+def test_operator_capture_records_transcription_note(tmp_path) -> None:
+    """`source_url` attests lineage, not that the strings were parsed from
+    that page. The note keeps the audit trail from implying a parse that
+    never happened."""
+    from app.services.slate_proposal_service import SlateProposalService
+
+    session = _make_session(tmp_path)
+    try:
+        proposal = SlateProposalService(session).record_operator_capture(
+            **_capture_kwargs(), note="transcrito de quinielaposible, cruzado vs calendario Leagues Cup"
+        )
+        stored = json.loads(proposal.payload_json)
+        assert stored["capture"]["note"].startswith("transcrito de quinielaposible")
+    finally:
+        session.close()

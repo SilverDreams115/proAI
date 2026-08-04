@@ -42,6 +42,18 @@ _DEMO_ONLY_COMPETITIONS = {"international friendlies"}
 _OFFICIAL_SOURCE_HINTS = ("loterianacional.gob.mx", "tulotero.mx")
 
 
+def is_official_source_url(url: str | None) -> bool:
+    """True when `url` points at a host that counts as official Progol lineage.
+
+    Exposed so the proposal-capture path can refuse a non-official URL up
+    front instead of writing a row that would later classify as
+    UNVERIFIED. Both sides must agree on the allow-list, so they share
+    this one function rather than each keeping a copy.
+    """
+    lowered = (url or "").lower()
+    return any(hint in lowered for hint in _OFFICIAL_SOURCE_HINTS)
+
+
 class SlateClassification(str, Enum):
     OFFICIAL_REAL = "official_real"
     OFFICIAL_NO_RESULTS = "official_but_no_results_yet"
@@ -71,9 +83,16 @@ def classify_slate(session: Session, slate: ProgolSlateModel) -> SlateReality:
 
     reasons: list[str] = []
     if proposal is not None:
-        # Genuine LN guía lineage — the slate IS a real concurso even if it
+        # Genuine official lineage — the slate IS a real concurso even if it
         # has no results yet (e.g. just closed, source not published).
-        reasons.append(f"promovida desde guía oficial LN ({proposal.source_name})")
+        # Scraped guías and operator captures both land here, but they are
+        # not equally strong evidence: a capture was typed in by a human
+        # against a page nothing parsed. Say which one it was rather than
+        # calling every lineage a "guía oficial LN".
+        if (proposal.source_name or "").startswith("progol-operator-capture"):
+            reasons.append(f"capturada de fuente oficial por operador ({proposal.source_name})")
+        else:
+            reasons.append(f"promovida desde guía oficial LN ({proposal.source_name})")
         if has_results:
             classification = SlateClassification.OFFICIAL_REAL
         else:
@@ -134,8 +153,7 @@ def _official_proposal(
         )
     ).all()
     for proposal in rows:
-        url = (proposal.source_url or "").lower()
-        if any(hint in url for hint in _OFFICIAL_SOURCE_HINTS):
+        if is_official_source_url(proposal.source_url):
             return proposal
     return None
 

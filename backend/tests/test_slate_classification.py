@@ -137,3 +137,25 @@ def test_weekend_and_ms_classified_independently(db):
     assert classify_slate(db, wk).comparable_with_results is True
     assert classify_slate(db, ms).classification == SlateClassification.SYNTHETIC_DEMO
     assert classify_slate(db, ms).comparable_with_results is False
+
+
+def test_operator_capture_lineage_is_labelled_as_capture(db) -> None:
+    """An operator capture is official lineage but weaker evidence than a
+    parsed guía, so the reason must not claim the slate came from an LN
+    PDF that nothing ever parsed."""
+    from app.services.slate_proposal_service import SlateProposalService
+
+    service = SlateProposalService(db)
+    proposal = service.record_operator_capture(
+        draw_code="807",
+        week_type="midweek",
+        source_url="https://tulotero.mx/resultados/progol-media-semana",
+        fixtures=[{"position": 1, "home": "Cincinnati", "away": "Pachuca"}],
+        closes_at_iso="2026-08-04T23:00:00+00:00",
+    )
+    slate = service.promote_proposal(proposal).slate
+    reality = classify_slate(db, slate)
+
+    assert reality.comparable_with_results is True
+    assert any("capturada de fuente oficial por operador" in r for r in reality.reasons)
+    assert not any("promovida desde guía oficial LN" in r for r in reality.reasons)

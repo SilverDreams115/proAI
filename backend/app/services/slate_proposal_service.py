@@ -189,6 +189,119 @@ class SlateProposalService:
             payload=payload,
         )
 
+    def record_operator_capture(
+        self,
+        *,
+        draw_code: str,
+        week_type: str,
+        source_url: str,
+        fixtures: list[dict[str, Any]],
+        closes_at_iso: str | None,
+        actor: str = "operator",
+        note: str | None = None,
+    ) -> ProgolSlateProposalModel:
+        """Record a concurso an operator transcribed from an official source.
+
+        Exists for the window where the concurso is live and sellable but
+        LN has not published its guía PDF yet — the scrapers have nothing
+        to observe, so without this the dashboard cannot show a real
+        concurso at all. TuLotero is a licensed reseller whose product
+        pages mirror the official programa, which is why it counts as
+        official lineage in `slate_classification_service`.
+
+        Two guards keep this from becoming a way to launder made-up data:
+
+        * `source_url` must be an official host. A capture citing anything
+          else is refused outright rather than written and left to
+          classify as UNVERIFIED later.
+        * The row lands `validated`, not `promoted`. Promotion still goes
+          through `promote_proposal`, so fixture resolution, placeholder
+          marking and the composition hash behave exactly as they do for
+          a PDF-sourced proposal.
+
+        `source_url` attests the concurso's lineage; it is not a claim
+        that the fixture strings were machine-read from that page. When
+        the official page renders the programa as an image (LN's MS page
+        does) the operator reads it elsewhere, so `note` records the
+        actual transcription route and lands in the stored payload —
+        without it the audit trail would imply a parse that never
+        happened.
+
+        Unlike a scraped observation, one capture is enough to validate:
+        the two-sighting rule guards against a flaky parse, and a human
+        typing the programa in is already the deliberate confirmation
+        that rule is trying to obtain.
+        """
+        from app.services.slate_classification_service import is_official_source_url
+
+        if not is_official_source_url(source_url):
+            raise ValueError(
+                "Operator capture requires an official Progol source URL "
+                "(loterianacional.gob.mx or tulotero.mx); "
+                f"got {source_url!r}."
+            )
+        if week_type not in _WEEK_TYPE_PREFIX:
+            raise ValueError(
+                f"Unknown week_type {week_type!r}; expected one of "
+                f"{sorted(_WEEK_TYPE_PREFIX)}."
+            )
+        if not fixtures:
+            raise ValueError("Operator capture has no fixtures.")
+
+        normalized: list[dict[str, Any]] = []
+        for index, fixture in enumerate(fixtures, start=1):
+            home = str(fixture.get("home") or "").strip()
+            away = str(fixture.get("away") or "").strip()
+            if not home or not away:
+                raise ValueError(
+                    f"Fixture at position {fixture.get('position', index)} "
+                    "is missing home or away."
+                )
+            normalized.append(
+                {"position": int(fixture.get("position") or index), "home": home, "away": away}
+            )
+        positions = [f["position"] for f in normalized]
+        if sorted(positions) != list(range(1, len(normalized) + 1)):
+            raise ValueError(f"Fixture positions must be 1..{len(normalized)}; got {positions}.")
+
+        payload = {
+            "title": f"Progol concurso {draw_code} (captura de operador)",
+            "summary": f"Concurso {draw_code}, {len(normalized)} fixtures capturados de {source_url}.",
+            "draw_code": str(draw_code),
+            "week_type": week_type,
+            "registration_closes_at": closes_at_iso,
+            "fixtures": normalized,
+            "capture": {
+                "actor": actor,
+                "captured_at": datetime.now(timezone.utc).isoformat(),
+                "note": note,
+            },
+        }
+        proposal = self._record_observation(
+            draw_code=str(draw_code),
+            source_name=f"progol-operator-capture ({actor})",
+            source_url=source_url,
+            week_type=week_type,
+            closes_at_iso=closes_at_iso,
+            payload=payload,
+        )
+        with managed_transaction(self.session):
+            proposal.status = "validated"
+            self.session.add(proposal)
+            self.session.flush()
+        logger.info(
+            "progol proposal captured by operator",
+            extra={
+                "event": "progol_proposal_operator_capture",
+                "draw_code": draw_code,
+                "week_type": week_type,
+                "source_url": source_url,
+                "fixtures": len(normalized),
+                "actor": actor,
+            },
+        )
+        return proposal
+
     def list_proposals(self, status: str | None = None) -> list[ProgolSlateProposalModel]:
         stmt = select(ProgolSlateProposalModel).order_by(
             ProgolSlateProposalModel.last_seen_at.desc()
