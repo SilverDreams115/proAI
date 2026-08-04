@@ -1,0 +1,18 @@
+{
+  "draw_code": "807",
+  "week_type": "midweek",
+  "source_url": "https://www.loterianacional.gob.mx/ProgolMediaSemana/Quiniela",
+  "capture_note": "LN publica el programa de MS 807 como imagen en su pagina de Quiniela (no parseable por ProgolMsGuiaPdfConnector: el PDF de MS sigue sirviendo el 806, sha sin cambios desde 2026-07-28). Fixtures transcritos de quinielaposible.com/pronostico-de-progol-media-semana-807 y cruzados 9/9 contra el calendario oficial de Leagues Cup 2026 (Wikipedia league phase + comunicados de Columbus Crew y FC Cincinnati). El cruce resolvio dos ambiguedades de nombre: pos 6 es Los Angeles FC (no LA Galaxy) y pos 9 es America vs San Diego FC.",
+  "registration_closes_at": "2026-08-04T23:00:00+00:00",
+  "fixtures": [
+    {"position": 1, "home": "Cincinnati", "away": "Pachuca"},
+    {"position": 2, "home": "Columbus Crew", "away": "Atlas"},
+    {"position": 3, "home": "Charlotte", "away": "Pumas"},
+    {"position": 4, "home": "Tigres", "away": "Real Salt Lake"},
+    {"position": 5, "home": "Monterrey", "away": "Orlando City"},
+    {"position": 6, "home": "Los Angeles FC", "away": "Guadalajara"},
+    {"position": 7, "home": "Cruz Azul", "away": "Philadelphia Union"},
+    {"position": 8, "home": "Austin FC", "away": "Tijuana"},
+    {"position": 9, "home": "America", "away": "San Diego"}
+  ]
+}

@@ -1,0 +1,91 @@
+{
+  "draw_code": "PG-2344",
+  "source": "manual_official",
+  "source_note": "Official sign chain from TuLotero (concurso 2344, 03/08/2026): E V V L E L E E E V E E L L. Scores from TheSportsDB (eventsday/searchevents, key 3) with football-data.org cross-check; derived chain agrees 100% with TuLotero (14/14). LN site had not published 2344 as of 2026-08-03 (latest shown = 2343).",
+  "results": [
+    {
+      "position": 1,
+      "sign": "E",
+      "score": "0-0",
+      "source_note": "Atletico de San Luis vs Tijuana"
+    },
+    {
+      "position": 2,
+      "sign": "V",
+      "score": "1-5",
+      "source_note": "FC Juarez vs Pumas"
+    },
+    {
+      "position": 3,
+      "sign": "V",
+      "score": "0-2",
+      "source_note": "Atlas vs Monterrey"
+    },
+    {
+      "position": 4,
+      "sign": "L",
+      "score": "1-0",
+      "source_note": "Leon vs Pachuca"
+    },
+    {
+      "position": 5,
+      "sign": "E",
+      "score": "1-1",
+      "source_note": "Man City vs FC Internazionale Milano (club friendly; 90' = 1-1, decided on penalties -> E per 90' rule)"
+    },
+    {
+      "position": 6,
+      "sign": "L",
+      "score": "2-1",
+      "source_note": "Man United vs Atletico de Madrid (club friendly)"
+    },
+    {
+      "position": 7,
+      "sign": "E",
+      "score": "0-0",
+      "source_note": "Vasco da Gama vs Fluminense (Copa do Brasil)"
+    },
+    {
+      "position": 8,
+      "sign": "E",
+      "score": "1-1",
+      "source_note": "Mirassol vs Gremio (Copa do Brasil)"
+    },
+    {
+      "position": 9,
+      "sign": "E",
+      "score": "2-2",
+      "source_note": "Newell's Old Boys vs CA Boca Juniors"
+    },
+    {
+      "position": 10,
+      "sign": "V",
+      "score": "0-1",
+      "source_note": "Deportivo Riestra vs Barracas Central"
+    },
+    {
+      "position": 11,
+      "sign": "E",
+      "score": "1-1",
+      "source_note": "Vancouver Whitecaps vs Los Angeles FC - TuLotero official chain confirms E; score 1-1 agrees. (Ambito had published V; discarded as a press transcription error.)"
+    },
+    {
+      "position": 12,
+      "sign": "E",
+      "score": "1-1",
+      "source_note": "St. Louis City SC vs Real Salt Lake"
+    },
+    {
+      "position": 13,
+      "sign": "L",
+      "score": "2-1",
+      "source_note": "Portland Timbers vs Seattle Sounders"
+    },
+    {
+      "position": 14,
+      "sign": "L",
+      "score": "2-1",
+      "source_note": "Aberdeen vs Heart of Midlothian (Scottish Premiership)"
+    }
+  ]
+}

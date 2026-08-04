@@ -113,6 +113,37 @@ curl -X POST -H "X-API-Key: $PROAI_AUTH_API_KEY" http://localhost:8000/api/inges
   -d '{"source_id": "<uuid>"}'
 ```
 
+### TheSportsDB free tier: round-walking under-collects
+
+The free key (`3`) caps **`eventsround.php` and `eventsseason.php` at 5 events
+per call**. A round with more fixtures than that is silently truncated — Liga
+MX rounds hold 9 and MLS rounds 15, so round-walking those leagues loses 44%
+and 67% of every jornada. Verified 2026-08-03: both leagues had only the
+Progol fixtures for the first weekend of August, because nothing else fit
+under the cap.
+
+`eventsday.php` is **not** capped. Sources for high-fixture leagues therefore
+carry `strategy=day&days_back=<N>` in `base_url`, which walks one calendar day
+at a time (2s apart, ~`N` requests per run):
+
+```
+.../json/3?league=4350&seasons=...&strategy=day&days_back=21
+```
+
+Pick `days_back` to cover the refresh interval with margin — 21 days against a
+weekly job. Round-walking is still fine for competitions whose rounds hold ≤5
+fixtures, and is much cheaper: one-off historical loads (`backfill=1`) use it
+because walking years of days would cost thousands of requests.
+
+Every new source needs a scheduler job or it ingests once and freezes:
+
+```bash
+docker compose exec -T postgres psql -U proai -d proai \
+  -c "select s.name, (j.id is not null) as has_job
+      from sources s left join scheduled_ingestion_jobs j on j.source_id = s.id
+      where s.is_active order by has_job, s.name;"
+```
+
 ---
 
 ## Predictions
@@ -226,15 +257,66 @@ The `/run` endpoint returns 409 if readiness fails. Do not force retraining igno
 ## Neural baseline (experimental)
 
 ```bash
-# Introspection only — never in production
+# Read-only introspection
 curl -H "X-API-Key: $PROAI_AUTH_API_KEY" \
   http://localhost:8000/api/training/neural/readiness
 
 curl -X POST -H "X-API-Key: $PROAI_AUTH_API_KEY" \
   http://localhost:8000/api/training/neural/dry-run
+
+# Leave-one-slate-out: one training run per slate, so slower than dry-run.
+# This is the number to judge a candidate by — dry-run's `comparison` block
+# scores the model on the rows it trained on.
+curl -X POST -H "X-API-Key: $PROAI_AUTH_API_KEY" \
+  http://localhost:8000/api/training/neural/loso
+
+# Candidate → promote → rollback. Promotion is gated on out-of-sample
+# evidence for the served (temperature-calibrated) vector; see
+# docs/ml_pipeline.md. `force=true` bypasses the gate — do not use it to
+# push a candidate that failed.
+curl -X POST -H "X-API-Key: $PROAI_AUTH_API_KEY" \
+  http://localhost:8000/api/training/neural/candidates/train
+
+curl -X POST -H "X-API-Key: $PROAI_AUTH_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"candidate_run_id": "<id>"}' \
+  http://localhost:8000/api/training/neural/promote
+
+curl -X POST -H "X-API-Key: $PROAI_AUTH_API_KEY" \
+  http://localhost:8000/api/training/neural/rollback
 ```
 
-The generated artifacts have `is_production=False`. They do not affect active predictions.
+The generated artifacts have `is_production=False`. A promoted artifact runs as
+a read-only shadow on prediction responses (`neural_shadow`): it adds a
+temperature-calibrated view of the same probabilities and, being monotone per
+row, can never change the served pick or touch the ticket optimizer.
+
+---
+
+## Capturing a concurso before LN publishes its guía
+
+When a concurso is live and sellable but the LN guide PDF is not out yet, the
+scrapers have nothing to observe and `/api/slates/visible` will not list the
+slate — it only surfaces official lineage. An operator can transcribe the
+programa from an official source (LN's own page, or TuLotero as a licensed
+reseller) and record it as a validated proposal:
+
+```bash
+# capture.json: draw_code, week_type, source_url, capture_note,
+# registration_closes_at, fixtures[{position, home, away}]
+docker compose exec --workdir /app/backend proai \
+  python -m scripts.capture_operator_proposal --file /tmp/capture.json --dry-run
+
+docker compose exec --workdir /app/backend proai \
+  python -m scripts.capture_operator_proposal --file /tmp/capture.json \
+  --apply --confirm CAPTURE-OPERATOR-PROPOSAL
+```
+
+The source URL must be an official host or the capture is refused. `capture_note`
+records where the fixture strings were actually read from — the URL attests the
+concurso's lineage, not that anything parsed that page. The row lands
+`validated`; promoting it into a slate is still the normal
+`POST /api/slates/proposed/{id}/promote`.
 
 ---
 

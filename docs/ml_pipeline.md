@@ -132,14 +132,62 @@ This dataset feeds the retraining gate.
 
 ## Experimental neural baseline
 
-`NeuralBaselineService` implements a 2-hidden-layer MLP in pure PyTorch, without sklearn. Design characteristics:
+`NeuralBaselineService` implements an MLP in pure numpy, without sklearn or torch. Design characteristics:
 
 - `is_production = False` on every artifact it writes
 - `model_type = "neural_baseline_experimental"`
 - Never writes to the production prediction tables
-- Only accessible via `/api/training/neural/readiness` (GET) and `/api/training/neural/dry-run` (POST)
 
-**When it may enter production:** when there are enough complete jornadas with canonical results to validate that it beats XGBoost in walk-forward. The comparative metrics are in the dry-run endpoint. Today the readiness is `skip` (0 complete jornadas available as of June 2026).
+### What the shadow actually serves
+
+**Not the MLP.** `NeuralShadowService` calls `calibrated_proba`, which applies a
+single fitted temperature to the *baseline's own* probability vector and
+bypasses the MLP head entirely. Because temperature scaling is monotone per
+row it provably cannot change the argmax, so the shadow can never contradict
+the served pick — `top_pick_changed` is False by construction.
+
+This is deliberate. All 13 columns in `FEATURE_NAMES` are derived from the
+served baseline's output (its probabilities, its band, its own ticket pick),
+so the model holds strictly *less* information than the baseline had and
+cannot out-discriminate it. A free softmax head was tried and collapsed to a
+single class under leave-one-slate-out across six feature subsets.
+
+### Endpoints
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /api/training/neural/readiness` | Dataset readiness; never trains |
+| `POST /api/training/neural/dry-run` | Trains, persists nothing |
+| `POST /api/training/neural/loso` | Leave-one-slate-out; one fit per slate |
+| `POST /api/training/neural/candidates/train` | Saves a non-production candidate |
+| `GET /api/training/neural/candidates/latest` | Latest saved candidate |
+| `POST /api/training/neural/promote` | Candidate → active (gated) |
+| `GET /api/training/neural/active` | Currently promoted artifact |
+| `POST /api/training/neural/rollback` | Back to the previous active run |
+
+### Promotion gate
+
+Promotion requires the **learning dataset gate** to pass, then out-of-sample
+evidence for the vector that is actually served (`calibrated_*`, not the MLP):
+
+- Prefers `loso`; falls back to the single-slate `holdout` when there are too
+  few slates; refuses outright when neither exists.
+- Requires a positive mean, a majority of folds helped, zero pick changes, and
+  the worst fold at or above `LOSO_WORST_FOLD_FLOOR` (-0.10).
+- Refuses any artifact whose `feature_set` is `extended` — those columns are
+  not monotone in the baseline, so they could re-rank a served pick.
+
+Unanimity across folds is deliberately **not** required. Temperature scaling
+gains where the served model was overconfident and loses where it was already
+sharp and right; measured over 9 folds the gain tracked the fold's realized
+Brier at r=+0.99, crossing zero around 0.65. Demanding every fold improve
+would reject a healthy dataset for containing a jornada the model got right.
+Both the confidence band (r=+0.13 with the gain) and a per-band temperature
+were tested as pre-match switches: the band carries no signal, and per-band T
+was worse than global (+0.0231 vs +0.0309, 7/9 vs 8/9 folds).
+
+**Status (2026-08-04):** 106 trainable rows over 9 complete slates; readiness
+`ready`. An artifact is promoted and running as read-only shadow.
 
 ---
 
