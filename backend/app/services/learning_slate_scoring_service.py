@@ -27,6 +27,7 @@ from app.services.learning_economics_service import (
     summarize_economic_shadow,
 )
 from app.services.learning_error_attribution_service import classify_position, guardrail_status
+from app.services.prediction_probabilities import visible_probabilities
 from app.services.learning_ticket_strategy_backtest_service import (
     build_ticket_strategy_backtest,
     summarize_ticket_strategy_backtests,
@@ -45,11 +46,19 @@ def _sign(code: str | None) -> str | None:
 
 
 def _decision_probs(pred: PredictionModel) -> dict[str, float]:
-    return {
-        "L": float(pred.home_probability),
-        "E": float(pred.draw_probability),
-        "V": float(pred.away_probability),
-    }
+    """The vector that actually drove the pick.
+
+    Reads through `visible_probabilities` rather than the columns directly.
+    For current rows the two agree exactly, but PG-2337 and PG-2338 were
+    written when the columns still held the RAW model output (100% of their
+    rows match raw; only 29% and 43% match the decision vector), so reading
+    the columns there measures a vector nothing ever decided on. The jornada
+    scorer has always corrected this; the calibration audit did not, which
+    made `decision` look like a distinct — and worse-calibrated — vector than
+    `display` when every stored audit has the two identical.
+    """
+    home, draw, away = visible_probabilities(pred)
+    return {"L": home, "E": draw, "V": away}
 
 
 def _audit_probs(pred: PredictionModel, key: str) -> dict[str, float] | None:

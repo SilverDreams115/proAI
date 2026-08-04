@@ -32,18 +32,42 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(report, indent=2, sort_keys=True, default=str))
         return 0
 
+    def _line(label: str, m: dict) -> None:
+        print(f"  [{label}] n={m['n']} brier={m['brier']} "
+              f"logloss={m['logloss']} ece={m['ece']} "
+              f"top1={m['top1_accuracy']} top2={m['top2_coverage']}")
+
     print(f"calibration audit (trains={report['trains']})")
     print(f"  comparable slates: {report['comparable_slate_count']} "
           f"({', '.join(report['comparable_slates']) or 'none'})")
-    print(f"  samples: {report['sample_count']}")
+    print(f"  scored positions: {report['scored_position_count']} "
+          f"(samples={report['sample_count']} = sum over the 3 vectors)")
     print(f"  note: {report['note']}")
+
+    print("\n  -- all available rows per vector (n differs; NOT comparable across rows) --")
     for vname, grouped in report["vectors"].items():
         overall = grouped["overall"]
         if overall["n"] == 0:
             continue
-        print(f"  [{vname}] n={overall['n']} brier={overall['brier']} "
-              f"logloss={overall['logloss']} ece={overall['ece']} "
-              f"top1={overall['top1_accuracy']} top2={overall['top2_coverage']}")
+        _line(vname, overall)
+
+    matched = report.get("matched_subset") or {}
+    if matched.get("positions"):
+        print(f"\n  -- matched subset: {matched['positions']} positions carrying all 3 vectors --")
+        for vname, m in matched["vectors"].items():
+            if m["n"]:
+                _line(vname, m)
+
+    coverage = report.get("audit_payload_coverage") or {}
+    missing = coverage.get("slates_without_audit") or []
+    partial = coverage.get("slates_partial_audit") or []
+    if missing or partial:
+        print("\n  -- guardrail-trace coverage --")
+        if missing:
+            print(f"  sin audit (raw/display no medibles): {', '.join(missing)}")
+        if partial:
+            print(f"  audit parcial: {', '.join(partial)}")
+        print(f"  {coverage.get('reason', '')}")
     return 0
 
 

@@ -40,6 +40,17 @@ class _Sample:
     final_status: str
     is_friendly: bool
     competition: str
+    # Identifies the scored position so the three vectors can be intersected.
+    # `raw` and `display` only exist inside `sanity_audit_json`, which no
+    # prediction carried before 2026-06-16, while `decision` reads columns
+    # that have always been populated. Comparing their headline numbers
+    # straight across therefore compares different populations — and not
+    # randomly different: the slates missing the payload (PG-2336, PGM-799,
+    # PGM-800) are three of the four best-scoring jornadas, so the subset
+    # `raw` is measured on is worse than average and the comparison flatters
+    # `decision`. `matched_subset` re-runs all three on the rows where all
+    # three exist; that is the only apples-to-apples read.
+    key: str = ""
 
 
 def _metrics(samples: list[tuple[dict[str, float], str]]) -> dict[str, Any]:
@@ -138,11 +149,54 @@ def _collect_samples(session: Session) -> dict[str, list[_Sample]]:
                             final_status=final_status,
                             is_friendly=is_friendly,
                             competition=competition,
+                            key=f"{slate.draw_code}:{mid}",
                         )
                     )
 
     by_vector["__comparable_slates__"] = comparable_slates  # type: ignore[assignment]
     return by_vector
+
+
+def _audit_payload_coverage(session: Session) -> dict[str, Any]:
+    """Per-slate count of predictions carrying the guardrail trace.
+
+    Surfaced because a missing payload is invisible in the headline numbers —
+    it shows up only as a smaller `n`, which reads like a smaller slate rather
+    than an unmeasurable one.
+    """
+    from sqlalchemy import func, select
+
+    from app.models.tables import PredictionModel
+
+    rows = session.execute(
+        select(
+            ProgolSlateModel.draw_code,
+            func.count(PredictionModel.id),
+            func.count(PredictionModel.sanity_audit_json),
+        )
+        .join(PredictionModel, PredictionModel.slate_id == ProgolSlateModel.id)
+        .group_by(ProgolSlateModel.draw_code)
+    ).all()
+    per_slate = {
+        str(code): {"predictions": int(total), "with_audit": int(with_audit)}
+        for code, total, with_audit in rows
+    }
+    missing = sorted(k for k, v in per_slate.items() if v["with_audit"] == 0)
+    partial = sorted(
+        k for k, v in per_slate.items()
+        if 0 < v["with_audit"] < v["predictions"]
+    )
+    return {
+        "per_slate": per_slate,
+        "slates_without_audit": missing,
+        "slates_partial_audit": partial,
+        "reason": (
+            "sanity_audit_json was added on 2026-06-16; predictions written "
+            "before it carry no raw/display vector. It cannot be backfilled — "
+            "re-scoring those matches would record today's model output as "
+            "what was served then."
+        ),
+    }
 
 
 def _grouped(samples: list[_Sample]) -> dict[str, Any]:
@@ -179,12 +233,37 @@ def build_calibration_audit(session: Session) -> dict[str, Any]:
         vname: _grouped(samples) for vname, samples in by_vector.items()
     }
     total = sum(len(s) for s in by_vector.values())
+
+    # Same positions, all three vectors — the comparison the headline numbers
+    # cannot support while their `n` differs.
+    shared = set.intersection(
+        *({s.key for s in samples} for samples in by_vector.values())
+    ) if all(by_vector.values()) else set()
+    matched = {
+        vname: _metrics(
+            [(s.probs, s.actual) for s in samples if s.key in shared]
+        )
+        for vname, samples in by_vector.items()
+    }
+
     return {
         "mode": "learning_calibration_audit",
         "trains": False,
         "comparable_slates": comparable_slates,
         "comparable_slate_count": len(comparable_slates),
+        # Positions counted once, unlike `sample_count`, which sums the three
+        # vectors and so reads ~3x larger than the number of scored matches.
+        "scored_position_count": len({s.key for s in by_vector["decision_probabilities"]}),
         "sample_count": total,
+        "matched_subset": {
+            "positions": len(shared),
+            "vectors": matched,
+            "note": (
+                "all three vectors on the identical positions; the only "
+                "valid raw-vs-decision comparison"
+            ),
+        },
+        "audit_payload_coverage": _audit_payload_coverage(session),
         "vectors": vectors_report,
         "note": (
             "read-only calibration audit; no calibrator is fitted or persisted"
