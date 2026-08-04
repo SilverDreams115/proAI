@@ -25,8 +25,11 @@ from sqlalchemy.orm import Session
 
 from app.schemas.adaptive_dataset import AdaptiveDatasetRow
 from app.services.neural_baseline_service import (
+    EXTENDED_FEATURE_NAMES,
+    EXTENDED_INPUT_DIM,
     FEATURE_NAMES,
     INPUT_DIM,
+    MATCH_FEATURE_KEYS,
     NEURAL_ACTIVE_MODEL_NAME,
     NEURAL_CANDIDATE_MODEL_NAME,
     RESULT_TO_IDX,
@@ -711,3 +714,243 @@ async def test_neural_promote_endpoint_blocks_when_learning_gate_not_ready(clien
     detail = response.json()["detail"]
     assert "learning dataset gate is not ready" in detail["message"]
     assert detail["minimum_missing"] == ["need comparable slates"]
+
+
+# ---------------------------------------------------------------------------
+# Extended feature set, leave-one-slate-out, and the out-of-sample gate
+# ---------------------------------------------------------------------------
+
+def _rows_across_slates(n_slates: int = 4, per_slate: int = 6) -> list[AdaptiveDatasetRow]:
+    """Rows spread over several slates — LOSO needs >1 slate to fold on."""
+    results = ["1", "X", "2"]
+    rows: list[AdaptiveDatasetRow] = []
+    for s in range(n_slates):
+        for i in range(per_slate):
+            row = _make_row(
+                actual_result=results[(s + i) % 3],
+                prob_home=0.5 + 0.05 * (i % 3),
+                prob_draw=0.25,
+                prob_away=max(0.05, 0.25 - 0.05 * (i % 3)),
+            )
+            row.slate_id = f"slate-{s}"
+            row.draw_code = f"PG-{2300 + s}"
+            rows.append(row)
+    return rows
+
+
+def _match_feature_payload() -> dict:
+    return {key: 1.0 for key in MATCH_FEATURE_KEYS}
+
+
+class TestExtendedFeatureSet:
+    def test_extended_build_widens_the_matrix(self):
+        rows = _rows_across_slates(2, 3)
+        features = {r.match_id: _match_feature_payload() for r in rows}
+        X, y, names = NeuralDatasetBuilder(features).build(rows, extended=True)
+
+        assert X.shape[1] == EXTENDED_INPUT_DIM
+        assert names == EXTENDED_FEATURE_NAMES
+        assert len(y) == len(rows)
+        # The baseline columns must stay first and untouched: _baseline_columns
+        # slices [:, :3] and the shadow's monotonicity depends on it.
+        assert names[:INPUT_DIM] == FEATURE_NAMES
+
+    def test_extended_drops_rows_without_a_snapshot(self):
+        """Imputing zeros would teach the model that missing data looks like
+        an average team — the exact inference the bands exist to block."""
+        rows = _rows_across_slates(2, 3)
+        features = {rows[0].match_id: _match_feature_payload()}
+        X, y, _ = NeuralDatasetBuilder(features).build(rows, extended=True)
+
+        assert len(X) == 1
+        assert len(y) == 1
+
+    def test_extended_raises_when_no_row_has_features(self):
+        rows = _rows_across_slates(2, 3)
+        with pytest.raises(ValueError, match="no stored feature snapshot"):
+            NeuralDatasetBuilder({}).build(rows, extended=True)
+
+    def test_readiness_reports_extended_shape_and_usable_rows(self):
+        rows = _rows_across_slates(2, 3)
+        features = {rows[0].match_id: _match_feature_payload()}
+        cfg = NeuralBaselineConfig(feature_set="extended", min_rows=1)
+        readiness = NeuralBaselineService(rows, cfg, features).readiness()
+
+        assert readiness["feature_set"] == "extended"
+        assert readiness["architecture"]["input_dim"] == EXTENDED_INPUT_DIM
+        # trainable_rows counts all rows; only one can actually be encoded.
+        assert readiness["trainable_rows"] == len(rows)
+        assert readiness["rows_with_match_features"] == 1
+
+
+class TestLeaveOneSlateOut:
+    def test_loso_folds_over_every_slate(self):
+        rows = _rows_across_slates(4, 6)
+        cfg = NeuralBaselineConfig(epochs=20, min_rows=1)
+        result = NeuralBaselineService(rows, cfg).walk_forward_loso()
+
+        assert result["status"] == "ok"
+        assert result["folds"] == 4
+        assert {f["draw_code"] for f in result["per_fold"]} == {
+            "PG-2300", "PG-2301", "PG-2302", "PG-2303"
+        }
+        assert result["total_holdout_rows"] == len(rows)
+        assert result["folds_helped"] + result["folds_hurt"] == 4
+
+    def test_loso_calibration_never_changes_a_pick(self):
+        """Temperature scaling is monotone per row, so no fold may re-rank."""
+        rows = _rows_across_slates(3, 6)
+        cfg = NeuralBaselineConfig(epochs=20, min_rows=1)
+        result = NeuralBaselineService(rows, cfg).walk_forward_loso()
+
+        assert result["total_pick_changes"] == 0
+        assert result["calibration_preserves_picks"] is True
+
+    def test_loso_needs_more_than_one_slate(self):
+        cfg = NeuralBaselineConfig(epochs=20, min_rows=1)
+        result = NeuralBaselineService(_synthetic_rows(9), cfg).walk_forward_loso()
+
+        assert result["status"] == "not_enough_slates"
+
+
+class TestPromotionGate:
+    """The gate this replaced read in-sample `comparison` and judged the MLP
+    head the shadow never serves. It passed 4/4 stored candidates, one of
+    which was -0.0259 Brier out-of-sample."""
+
+    gate = staticmethod(NeuralBaselineRegistryService._promotion_gate)
+
+    def test_loso_clean_sweep_passes(self):
+        result = self.gate({
+            "loso": {
+                "status": "ok", "folds": 5, "folds_helped": 5,
+                "calibration_preserves_picks": True,
+                "calibrated_brier_delta_mean": 0.04,
+                "calibrated_brier_delta_min": 0.01,
+                "total_pick_changes": 0,
+            },
+        })
+        assert result["passed"] is True
+        assert result["evidence"] == "loso"
+
+    def test_one_shallow_losing_fold_still_passes(self):
+        """Unanimity was measured and rejected: temperature loses wherever the
+        served model was already sharp and right, and nothing pre-match
+        separates that case. A single fold above the floor must not veto."""
+        result = self.gate({
+            "loso": {
+                "status": "ok", "folds": 9, "folds_helped": 8,
+                "calibration_helps_everywhere": False,
+                "calibration_preserves_picks": True,
+                "calibrated_brier_delta_mean": 0.0309,
+                "calibrated_brier_delta_min": -0.0793,
+                "total_pick_changes": 0,
+            },
+        })
+        assert result["passed"] is True
+        assert result["reason"] == "ok"
+
+    def test_fold_below_the_floor_blocks(self):
+        """-0.10 is the line: past it a fold is not paying the method's known
+        cost, it is behaving differently."""
+        result = self.gate({
+            "loso": {
+                "status": "ok", "folds": 9, "folds_helped": 8,
+                "calibration_preserves_picks": True,
+                "calibrated_brier_delta_mean": 0.0309,
+                "calibrated_brier_delta_min": -0.25,
+                "total_pick_changes": 0,
+            },
+        })
+        assert result["passed"] is False
+        assert result["reason"] == "worst_fold_below_floor"
+
+    def test_losing_in_most_folds_blocks(self):
+        """A positive mean carried by one big fold while the majority lose."""
+        result = self.gate({
+            "loso": {
+                "status": "ok", "folds": 9, "folds_helped": 4,
+                "calibration_preserves_picks": True,
+                "calibrated_brier_delta_mean": 0.01,
+                "calibrated_brier_delta_min": -0.02,
+                "total_pick_changes": 0,
+            },
+        })
+        assert result["passed"] is False
+        assert result["reason"] == "calibration_hurts_in_most_folds"
+
+    def test_in_sample_comparison_alone_cannot_promote(self):
+        """A candidate carrying only the flattering in-sample number — the
+        exact shape that let d5bf903d through — has no out-of-sample
+        evidence and must be refused."""
+        result = self.gate({
+            "comparison": {"neural_better_brier": True, "brier_delta": 0.0753},
+        })
+        assert result["passed"] is False
+        assert result["reason"] == "no_out_of_sample_evidence"
+
+    def test_falls_back_to_single_holdout_when_loso_unavailable(self):
+        result = self.gate({
+            "loso": {"status": "not_enough_slates"},
+            "holdout": {
+                "status": "ok",
+                "holdout_slates": ["PG-2344"],
+                "calibrated_brier_delta": 0.0982,
+                "calibration_preserves_picks": True,
+            },
+        })
+        assert result["passed"] is True
+        assert result["evidence"] == "holdout"
+
+    def test_holdout_that_hurts_blocks(self):
+        result = self.gate({
+            "holdout": {
+                "status": "ok",
+                "holdout_slates": ["PGM-806"],
+                "calibrated_brier_delta": -0.0259,
+                "calibration_preserves_picks": True,
+            },
+        })
+        assert result["passed"] is False
+        assert result["reason"] == "calibration_does_not_improve_brier"
+
+    def test_extended_feature_set_is_never_promotable(self):
+        """Extended features break monotonicity in the baseline vector, so an
+        extended artifact could re-rank a served pick."""
+        result = self.gate({
+            "feature_set": "extended",
+            "loso": {
+                "status": "ok", "folds": 5, "folds_helped": 5,
+                "calibration_preserves_picks": True,
+                "calibrated_brier_delta_mean": 0.9,
+                "calibrated_brier_delta_min": 0.5,
+                "total_pick_changes": 0,
+            },
+        })
+        assert result["passed"] is False
+        assert result["reason"] == "extended_feature_set_not_promotable"
+
+
+class TestTemperatureGrid:
+    def test_saturation_is_reported(self):
+        from app.services.neural_baseline_service import (
+            _TEMPERATURE_MAX, temperature_saturated,
+        )
+
+        assert temperature_saturated(_TEMPERATURE_MAX) is True
+        assert temperature_saturated(6.0) is False
+
+    def test_grid_reaches_past_the_old_ceiling(self):
+        """6.0 was reachable in practice (PGM-799 landed exactly there), so a
+        fit pinned at the edge was under-flattening rather than optimal."""
+        from app.services.neural_baseline_service import _TEMPERATURE_MAX
+
+        assert _TEMPERATURE_MAX > 6.0
+
+    def test_overconfident_probs_fit_a_temperature_above_one(self):
+        """Sanity check the direction: a vector asserting 0.9 on outcomes that
+        land a third of the time must be flattened, never sharpened."""
+        probs = np.array([[0.9, 0.05, 0.05]] * 9, dtype=np.float64)
+        y = np.array([0, 1, 2] * 3, dtype=np.int64)
+
+        assert fit_temperature(probs, y) > 1.0

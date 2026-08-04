@@ -1,7 +1,7 @@
 """Experimental neural baseline endpoints — NOT production prediction routes."""
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -26,6 +26,11 @@ class NeuralConfigRequest(BaseModel):
     batch_size: int = Field(default=32, ge=1)
     min_rows: int = Field(default=20, ge=1)
     random_seed: int = Field(default=42)
+    # "extended" adds match-level features (form, goals, rest, h2h) to the
+    # 13 baseline-derived columns. Offline experiment only — the promotion
+    # gate refuses an extended artifact because it is not monotone in the
+    # baseline and could therefore re-rank a served pick.
+    feature_set: Literal["baseline", "extended"] = "baseline"
 
 
 class NeuralPromoteRequest(BaseModel):
@@ -33,10 +38,40 @@ class NeuralPromoteRequest(BaseModel):
     force: bool = False
 
 
+def _match_features(session: Session, cfg: NeuralBaselineConfig) -> dict[str, dict[str, Any]]:
+    """match_id -> stored feature payload, loaded only for the extended set.
+
+    Reads the persisted `match_feature_snapshots` rather than recomputing:
+    the snapshot is what the baseline actually saw for that match at
+    prediction time, so training on it keeps the experiment aligned with
+    production instead of with today's recomputed view of an old fixture.
+    """
+    if not cfg.uses_extended_features:
+        return {}
+    import json
+
+    from app.models.tables import MatchFeatureSnapshotModel
+    from sqlalchemy import select
+
+    out: dict[str, dict[str, Any]] = {}
+    for snap in session.scalars(select(MatchFeatureSnapshotModel)):
+        payload = snap.payload_json
+        if isinstance(payload, str):
+            try:
+                payload = json.loads(payload)
+            except json.JSONDecodeError:
+                continue
+        if isinstance(payload, dict):
+            out[snap.match_id] = payload
+    return out
+
+
 def _build_service(config_req: NeuralConfigRequest | None, session: Session) -> NeuralBaselineService:
     cfg = NeuralBaselineConfig(**(config_req.model_dump() if config_req else {}))
     rows = AdaptiveRetrainingService(session)._build_all_rows()
-    return NeuralBaselineService(rows=rows, config=cfg)
+    return NeuralBaselineService(
+        rows=rows, config=cfg, match_features=_match_features(session, cfg)
+    )
 
 
 def _build_registry(
@@ -51,6 +86,7 @@ def _build_registry(
         rows=rows,
         training_repository=TrainingRepository(session),
         config=cfg,
+        match_features=_match_features(session, cfg),
     )
 
 
@@ -80,6 +116,20 @@ def post_neural_dry_run(
     """
     svc = _build_service(config, session)
     return svc.dry_run_train()
+
+
+@router.post("/loso", response_model=dict[str, Any])
+def post_neural_loso(
+    config: NeuralConfigRequest | None = None,
+    session: Session = Depends(get_db_session),
+) -> dict[str, Any]:
+    """Leave-one-slate-out evaluation. Trains per fold, persists nothing.
+
+    One training run per slate, so it is slower than /dry-run — that is the
+    price of a verdict that does not hinge on which single jornada happened
+    to land in the holdout.
+    """
+    return _build_service(config, session).walk_forward_loso()
 
 
 @router.post("/candidates/train", response_model=dict[str, Any])

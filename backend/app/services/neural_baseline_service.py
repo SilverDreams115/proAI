@@ -79,6 +79,45 @@ FEATURE_NAMES: list[str] = [
 ]
 INPUT_DIM = len(FEATURE_NAMES)
 
+# Match-level features read off the persisted `match_feature_snapshots`.
+# Unlike FEATURE_NAMES — every one of which is derived from the served
+# baseline's own output — these carry information the baseline consumed but
+# did not expose, so a model given them CAN in principle out-discriminate it
+# rather than merely recalibrate. Two costs come with that: the shadow can no
+# longer be a monotone transform of the baseline vector (it could re-rank, so
+# it must stay offline until it earns promotion), and rows without a stored
+# snapshot drop out of the dataset entirely.
+MATCH_FEATURE_KEYS: list[str] = [
+    "home_recent_points", "away_recent_points",
+    "home_recent_goals_for", "away_recent_goals_for",
+    "home_recent_goals_against", "away_recent_goals_against",
+    "home_recent_goal_balance", "away_recent_goal_balance",
+    "home_recent_matches", "away_recent_matches",
+    "home_days_rest", "away_days_rest",
+    "head_to_head_home_points", "head_to_head_away_points",
+    "head_to_head_draws", "head_to_head_results_count",
+    "head_to_head_goal_balance",
+    "home_availability_impact", "away_availability_impact",
+    "home_injury_signals", "away_injury_signals",
+]
+EXTENDED_FEATURE_NAMES: list[str] = [*FEATURE_NAMES, *MATCH_FEATURE_KEYS]
+EXTENDED_INPUT_DIM = len(EXTENDED_FEATURE_NAMES)
+
+# Scale divisors keeping every match feature roughly in [0, 3]. The MLP has no
+# batch-norm and a tiny dataset, so an unscaled `days_rest` of 57 would swamp a
+# probability of 0.4 in the first layer.
+_MATCH_FEATURE_SCALE: dict[str, float] = {
+    "home_recent_points": 9.0, "away_recent_points": 9.0,
+    "home_recent_goals_for": 6.0, "away_recent_goals_for": 6.0,
+    "home_recent_goals_against": 6.0, "away_recent_goals_against": 6.0,
+    "home_recent_goal_balance": 6.0, "away_recent_goal_balance": 6.0,
+    "home_recent_matches": 3.0, "away_recent_matches": 3.0,
+    "home_days_rest": 14.0, "away_days_rest": 14.0,
+    "head_to_head_home_points": 6.0, "head_to_head_away_points": 6.0,
+    "head_to_head_draws": 3.0, "head_to_head_results_count": 3.0,
+    "head_to_head_goal_balance": 6.0,
+}
+
 RESULT_TO_IDX: dict[str, int] = {"1": 0, "X": 1, "2": 2}
 IDX_TO_RESULT: dict[int, str] = {0: "1", 1: "X", 2: "2"}
 
@@ -102,8 +141,23 @@ _WEEK_TYPES = ("weekend", "midweek")
 # +0.043 in every fold (0.6907 -> 0.6476) with accuracy unchanged and zero
 # pick changes. T > 1 in every fold, i.e. the served model is systematically
 # overconfident.
-_TEMPERATURE_GRID = np.arange(0.5, 6.01, 0.01)
+#
+# The ceiling is 12 rather than 6 because 6 was reachable: fitting per slate,
+# PGM-799 landed exactly on 6.00 and three of the four per-band fits did too.
+# A boundary hit is not an optimum, it is the grid saturating, and it silently
+# under-flattens whichever fold needs the most. `fit_temperature` reports
+# saturation so a run that still pins the edge is visible instead of quietly
+# wrong.
+_TEMPERATURE_GRID = np.arange(0.5, 12.01, 0.01)
+_TEMPERATURE_MAX = float(_TEMPERATURE_GRID[-1])
 _PROB_EPS = 1e-12
+
+# A single fold may lose at most this much Brier for the candidate to still
+# promote. Set from the measured floor: the worst of 9 folds (PG-2337) lost
+# 0.0793 while the mean gained 0.0309, and that loss is a property of the
+# method, not a defect in the data — see `_promotion_gate`. Anything much
+# worse than that is a fold behaving differently, and should block.
+LOSO_WORST_FOLD_FLOOR = -0.10
 
 
 def apply_temperature(probs: np.ndarray, temperature: float) -> np.ndarray:
@@ -150,6 +204,18 @@ def fit_temperature(probs: np.ndarray, y: np.ndarray) -> float:
         if ce < best_ce:
             best_ce, best_t = ce, float(candidate)
     return round(best_t, 4)
+
+
+def temperature_saturated(temperature: float) -> bool:
+    """True when a fitted temperature sits on the grid's upper edge.
+
+    A saturated fit means the optimum is outside the search range, so the
+    reported value is a boundary artefact rather than the best flattening
+    available. Callers surface it instead of treating the number as final.
+    """
+    return float(temperature) >= _TEMPERATURE_MAX - 1e-9
+
+
 NEURAL_CANDIDATE_MODEL_NAME = "neural_baseline_candidate"
 NEURAL_ACTIVE_MODEL_NAME = "neural_baseline_active"
 
@@ -182,8 +248,17 @@ class NeuralBaselineConfig:
     # Number of most-recent slates held out for the walk-forward,
     # out-of-sample evaluation (grouped by slate to avoid same-slate leakage).
     holdout_slates: int = 1
+    # "baseline" = the 13 features derived from the served prediction.
+    # "extended" adds MATCH_FEATURE_KEYS. Extended is an offline experiment
+    # only: it breaks the monotone-in-the-baseline property the shadow relies
+    # on, so it must never be what a promoted artifact serves.
+    feature_set: str = "baseline"
     model_type: str = "neural_baseline_experimental"
     is_production: bool = False
+
+    @property
+    def uses_extended_features(self) -> bool:
+        return self.feature_set == "extended"
 
 
 # ---------------------------------------------------------------------------
@@ -199,11 +274,23 @@ class NeuralDatasetBuilder:
       (prediction was never made — slate_id=None case)
     """
 
+    def __init__(self, match_features: dict[str, dict[str, Any]] | None = None) -> None:
+        # match_id -> persisted feature payload. Only consulted for the
+        # extended feature set; None keeps the builder's original behaviour.
+        self.match_features = match_features or {}
+
     def build(
         self,
         rows: list[AdaptiveDatasetRow],
+        *,
+        extended: bool = False,
     ) -> tuple[np.ndarray, np.ndarray, list[str]]:
         """Return (X, y, feature_names).
+
+        With ``extended=True`` a row is dropped when it has no stored feature
+        snapshot: imputing zeros there would teach the model that "no data"
+        looks like "average team", which is exactly the inference the
+        confidence bands exist to prevent.
 
         Raises ``ValueError`` if no valid rows remain after filtering.
         """
@@ -217,16 +304,35 @@ class NeuralDatasetBuilder:
             if row.prob_home is None and row.prob_draw is None and row.prob_away is None:
                 continue
 
-            X_list.append(self._encode(row))
+            if extended:
+                payload = self.match_features.get(row.match_id)
+                if not payload:
+                    continue
+                X_list.append([*self._encode(row), *self._encode_match(payload)])
+            else:
+                X_list.append(self._encode(row))
             y_list.append(label)
 
         if not X_list:
             raise ValueError(
                 "No valid rows to encode. "
-                "All rows lacked a valid actual_result or had no prediction probabilities."
+                "All rows lacked a valid actual_result, had no prediction "
+                "probabilities, or (extended) had no stored feature snapshot."
             )
 
-        return np.array(X_list, dtype=np.float32), np.array(y_list, dtype=np.int64), FEATURE_NAMES
+        names = EXTENDED_FEATURE_NAMES if extended else FEATURE_NAMES
+        return np.array(X_list, dtype=np.float32), np.array(y_list, dtype=np.int64), names
+
+    @staticmethod
+    def _encode_match(payload: dict[str, Any]) -> list[float]:
+        out: list[float] = []
+        for key in MATCH_FEATURE_KEYS:
+            try:
+                value = float(payload.get(key) or 0.0)
+            except (TypeError, ValueError):
+                value = 0.0
+            out.append(value / _MATCH_FEATURE_SCALE.get(key, 1.0))
+        return out
 
     @staticmethod
     def _encode(row: AdaptiveDatasetRow) -> list[float]:
@@ -653,9 +759,23 @@ class NeuralBaselineService:
         self,
         rows: list[AdaptiveDatasetRow],
         config: NeuralBaselineConfig | None = None,
+        match_features: dict[str, dict[str, Any]] | None = None,
     ) -> None:
         self.rows = rows
         self.config = config or NeuralBaselineConfig()
+        self.match_features = match_features or {}
+
+    @property
+    def _extended(self) -> bool:
+        return self.config.uses_extended_features
+
+    def _builder(self) -> NeuralDatasetBuilder:
+        return NeuralDatasetBuilder(self.match_features)
+
+    def _build_xy(
+        self, rows: list[AdaptiveDatasetRow]
+    ) -> tuple[np.ndarray, np.ndarray, list[str]]:
+        return self._builder().build(rows, extended=self._extended)
 
     # --- public interface -------------------------------------------------
 
@@ -670,12 +790,21 @@ class NeuralBaselineService:
             "rows_needed": max(0, self.config.min_rows - n),
             "model_type": self.config.model_type,
             "is_production": self.config.is_production,
-            "feature_names": FEATURE_NAMES,
+            "feature_set": self.config.feature_set,
+            "feature_names": EXTENDED_FEATURE_NAMES if self._extended else FEATURE_NAMES,
             "architecture": {
-                "input_dim": INPUT_DIM,
+                "input_dim": EXTENDED_INPUT_DIM if self._extended else INPUT_DIM,
                 "hidden_dims": self.config.hidden_dims,
                 "output_dim": 3,
             },
+            # Extended drops rows without a stored feature snapshot, so the
+            # usable count is not len(rows) — surface it before anyone reads
+            # trainable_rows as the size the experiment will actually train on.
+            "rows_with_match_features": (
+                sum(1 for r in self.rows if self.match_features.get(r.match_id))
+                if self._extended
+                else None
+            ),
         }
 
     def dry_run_train(self) -> dict[str, Any]:
@@ -688,7 +817,7 @@ class NeuralBaselineService:
                 "reason": f"Need {self.config.min_rows} rows, have {n}.",
             }
         try:
-            X, y, _ = NeuralDatasetBuilder().build(self.rows)
+            X, y, _ = self._build_xy(self.rows)
         except ValueError as exc:
             return {"status": "not_enough_data", "trained": False, "reason": str(exc)}
 
@@ -719,7 +848,7 @@ class NeuralBaselineService:
         if n < self.config.min_rows:
             return {**self.readiness(), "trained": False}
         try:
-            X, y, _ = NeuralDatasetBuilder().build(self.rows)
+            X, y, _ = self._build_xy(self.rows)
         except ValueError as exc:
             return {"status": "not_enough_data", "trained": False, "reason": str(exc)}
 
@@ -755,7 +884,7 @@ class NeuralBaselineService:
         if n == 0:
             return {"status": "not_enough_data", "trainable_rows": 0}
         try:
-            X, y, _ = NeuralDatasetBuilder().build(self.rows)
+            X, y, _ = self._build_xy(self.rows)
         except ValueError as exc:
             return {"status": "not_enough_data", "reason": str(exc)}
 
@@ -784,7 +913,7 @@ class NeuralBaselineService:
         if n == 0:
             return {"status": "not_enough_data", "trainable_rows": 0}
         try:
-            X, y, _ = NeuralDatasetBuilder().build(self.rows)
+            X, y, _ = self._build_xy(self.rows)
         except ValueError as exc:
             return {"status": "not_enough_data", "reason": str(exc)}
 
@@ -875,8 +1004,8 @@ class NeuralBaselineService:
             }
         train_rows, holdout_rows = split
         try:
-            X_tr, y_tr, _ = NeuralDatasetBuilder().build(train_rows)
-            X_ho, y_ho, _ = NeuralDatasetBuilder().build(holdout_rows)
+            X_tr, y_tr, _ = self._build_xy(train_rows)
+            X_ho, y_ho, _ = self._build_xy(holdout_rows)
         except ValueError as exc:
             return {"status": "not_enough_data", "reason": str(exc)}
         if len(X_tr) < 1 or len(X_ho) < 1:
@@ -943,6 +1072,94 @@ class NeuralBaselineService:
             result["calibration_preserves_picks"] = calibrated["pick_changes_vs_baseline"] == 0
         return result
 
+    def walk_forward_loso(self) -> dict[str, Any]:
+        """Leave-one-slate-out over every slate, not just the newest one.
+
+        ``walk_forward_eval`` holds out a single slate, which on this dataset
+        means 9-14 rows — one lucky or unlucky jornada swings the verdict
+        entirely. Measured across the stored candidates, the same model family
+        scored +0.1122 on one holdout slate and -0.0259 on another. Rotating
+        the fold over all slates and aggregating turns that coin flip into a
+        distribution, at the cost of one training run per slate.
+
+        ``folds_helped`` matters more than the mean: a calibration that helps
+        in 9 of 10 folds is trustworthy in a way that one big average win
+        carried by a single fold is not.
+        """
+        by_slate: dict[str, list[AdaptiveDatasetRow]] = {}
+        for row in self.rows:
+            by_slate.setdefault(row.slate_id, []).append(row)
+        if len(by_slate) < 2:
+            return {
+                "status": "not_enough_slates",
+                "reason": "Need at least 2 distinct slates for leave-one-slate-out.",
+            }
+
+        folds: list[dict[str, Any]] = []
+        for slate_id, holdout_rows in by_slate.items():
+            train_rows = [r for r in self.rows if r.slate_id != slate_id]
+            if not train_rows:
+                continue
+            try:
+                X_tr, y_tr, _ = self._build_xy(train_rows)
+                X_ho, y_ho, _ = self._build_xy(holdout_rows)
+            except ValueError:
+                continue
+            if len(X_tr) < 1 or len(X_ho) < 1:
+                continue
+
+            model = NeuralBaselineModel(self.config).fit(X_tr, y_tr, X_val=X_ho, y_val=y_ho)
+            neural = model.evaluate(X_ho, y_ho)
+            calibrated_probs = model.calibrated_proba(X_ho)
+            base_probs = _baseline_columns(X_ho).astype(np.float32)
+            base_brier = float(_NumpyMLP._brier_score(base_probs, y_ho))
+            cal_brier = float(_NumpyMLP._brier_score(calibrated_probs.astype(np.float32), y_ho))
+            folds.append(
+                {
+                    "draw_code": sorted({r.draw_code for r in holdout_rows})[0],
+                    "holdout_rows": int(len(X_ho)),
+                    "temperature": model.temperature,
+                    "temperature_saturated": temperature_saturated(model.temperature),
+                    "baseline_brier": round(base_brier, 4),
+                    "calibrated_brier": round(cal_brier, 4),
+                    "calibrated_brier_delta": round(base_brier - cal_brier, 4),
+                    "neural_brier_delta": round(base_brier - neural["brier_score"], 4),
+                    "pick_changes": int(
+                        np.sum(calibrated_probs.argmax(axis=1) != base_probs.argmax(axis=1))
+                    ),
+                }
+            )
+
+        if not folds:
+            return {"status": "not_enough_data", "reason": "no usable folds"}
+
+        cal_deltas = [f["calibrated_brier_delta"] for f in folds]
+        neural_deltas = [f["neural_brier_delta"] for f in folds]
+        temps = [f["temperature"] for f in folds]
+        helped = sum(1 for d in cal_deltas if d > 0)
+        return {
+            "status": "ok",
+            "folds": len(folds),
+            "total_holdout_rows": sum(f["holdout_rows"] for f in folds),
+            "calibrated_brier_delta_mean": round(float(np.mean(cal_deltas)), 4),
+            "calibrated_brier_delta_min": round(float(np.min(cal_deltas)), 4),
+            "calibrated_brier_delta_max": round(float(np.max(cal_deltas)), 4),
+            "neural_brier_delta_mean": round(float(np.mean(neural_deltas)), 4),
+            "folds_helped": helped,
+            "folds_hurt": len(folds) - helped,
+            "calibration_helps_everywhere": helped == len(folds),
+            "total_pick_changes": sum(f["pick_changes"] for f in folds),
+            "calibration_preserves_picks": all(f["pick_changes"] == 0 for f in folds),
+            "temperature_mean": round(float(np.mean(temps)), 3),
+            "temperature_min": round(float(np.min(temps)), 3),
+            "temperature_max": round(float(np.max(temps)), 3),
+            "folds_temperature_saturated": sum(
+                1 for f in folds if f["temperature_saturated"]
+            ),
+            "feature_set": self.config.feature_set,
+            "per_fold": folds,
+        }
+
 
 class NeuralBaselineRegistryService:
     """Persist and promote neural baseline artifacts safely.
@@ -958,19 +1175,22 @@ class NeuralBaselineRegistryService:
         rows: list[AdaptiveDatasetRow],
         training_repository: TrainingRepository,
         config: NeuralBaselineConfig | None = None,
+        match_features: dict[str, dict[str, Any]] | None = None,
     ) -> None:
         self.rows = rows
         self.training_repository = training_repository
         self.config = config or NeuralBaselineConfig()
+        self.match_features = match_features or {}
 
     def train_candidate(self) -> dict[str, Any]:
-        svc = NeuralBaselineService(self.rows, self.config)
+        svc = NeuralBaselineService(self.rows, self.config, self.match_features)
         result = svc.train_offline()
         if not result.get("trained"):
             return {**result, "saved": False}
 
         artifact = result["artifact"]
         comparison = svc.compare_against_baseline(artifact)
+        loso = svc.walk_forward_loso()
         artifact.update(
             {
                 "model_name": NEURAL_CANDIDATE_MODEL_NAME,
@@ -980,6 +1200,8 @@ class NeuralBaselineRegistryService:
                 "metrics": result["metrics"],
                 "comparison": comparison,
                 "holdout": result.get("holdout"),
+                "loso": loso,
+                "feature_set": self.config.feature_set,
                 "dataset": self._dataset_summary(),
             }
         )
@@ -1000,6 +1222,7 @@ class NeuralBaselineRegistryService:
             "metrics": result["metrics"],
             "comparison": comparison,
             "holdout": result.get("holdout"),
+            "loso": loso,
         }
 
     def latest_candidate(self, *, include_artifact: bool = False) -> dict[str, Any]:
@@ -1018,6 +1241,95 @@ class NeuralBaselineRegistryService:
             include_artifact=include_artifact,
         )
 
+    @staticmethod
+    def _promotion_gate(artifact: dict[str, Any]) -> dict[str, Any]:
+        """Decide promotion on out-of-sample evidence for what is SERVED.
+
+        The gate this replaced read ``comparison``, which scores the model on
+        the same rows it trained on, and judged the MLP head — which the
+        shadow never serves. Both flaws pointed the same way: across the four
+        stored candidates the in-sample check passed 4/4, and one of those
+        (92 rows) was worse than the baseline out-of-sample, -0.0259 Brier. A
+        check that never fails is not a gate.
+
+        So: prefer leave-one-slate-out, fall back to the single-slate holdout
+        when there are too few slates, and measure ``calibrated_*`` — the
+        temperature-scaled vector the shadow actually shows. An extended
+        feature set is refused outright: it is not monotone in the baseline,
+        so it could re-rank picks, and it has not earned that right.
+
+        The LOSO check asks for a positive mean and a floor on the worst
+        fold, NOT for every fold to improve. Requiring unanimity looked
+        prudent until it was measured: temperature scaling flattens
+        confidence, so it gains where the served model was overconfident and
+        loses where it was already sharp and right, and nothing available
+        before kickoff separates the two. Across the 9 folds the gain tracked
+        the fold's realized Brier at r=+0.99, crossing zero at ~0.65 — on the
+        one fold below that line (PG-2337, Brier 0.564) calibration correctly
+        lost 0.0793. Unanimity would therefore reject a healthy dataset for
+        containing a jornada the model got right. Both the band label
+        (r=+0.13 with the gain) and a per-band temperature were tried as
+        pre-match switches; the band carries no signal and per-band T was
+        worse than global (+0.0231 vs +0.0309, 7/9 vs 8/9 folds).
+        """
+        if artifact.get("feature_set") == "extended":
+            return {
+                "passed": False,
+                "reason": "extended_feature_set_not_promotable",
+                "evidence": "extended",
+            }
+
+        loso = artifact.get("loso") or {}
+        if loso.get("status") == "ok":
+            preserves = bool(loso.get("calibration_preserves_picks"))
+            mean_delta = float(loso.get("calibrated_brier_delta_mean") or 0.0)
+            worst = float(loso.get("calibrated_brier_delta_min") or 0.0)
+            majority = int(loso.get("folds_helped") or 0) * 2 > int(loso.get("folds") or 0)
+            passed = (
+                preserves
+                and mean_delta > 0.0
+                and worst >= LOSO_WORST_FOLD_FLOOR
+                and majority
+            )
+            reason = "ok" if passed else (
+                "calibration_changes_picks" if not preserves
+                else "calibration_does_not_improve_brier" if mean_delta <= 0.0
+                else "worst_fold_below_floor" if worst < LOSO_WORST_FOLD_FLOOR
+                else "calibration_hurts_in_most_folds"
+            )
+            return {
+                "passed": passed,
+                "reason": reason,
+                "evidence": "loso",
+                "folds": loso.get("folds"),
+                "folds_helped": loso.get("folds_helped"),
+                "calibrated_brier_delta_mean": mean_delta,
+                "calibrated_brier_delta_min": worst,
+                "worst_fold_floor": LOSO_WORST_FOLD_FLOOR,
+                "total_pick_changes": loso.get("total_pick_changes"),
+            }
+
+        holdout = artifact.get("holdout") or {}
+        if holdout.get("status") != "ok":
+            return {
+                "passed": False,
+                "reason": "no_out_of_sample_evidence",
+                "evidence": "none",
+            }
+        delta = float(holdout.get("calibrated_brier_delta") or 0.0)
+        preserves = bool(holdout.get("calibration_preserves_picks"))
+        passed = delta > 0.0 and preserves
+        return {
+            "passed": passed,
+            "reason": "ok" if passed else (
+                "calibration_changes_picks" if not preserves
+                else "calibration_does_not_improve_brier"
+            ),
+            "evidence": "holdout",
+            "holdout_slates": holdout.get("holdout_slates"),
+            "calibrated_brier_delta": delta,
+        }
+
     def promote_candidate(
         self,
         *,
@@ -1034,15 +1346,14 @@ class NeuralBaselineRegistryService:
 
         artifact = _artifact(candidate)
         comparison = artifact.get("comparison") or {}
-        if not force and not (
-            comparison.get("neural_better_brier") is True
-            and float(comparison.get("brier_delta") or 0.0) > 0.0
-        ):
+        gate = self._promotion_gate(artifact)
+        if not force and not gate["passed"]:
             return {
                 "status": "blocked",
                 "promoted": False,
-                "reason": "candidate_does_not_improve_brier",
+                "reason": gate["reason"],
                 "candidate_run_id": candidate.id,
+                "gate": gate,
                 "comparison": comparison,
             }
 
