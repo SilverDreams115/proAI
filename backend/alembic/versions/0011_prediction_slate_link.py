@@ -1,14 +1,14 @@
 """Link prediction audit rows to the slate that triggered them.
 
 Revision ID: 0011
-Revises: 0010
+Revises: 0010_slate_composition_hash
 Create Date: 2026-06-05
 """
 from alembic import op
 import sqlalchemy as sa
 
 revision = "0011"
-down_revision = "0010"
+down_revision = "0010_slate_composition_hash"
 branch_labels = None
 depends_on = None
 
