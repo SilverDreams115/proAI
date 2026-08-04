@@ -123,6 +123,16 @@ def test_plain_leagues_do_not_flag(name: str) -> None:
     assert detect_knockout(name) is False
 
 
+def test_leagues_cup_abstains_despite_cup_token() -> None:
+    """Leagues Cup opens with a league phase where draws are ordinary and
+    only later switches to knockout rounds, under one name. The "cup"
+    token used to auto-flag the whole league phase and trim the draw ~55%
+    (it did exactly that to all 9 positions of PGM-807), so the name must
+    abstain and leave the call to an operator."""
+    assert detect_knockout("Leagues Cup") is None
+    assert is_ambiguous_competition("Leagues Cup") is True
+
+
 def test_efl_championship_is_not_treated_as_a_cup() -> None:
     """Second-tier league whose name contains 'Championship' — the
     token heuristic must not read it as a cup."""

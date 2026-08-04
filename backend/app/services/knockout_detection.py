@@ -59,6 +59,13 @@ MIXED_STAGE_SLUGS: frozenset[str] = frozenset(
         "copa-sudamericana",
         "concacaf-champions-cup",
         "concacaf-w-champions-cup",
+        # Leagues Cup opens with a league phase (2026: Aug 4-13) whose
+        # fixtures are ordinary draws-allowed games, then switches to
+        # knockout rounds under the same name. Without this entry the
+        # "cup" token below flagged every league-phase fixture as an
+        # elimination tie and trimmed the draw ~55% — all 9 positions of
+        # PGM-807 came out that way.
+        "leagues-cup",
         "club-world-cup",
         "world-cup",
         "copa-america",
