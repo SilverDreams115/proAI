@@ -1467,18 +1467,6 @@ details.ops-details[open] .ops-summary::after {
   font-size: 0.83rem;
 }
 
-.freshness-tag {
-  display: inline-block;
-  margin-left: 0.6rem;
-  padding: 0.05rem 0.45rem;
-  border-radius: 0.4rem;
-  background: rgba(255, 255, 255, 0.04);
-  color: var(--muted);
-  font-size: 0.63rem;
-  letter-spacing: 0.02em;
-  opacity: 0.18;
-}
-
 .quality-item {
   cursor: help;
 }
@@ -2893,3 +2881,124 @@ span.badge-readonly {
 .mm-selections { display: flex; flex-direction: column; gap: 8px; }
 .mm-selections-table td:first-child { width: 3ch; }
 .mm-selections-table td:last-child { white-space: nowrap; }
+
+/* ── Acertividad comparada ──────────────────────────────────────────────
+   Two accuracies, deliberately not drawn alike. The baseline arc is solid
+   because production earned it live on unseen rows; the neural arc is
+   hatched whenever it was scored on the rows it trained on. Same geometry,
+   visibly different kind of number — the panel would otherwise assert a
+   win the evidence does not carry. Everything else here stays quiet so the
+   hatch is the only thing that raises its voice. */
+.accuracy-panel { display: grid; gap: 18px; }
+
+.accuracy-toprow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.accuracy-scope { margin: 0; }
+
+/* Zero-size carrier for the <defs> pattern: the SVG must be in the document
+   for url(#…) to resolve, but it paints nothing itself. */
+.accuracy-defs { width: 0; height: 0; position: absolute; }
+
+.accuracy-dials {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 18px;
+}
+
+.accuracy-dial {
+  margin: 0;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 16px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.accuracy-dial-svg { width: 108px; height: 108px; flex: none; }
+.accuracy-track { fill: none; stroke: #2a2833; stroke-width: 13; }
+.accuracy-arc {
+  fill: none;
+  stroke-width: 13;
+  stroke-linecap: butt;
+  transition: stroke-dasharray 620ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.accuracy-dial-caption { display: grid; gap: 3px; }
+.accuracy-dial-name {
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+/* Measurements are mono, prose is sans — the rule the rest of the panel
+   follows too, so a number never reads as an argument. */
+.accuracy-dial-value {
+  font-size: 2.5rem;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+.accuracy-dial-sistema .accuracy-dial-value { color: #7dd3fc; }
+.accuracy-dial-neural .accuracy-dial-value { color: #ffd166; }
+.accuracy-dial-tally { font-size: 0.86rem; color: var(--muted); }
+.accuracy-dial-basis { font-size: 0.8rem; line-height: 1.35; }
+.accuracy-basis-holdout { color: var(--win); }
+.accuracy-basis-insample { color: var(--warn); }
+
+.accuracy-verdict {
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  border-left-width: 3px;
+  background: rgba(255, 255, 255, 0.02);
+}
+.accuracy-verdict strong { display: block; margin-bottom: 4px; }
+.accuracy-verdict p { margin: 0; }
+.accuracy-verdict-warn { border-left-color: var(--warn); }
+.accuracy-verdict-ok { border-left-color: var(--win); }
+
+.accuracy-metrics { width: 100%; border-collapse: collapse; }
+.accuracy-metrics caption {
+  text-align: left;
+  margin-bottom: 8px;
+  caption-side: top;
+}
+.accuracy-metrics th,
+.accuracy-metrics td {
+  text-align: left;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--line);
+}
+.accuracy-metrics thead th {
+  font-size: 0.78rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.accuracy-metrics tbody th { font-weight: 500; }
+.accuracy-metrics td { font-variant-numeric: tabular-nums; }
+/* Marks the better of the two on that row. It is a reading aid, not a
+   verdict — the verdict block above says whether the row can be trusted. */
+.accuracy-leads { color: var(--ink); font-weight: 600; }
+.accuracy-metrics td:not(.accuracy-leads) { color: var(--muted); }
+
+.accuracy-foot { margin: 0; }
+
+@media (max-width: 560px) {
+  .accuracy-dial { grid-template-columns: 1fr; justify-items: start; }
+  .accuracy-dial-value { font-size: 2.1rem; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .accuracy-arc { transition: none; }
+}

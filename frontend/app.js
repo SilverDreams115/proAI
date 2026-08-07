@@ -9,7 +9,6 @@ import {
   formatPercent,
   formatDate,
   kickoffLabel,
-  formatRelativeAge,
   availabilityStatusLabel,
   availabilityCategoryLabel,
   sortedOutcomes,
@@ -58,6 +57,7 @@ import {
   snapshotLnResultsObserver,
 } from "./live-results-observer-panel.js";
 import { renderNeuralShadowPanel } from "./neural-shadow-panel.js";
+import { renderModelAccuracy } from "./model-accuracy.js";
 import { pickNextProposal } from "./proposal-selection.js";
 import {
   getCachedDiagnostics,
@@ -686,7 +686,7 @@ function buildMatchCard(match) {
       </div>
       <div class="pick-meta">
         <h3>${escapeHtml(pred.home_team_name)} vs ${escapeHtml(pred.away_team_name)}</h3>
-        <p class="pick-sub">${escapeHtml(kickoffLabel(match))} · ${escapeHtml(translateCompetition(pred.competition_name || ""))}<span class="freshness-tag" title="Cuándo se calculó esta probabilidad">Actualizado ${escapeHtml(formatRelativeAge(pred.generated_at))}</span></p>
+        <p class="pick-sub">${escapeHtml(kickoffLabel(match))} · ${escapeHtml(translateCompetition(pred.competition_name || ""))}</p>
         <div class="signal-row">
           <span class="badge-signal" title="Señal base del modelo">${escapeHtml(basePick.label)}</span>
           <span class="badge-strategy tone-${strategy.tone}" title="Estrategia de boleta recomendada">${escapeHtml(strategy.label)}</span>
@@ -1972,6 +1972,9 @@ function activateView(view) {
     loadLearningDashboard();
     loadLearningSummary();
   }
+  if (view === "acertividad") {
+    loadModelAccuracy();
+  }
   // R6.3: the heavy Diagnóstico panels load only when this tab is opened, and
   // only if not already loaded for the active slate (cache makes re-open free).
   if (view === "diagnostico") {
@@ -2038,6 +2041,30 @@ async function loadLearningSummary() {
     body.innerHTML = renderLearningSummary(summary);
   } catch (err) {
     // Best-effort: leave the honest placeholder in place.
+  }
+}
+
+// The comparison is a property of the active neural artifact, not of the
+// selected slate, so it is fetched once per session rather than per slate.
+// Only /training/neural/active is read: it already carries the side-by-side
+// comparison. The leave-one-slate-out verdict is deliberately NOT triggered
+// here — it is a POST that retrains once per fold, far too heavy to fire on
+// a tab click.
+let modelAccuracyLoaded = false;
+async function loadModelAccuracy() {
+  if (modelAccuracyLoaded) return;
+  const body = getById("model-accuracy-body");
+  if (!body) return;
+  modelAccuracyLoaded = true;
+  try {
+    const active = await safeFetch("/training/neural/active", { optional: true });
+    if (!active) return; // keep the honest "cargando…" placeholder on any non-OK response
+    body.innerHTML = renderModelAccuracy(active);
+  } catch (err) {
+    // Best-effort: leave the honest placeholder in place. Allow a retry on
+    // the next tab open, since this failure is transport-level, not a
+    // statement about the data.
+    modelAccuracyLoaded = false;
   }
 }
 

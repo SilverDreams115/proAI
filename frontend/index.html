@@ -43,6 +43,7 @@
         <button class="main-tab is-active" id="tab-prediccion" type="button" role="tab" aria-selected="true" data-view="prediccion">Predicción actual</button>
         <button class="main-tab" id="tab-seguimiento" type="button" role="tab" aria-selected="false" data-view="seguimiento">Seguimiento</button>
         <button class="main-tab" id="tab-aprendizaje" type="button" role="tab" aria-selected="false" data-view="aprendizaje">Aprendizaje</button>
+        <button class="main-tab" id="tab-acertividad" type="button" role="tab" aria-selected="false" data-view="acertividad">Acertividad</button>
         <button class="main-tab" id="tab-diagnostico" type="button" role="tab" aria-selected="false" data-view="diagnostico">Diagnóstico</button>
       </nav>
 
@@ -130,6 +131,18 @@
           </div>
           <div id="learning-body">
             <p class="meta-copy">Disponible cuando haya learning rows suficientes.</p>
+          </div>
+        </section>
+      </div>
+
+      <div class="view" id="view-acertividad" data-view="acertividad" hidden>
+        <section class="panel" id="model-accuracy-panel">
+          <div class="panel-head">
+            <h2>Acertividad de los modelos</h2>
+            <p class="meta-copy">Cuánto acierta el sistema que sirve las predicciones frente al modelo neural experimental, sobre las mismas jornadas ya calificadas. Solo lectura; no entrena, no promueve ni cambia una boleta.</p>
+          </div>
+          <div id="model-accuracy-body">
+            <p class="meta-copy">Cargando comparación de acertividad…</p>
           </div>
         </section>
       </div>
