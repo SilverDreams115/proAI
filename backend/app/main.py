@@ -26,6 +26,7 @@ from app.api.routes import tracking
 from app.api.routes import learning
 from app.api.routes.health import router as health_router
 from app.core.auth import verify_session_token
+from app.core.clientip import resolve_client_key
 from app.core.errors import AppError
 from app.core.logging import configure_logging
 from app.core.metrics import metrics_store
@@ -224,13 +225,48 @@ def _is_auth_required(request: Request) -> bool:
     return True
 
 
+# Response hardening, applied by the app rather than only by the proxy.
+# deploy/Caddyfile carries the same set, but Caddy only fronts the
+# production compose file; an instance run straight from docker-compose.yml
+# — which is how this app is actually operated — answered with no CSP, no
+# frame protection and no nosniff at all. Setting them here means the
+# guarantee travels with the application instead of with one deployment
+# topology. Caddy's `header` directive replaces rather than appends, so a
+# proxied deployment still emits exactly one of each.
+#
+# The policy matches what the frontend already satisfies: it ships zero
+# inline scripts and zero on* handlers, so `script-src 'self'` costs
+# nothing. 'unsafe-inline' remains for styles only, where inline style
+# attributes are still used for computed widths.
+SECURITY_HEADERS = {
+    "Content-Security-Policy": (
+        "default-src 'self'; connect-src 'self'; style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data:; font-src 'self' data:; script-src 'self'; "
+        "object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
+    ),
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "strict-origin-when-cross-origin",
+}
+
+
+def _apply_security_headers(response) -> None:
+    for header, value in SECURITY_HEADERS.items():
+        response.headers.setdefault(header, value)
+    # HSTS only where TLS is actually terminated: sending it over plain
+    # HTTP would pin a browser to a scheme this deployment does not serve.
+    if settings.force_https:
+        response.headers.setdefault(
+            "Strict-Transport-Security", "max-age=31536000; includeSubDomains"
+        )
+
+
 def _client_key_for_rate_limit(request: Request) -> str:
-    forwarded_for = request.headers.get("X-Forwarded-For")
-    if forwarded_for:
-        return forwarded_for.split(",", 1)[0].strip() or "unknown"
-    if request.client:
-        return request.client.host
-    return "unknown"
+    return resolve_client_key(
+        peer=request.client.host if request.client else None,
+        forwarded_for=request.headers.get("X-Forwarded-For"),
+        trusted_proxies=settings.trusted_proxy_ips,
+    )
 
 
 @app.middleware("http")
@@ -266,6 +302,7 @@ async def request_logging_middleware(request: Request, call_next):
             response = JSONResponse(status_code=429, content={"detail": "Too many requests."})
             response.headers[settings.request_id_header] = request_id
             response.headers["Retry-After"] = str(settings.rate_limit_window_seconds)
+            _apply_security_headers(response)
             return response
         record_request(client_key)
     if settings.auth_required and _is_auth_required(request):
@@ -288,6 +325,7 @@ async def request_logging_middleware(request: Request, call_next):
             metrics_store.record_auth_failure(method=request.method, path=request.url.path)
             response = JSONResponse(status_code=401, content={"detail": "Authentication required."})
             response.headers[settings.request_id_header] = request_id
+            _apply_security_headers(response)
             return response
     started = perf_counter()
     response = await call_next(request)
@@ -299,6 +337,7 @@ async def request_logging_middleware(request: Request, call_next):
         duration_ms=duration_ms,
     )
     response.headers[settings.request_id_header] = request_id
+    _apply_security_headers(response)
     if settings.access_log_enabled:
         logger.info(
             "request completed",

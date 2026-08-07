@@ -35,6 +35,19 @@ def validate_public_https_url(raw_url: str) -> None:
 
 
 def safe_urlopen(request: Request | str, timeout: int = 15):
+    """Fetch a source URL with the SSRF guard applied to every hop.
+
+    Known and accepted gap: validation resolves the hostname, then
+    ``opener.open`` resolves it again independently, so a DNS entry that
+    changes between the two calls could pass the check and connect
+    somewhere private (DNS rebinding). Closing it means pinning the
+    validated address for the connection while preserving Host and TLS
+    SNI, which urllib does not express cleanly. It is left open because
+    the attacker must already be able to register a source URL — an
+    authenticated write — and https is mandatory here, so certificate
+    validation still binds the response to the requested hostname. Revisit
+    if source registration ever becomes reachable with weaker credentials.
+    """
     raw_url = request.full_url if isinstance(request, Request) else request
     validate_public_https_url(raw_url)
     opener = build_opener(_ValidatingRedirectHandler)

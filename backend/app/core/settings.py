@@ -120,6 +120,14 @@ class Settings(BaseModel):
     # non-production so dev loops aren't throttled.
     rate_limit_window_seconds: int = Field(default=60)
     rate_limit_max_requests: int = Field(default=0)
+    # Peers allowed to assert a client via `X-Forwarded-For` (exact
+    # addresses or CIDR blocks). Empty means trust nobody and key every
+    # per-client control off the socket address — the only correct
+    # default for an instance reachable without a proxy in front, since
+    # an unconditionally-trusted header made both the rate limit and the
+    # login throttle bypassable by rotating it. Set this to the proxy
+    # network when deploying behind Caddy.
+    trusted_proxy_ips: list[str] = Field(default_factory=list)
     # API-Football (api-sports.io v3) connector. Audit-only for now:
     # OFF by default, no key, no base_url. The connector never makes an
     # external call unless `enabled` is true AND a key is present, so the
@@ -327,6 +335,7 @@ def load_settings() -> Settings:
                 "120" if environment.lower() == "production" else "0",
             )
         ),
+        trusted_proxy_ips=_get_csv("PROAI_TRUSTED_PROXY_IPS", []),
     )
     settings.validate_runtime()
     return settings

@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from app.core.auth import create_session_token
 from app.core.auth import verify_session_token
 from app.core.auth import verify_password
+from app.core.clientip import resolve_client_key
 from app.core.settings import settings
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -81,12 +82,11 @@ async def session(request: Request) -> SessionResponse:
 
 
 def _login_client_key(request: Request) -> str:
-    forwarded_for = request.headers.get("X-Forwarded-For")
-    if forwarded_for:
-        return forwarded_for.split(",", maxsplit=1)[0].strip()
-    if request.client:
-        return request.client.host
-    return "unknown"
+    return resolve_client_key(
+        peer=request.client.host if request.client else None,
+        forwarded_for=request.headers.get("X-Forwarded-For"),
+        trusted_proxies=settings.trusted_proxy_ips,
+    )
 
 
 def _is_login_throttled(client_key: str) -> bool:
