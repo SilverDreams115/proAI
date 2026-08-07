@@ -1,0 +1,18 @@
+{
+  "draw_code": "808",
+  "week_type": "midweek",
+  "source_url": "https://www.loterianacional.gob.mx/ProgolMediaSemana/Quiniela",
+  "capture_note": "Programa oficial del concurso 808 leido de la imagen que LN publica en su pagina de Quiniela (progol_media_quiniela/proxima-media.jpg?v=06082026215901, actualizada 2026-08-06 21:59). El PDF de MS (guiamedia.pdf?v=03082026140002) sigue sirviendo el 807, por lo que ProgolMsGuiaPdfConnector no puede observar este concurso todavia. La imagen declara: 'A LA VENTA DEL VIERNES 7 AL MARTES 11 DE AGOSTO DE 2026 HASTA LAS 17:00 HORAS. JUEGOS DEL MARTES 11 AL JUEVES 13 DE AGOSTO DE 2026'. Cierre 17:00 hora del centro = 23:00Z, misma convencion que PGM-807. Los 9 fixtures se cruzaron 9/9 contra quinielaposible.com/pronostico-de-progol-media-semana-808, que coincide en su totalidad. Nombres expandidos a la forma canonica verificada contra team_aliases: los 18 equipos resuelven a entidades no-placeholder (Minnesota->Minnesota United, Vancouver->Vancouver Whitecaps, Nashville->Nashville SC, Seattle->Seattle Sounders, Chicago->Chicago Fire, Flamengo->CR Flamengo). Nota: pos 4 (Atlante, Liga de Expansion MX) y pos 9 (Cruzeiro vs Flamengo, Brasileirao) no son fixtures de Leagues Cup; se verificaron contra la imagen oficial y son correctos tal cual los publica LN.",
+  "registration_closes_at": "2026-08-11T23:00:00+00:00",
+  "fixtures": [
+    {"position": 1, "home": "Charlotte", "away": "Pachuca"},
+    {"position": 2, "home": "Columbus Crew", "away": "Pumas"},
+    {"position": 3, "home": "Cincinnati", "away": "Atlas"},
+    {"position": 4, "home": "Minnesota United", "away": "Atlante"},
+    {"position": 5, "home": "Tigres", "away": "Vancouver Whitecaps"},
+    {"position": 6, "home": "Monterrey", "away": "Nashville SC"},
+    {"position": 7, "home": "Seattle Sounders", "away": "Guadalajara"},
+    {"position": 8, "home": "Cruz Azul", "away": "Chicago Fire"},
+    {"position": 9, "home": "Cruzeiro", "away": "CR Flamengo"}
+  ]
+}

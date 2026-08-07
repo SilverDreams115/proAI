@@ -1,0 +1,61 @@
+{
+  "draw_code": "PGM-807",
+  "source": "manual_official",
+  "source_note": "Signos oficiales de TuLotero (sorteo 807, 07/08/2026: L,L,L,E,V,E,L,L,L). Marcadores de TheSportsDB (Leagues Cup, league 5281) via eventsday/searchevents/eventslast. Cadena derivada de los 9 marcadores coincide 9/9 con la cadena oficial. Pos 4 y 6 terminaron 1-1 y se definieron en penales: Progol cuenta el tiempo regular (90') => E. LN aun no publica 807 en /ProgolMediaSemana/Resultados (ultimo listado: 806).",
+  "results": [
+    {
+      "position": 1,
+      "sign": "L",
+      "score": "3-1",
+      "source_note": "Cincinnati vs Pachuca"
+    },
+    {
+      "position": 2,
+      "sign": "L",
+      "score": "3-1",
+      "source_note": "Columbus Crew vs Atlas"
+    },
+    {
+      "position": 3,
+      "sign": "L",
+      "score": "3-0",
+      "source_note": "Charlotte vs Pumas"
+    },
+    {
+      "position": 4,
+      "sign": "E",
+      "score": "1-1",
+      "source_note": "Tigres vs Real Salt Lake (1-1 en 90', definido en penales)"
+    },
+    {
+      "position": 5,
+      "sign": "V",
+      "score": "1-2",
+      "source_note": "Monterrey vs Orlando City"
+    },
+    {
+      "position": 6,
+      "sign": "E",
+      "score": "1-1",
+      "source_note": "Los Angeles FC vs Guadalajara (1-1 en 90', definido en penales)"
+    },
+    {
+      "position": 7,
+      "sign": "L",
+      "score": "1-0",
+      "source_note": "Cruz Azul vs Philadelphia Union"
+    },
+    {
+      "position": 8,
+      "sign": "L",
+      "score": "2-0",
+      "source_note": "Austin FC vs Tijuana"
+    },
+    {
+      "position": 9,
+      "sign": "L",
+      "score": "3-1",
+      "source_note": "America vs San Diego"
+    }
+  ]
+}
