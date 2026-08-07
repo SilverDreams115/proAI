@@ -58,6 +58,12 @@ import {
 } from "./live-results-observer-panel.js";
 import { renderNeuralShadowPanel } from "./neural-shadow-panel.js";
 import { renderModelAccuracy } from "./model-accuracy.js";
+import {
+  SCREEN_DASHBOARD,
+  SCREEN_GATE,
+  SCREEN_LOADING,
+  selectAuthScreen,
+} from "./auth-screens.js";
 import { pickNextProposal } from "./proposal-selection.js";
 import {
   getCachedDiagnostics,
@@ -2075,29 +2081,38 @@ function attachStaticEvents() {
     const passwordInput = getById("auth-password");
     const password = passwordInput?.value || "";
     if (!password) return;
-    state.authStatusMessage = "Validando password.";
+    // Clear the previous failure before the round-trip: leaving it on
+    // screen under a spinner reads as the new attempt having failed too.
+    state.authErrorMessage = "";
     state.lastError = null;
+    state.isLoading = true;
     updateAuthControls();
     const loggedIn = await loginWithPassword(password);
+    state.isLoading = false;
     if (loggedIn && passwordInput) {
       passwordInput.value = "";
     }
     updateAuthControls();
-    await boot();
+    if (loggedIn) {
+      await boot();
+    } else {
+      passwordInput?.focus();
+    }
   });
 
   getById("logout-button")?.addEventListener("click", async () => {
     await logoutSession();
+    // Drop everything the session was showing before the gate paints, so a
+    // stale slate can never flash behind the login card.
     state.slates = [];
     state.matches = [];
     state.ticketPlan = null;
+    state.activeSlateId = null;
+    state.selectedMatchId = null;
     state.lastError = null;
+    state.isLoading = false;
     updateAuthControls();
-    await boot();
-  });
-
-  getById("refresh")?.addEventListener("click", () => {
-    boot();
+    getById("auth-password")?.focus();
   });
 
   getById("load-demo")?.addEventListener("click", async () => {
@@ -2156,11 +2171,43 @@ function attachStaticEvents() {
   updateAuthControls();
 }
 
+function setLoadingCopy(message) {
+  const node = getById("app-loading-copy");
+  if (node) node.textContent = message;
+}
+
+// Exactly one of: the auth gate, the first-paint loader, the dashboard.
+// Driven from state on every updateAuthControls() call so the three can
+// never be on screen together and none can be left behind after a logout.
+function renderAuthScreens() {
+  const gate = getById("auth-gate");
+  const loading = getById("app-loading");
+  const body = getById("app-body");
+  const toolbar = getById("session-toolbar");
+  const masthead = getById("masthead");
+  const errorNode = getById("auth-error");
+
+  const screen = selectAuthScreen(state);
+
+  if (gate) gate.hidden = screen !== SCREEN_GATE;
+  if (loading) loading.hidden = screen !== SCREEN_LOADING;
+  if (body) body.hidden = screen !== SCREEN_DASHBOARD;
+  if (toolbar) toolbar.hidden = screen === SCREEN_GATE;
+  // The masthead carries the product name and tagline, so it belongs to
+  // sessions, not to the gate — an unauthenticated screen names nothing.
+  if (masthead) masthead.hidden = screen === SCREEN_GATE;
+
+  if (errorNode) {
+    const message = state.authenticated ? "" : state.authErrorMessage || "";
+    errorNode.textContent = message;
+    errorNode.hidden = !message;
+  }
+}
+
 function updateAuthControls() {
   const loginButton = getById("login-button");
   const logoutButton = getById("logout-button");
   const passwordInput = getById("auth-password");
-  const refreshButton = getById("refresh");
   const demoButton = getById("load-demo");
   const copyButton = getById("copy-ticket");
   const shareWhatsAppButton = getById("share-whatsapp");
@@ -2168,17 +2215,13 @@ function updateAuthControls() {
   const feedbackNode = getById("auth-feedback");
   const secretField = passwordInput?.closest(".secret-field");
   if (loginButton) {
-    loginButton.disabled = state.authenticated || state.isLoading;
-    loginButton.hidden = Boolean(state.authenticated);
-    loginButton.textContent = state.isLoading && !state.authenticated ? "Entrando" : "Entrar";
+    loginButton.disabled = state.isLoading;
+    loginButton.textContent = state.isLoading && !state.authenticated ? "Entrando…" : "Entrar";
   }
-  if (secretField) secretField.hidden = Boolean(state.authenticated);
+  if (secretField) secretField.hidden = false;
   if (logoutButton) logoutButton.disabled = !state.authenticated;
-  if (passwordInput) passwordInput.disabled = state.authenticated;
-  // Read-only slate (closed/archived): no regenerate/refresh of a closed
-  // prediction. The postmortem stays fully viewable.
-  const readOnly = Boolean(currentSlate()?.read_only);
-  if (refreshButton) refreshButton.disabled = !state.authenticated || state.isLoading || readOnly;
+  if (passwordInput) passwordInput.disabled = state.isLoading;
+  renderAuthScreens();
   if (demoButton) {
     const isProduction = state.health?.environment === "production";
     demoButton.hidden = isProduction;
@@ -2411,6 +2454,7 @@ async function loadSlateDiagnostics(slateId) {
 async function boot() {
   state.isLoading = true;
   loadExportStatusFromStorage();
+  setLoadingCopy("Buscando concursos abiertos…");
   updateAuthControls();
   renderProductionStatus();
   // Auth is already resolved (checkSession runs before boot), so when the
@@ -2484,6 +2528,15 @@ async function boot() {
     demoLoadAttempted = true;
   }
 
+  // Second phase of the first paint. The slate list has landed but its
+  // predictions have not, and that fetch is the slow one — naming it beats
+  // leaving the same "buscando concursos" line up while something else runs.
+  setLoadingCopy(
+    state.slates.length
+      ? "Cargando predicciones y boleta…"
+      : "Revisando concursos disponibles…",
+  );
+
   if (state.activeSlateId) {
     await loadSlateDetails(state.activeSlateId);
   } else {
@@ -2495,7 +2548,10 @@ async function boot() {
     state.selectedMatchId = null;
   }
 
-  state.authStatusMessage = "Conectado";
+  // No "Conectado" notice: the presence of the dashboard already says the
+  // session is live, and a permanent badge restating it earns no space.
+  // The field stays for transient notices ("Jugada copiada"), which are
+  // events worth reporting; a steady state is not.
   state.isLoading = false;
   updateAuthControls();
   renderSidebar();

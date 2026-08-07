@@ -16,7 +16,12 @@ const state = {
   lastError: null,
   authenticated: false,
   authMethod: null,
-  authStatusMessage: "Ingresa el password para cargar la quiniela.",
+  authStatusMessage: "",
+  // Login failures only. Kept apart from `authStatusMessage` (which carries
+  // in-session notices like "Jugada copiada") because the two are read on
+  // different screens: this one belongs to the gate, and showing a stale
+  // in-session notice there would explain nothing about a failed password.
+  authErrorMessage: "",
   isLoading: false,
   ticketMode: "simple",
   // Auto-transition support (Fase 1.3). `activeMeta` is the last

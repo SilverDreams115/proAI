@@ -17,7 +17,7 @@
   </head>
   <body>
     <main class="shell">
-      <section class="masthead">
+      <section class="masthead" id="masthead" hidden>
         <div>
           <p class="eyebrow">ProAI Quiniela</p>
           <h1>Quiniela inteligente</h1>
@@ -25,20 +25,77 @@
             Predicción, cobertura y seguimiento para tu boleta.
           </p>
         </div>
-        <form class="toolbar" id="login-form">
-          <label class="secret-field" for="auth-password">
-            <span>Password</span>
-            <input id="auth-password" type="password" autocomplete="current-password" placeholder="Password de acceso" />
-          </label>
-          <button id="login-button" type="submit">Entrar</button>
-          <button id="refresh" type="button" class="ghost-button">Actualizar</button>
-          <button id="logout-button" type="button" class="ghost-button">Salir</button>
-          <button id="load-demo" type="button" class="ghost-button">Cargar demo</button>
+        <div class="toolbar" id="session-toolbar" hidden>
           <div class="auth-feedback" id="auth-feedback" role="status"></div>
-        </form>
+          <button id="load-demo" type="button" class="ghost-button">Cargar demo</button>
+          <button id="logout-button" type="button" class="ghost-button">Logoff</button>
+        </div>
       </section>
       <div id="global-error"></div>
 
+      <!-- Auth gate. Everything below it stays out of the document flow until
+           a session exists: rendering the tab bar and empty panels to someone
+           who cannot fetch a single slate advertises an application that is
+           not there yet. -->
+      <section class="auth-gate" id="auth-gate" hidden>
+        <!-- Unbranded on purpose: no product name, no tagline, no description
+             of what is behind it. The form still needs an accessible name, so
+             it carries one the screen itself does not display.
+
+             The company it keeps is the boleta: fourteen rows of 1/X/2, the
+             artifact this whole product exists to fill in. It is decorative
+             and silent — it names nothing to anyone who does not already know
+             what they came for — but it is unmistakably from here, which an
+             abstract gradient would not be. Pattern-tiled rather than 42
+             hand-written cells, masked to fade at both ends. -->
+        <svg class="auth-boleta" viewBox="0 0 74 371" aria-hidden="true" focusable="false" preserveAspectRatio="xMidYMid meet">
+          <defs>
+            <pattern id="boleta-cell" patternUnits="userSpaceOnUse" width="27" height="27">
+              <rect x="0.5" y="0.5" width="19" height="19" rx="4" />
+            </pattern>
+            <linearGradient id="boleta-fade" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stop-color="#fff" stop-opacity="0" />
+              <stop offset="0.22" stop-color="#fff" stop-opacity="1" />
+              <stop offset="0.78" stop-color="#fff" stop-opacity="1" />
+              <stop offset="1" stop-color="#fff" stop-opacity="0" />
+            </linearGradient>
+            <mask id="boleta-mask">
+              <rect x="0" y="0" width="74" height="371" fill="url(#boleta-fade)" />
+            </mask>
+          </defs>
+          <g mask="url(#boleta-mask)">
+            <rect class="boleta-grid" x="0" y="0" width="74" height="371" fill="url(#boleta-cell)" />
+            <!-- A part-filled column: the state the operator is always in. -->
+            <rect class="boleta-mark" x="0.5" y="27.5" width="19" height="19" rx="4" />
+            <rect class="boleta-mark is-draw" x="27.5" y="108.5" width="19" height="19" rx="4" />
+            <rect class="boleta-mark" x="0.5" y="135.5" width="19" height="19" rx="4" />
+            <rect class="boleta-mark" x="54.5" y="189.5" width="19" height="19" rx="4" />
+            <rect class="boleta-mark" x="0.5" y="243.5" width="19" height="19" rx="4" />
+            <rect class="boleta-mark is-draw" x="27.5" y="270.5" width="19" height="19" rx="4" />
+            <rect class="boleta-mark" x="54.5" y="324.5" width="19" height="19" rx="4" />
+          </g>
+        </svg>
+        <form class="auth-card" id="login-form" aria-label="Acceso">
+          <p class="auth-marks" aria-hidden="true"><span>1</span><span class="is-draw">X</span><span>2</span></p>
+          <label class="secret-field" for="auth-password">
+            <span>Password</span>
+            <input id="auth-password" type="password" autocomplete="current-password" placeholder="Password de acceso" required />
+          </label>
+          <button id="login-button" type="submit">Entrar</button>
+          <p class="auth-error" id="auth-error" role="alert" hidden></p>
+        </form>
+      </section>
+
+      <!-- First paint after login. The dashboard needs the slate list before
+           any panel means anything, so we say what is being fetched instead of
+           drawing empty furniture around a pending request. -->
+      <section class="app-loading" id="app-loading" hidden aria-live="polite">
+        <div class="app-loading-mark" aria-hidden="true"><span>1</span><span class="is-draw">X</span><span>2</span></div>
+        <p class="app-loading-title">Cargando tus quinielas</p>
+        <p class="app-loading-copy" id="app-loading-copy">Buscando concursos abiertos…</p>
+      </section>
+
+      <div id="app-body" hidden>
       <nav class="main-tabs" id="main-tabs" role="tablist" aria-label="Vistas principales">
         <button class="main-tab is-active" id="tab-prediccion" type="button" role="tab" aria-selected="true" data-view="prediccion">Predicción actual</button>
         <button class="main-tab" id="tab-seguimiento" type="button" role="tab" aria-selected="false" data-view="seguimiento">Seguimiento</button>
@@ -211,6 +268,7 @@
           </div>
           <div id="neural-shadow-body"></div>
         </section>
+      </div>
       </div>
     </main>
     <script src="./config.js?v=__ASSET_VERSION__" defer></script>

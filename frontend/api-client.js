@@ -13,7 +13,8 @@ async function safeFetch(path, options = {}) {
       if (response.status === 401) {
         state.authenticated = false;
         state.authMethod = null;
-        state.authStatusMessage = "La sesión no está activa. Ingresa el password.";
+        state.authStatusMessage = "";
+        state.authErrorMessage = "Tu sesión expiró. Entra de nuevo para seguir.";
       }
       if (!options.optional) {
         state.lastError = message;
@@ -47,7 +48,8 @@ async function safePost(path, body = null) {
       if (response.status === 401) {
         state.authenticated = false;
         state.authMethod = null;
-        state.authStatusMessage = "La sesión no está activa. Ingresa el password.";
+        state.authStatusMessage = "";
+        state.authErrorMessage = "Tu sesión expiró. Entra de nuevo para seguir.";
       }
       state.lastError = `POST ${path}: ${detail || response.status}`;
       console.error(state.lastError);
@@ -70,7 +72,7 @@ async function checkSession() {
     if (!response.ok) {
       state.authenticated = false;
       state.authMethod = null;
-      state.authStatusMessage = "Ingresa el password para cargar la quiniela.";
+      state.authStatusMessage = "";
       return false;
     }
     const payload = await response.json();
@@ -93,17 +95,23 @@ async function loginWithPassword(password) {
   if (!response.ok) {
     state.authenticated = false;
     state.authMethod = null;
-    state.lastError = "Password incorrecto o autenticación no configurada.";
-    state.authStatusMessage = response.status === 429
-      ? "Demasiados intentos. Espera unos minutos."
-      : "Password incorrecto.";
+    // `lastError` drives the global error banner, which would double up
+    // with the gate's own message. The gate says it; the banner stays out.
+    state.lastError = null;
+    state.authStatusMessage = "";
+    state.authErrorMessage = response.status === 429
+      ? "Demasiados intentos fallidos. Espera unos minutos antes de reintentar."
+      : "Password incorrecto. Vuelve a intentarlo.";
     return false;
   }
   const payload = await response.json();
   state.authenticated = payload.authenticated === true;
   state.authMethod = payload.method || null;
   state.lastError = null;
-  state.authStatusMessage = state.authenticated ? "Sesión activa. Cargando quiniela." : "No se pudo iniciar sesión.";
+  state.authStatusMessage = "";
+  state.authErrorMessage = state.authenticated
+    ? ""
+    : "No se pudo iniciar sesión. Revisa la configuración de acceso.";
   return state.authenticated;
 }
 
@@ -114,5 +122,6 @@ async function logoutSession() {
   });
   state.authenticated = false;
   state.authMethod = null;
-  state.authStatusMessage = "Sesión cerrada.";
+  state.authStatusMessage = "";
+  state.authErrorMessage = "";
 }

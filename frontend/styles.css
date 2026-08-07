@@ -139,6 +139,203 @@ h1 {
   line-height: 1.35;
 }
 
+/* ── Auth gate ─────────────────────────────────────────────────────────
+   Deliberately anonymous: no product name, no tagline, no hint of what the
+   session opens onto. What fills the screen instead is the boleta — the
+   fourteen-row 1/X/2 grid this product exists to complete. It is the one
+   element allowed to raise its voice; the card beside it stays exactly as
+   quiet as every other panel in the app. A gradient or an abstract shape
+   would have filled the same space while belonging to any product at all.
+
+   Two columns once there is width for them, card alone below that. */
+.auth-gate {
+  display: grid;
+  grid-template-columns: auto minmax(0, 360px);
+  align-items: center;
+  justify-content: center;
+  gap: clamp(28px, 6vw, 72px);
+  min-height: 68vh;
+  padding: 6vh 0 40px;
+}
+
+.auth-boleta {
+  width: clamp(74px, 9vw, 104px);
+  height: auto;
+  max-height: 58vh;
+}
+
+/* Unmarked cells: present, but only just. They are the empty positions of a
+   boleta nobody has finished yet, not a decorative lattice.
+   Styled on the pattern's own content — a referencing element does not pass
+   its paint into <pattern>, so putting the stroke on .boleta-grid would draw
+   nothing at all. */
+.auth-boleta pattern rect {
+  fill: none;
+  stroke: var(--line);
+  stroke-width: 1;
+}
+
+.auth-boleta .boleta-grid {
+  opacity: 0.5;
+}
+
+.auth-boleta .boleta-mark {
+  stroke-width: 1;
+  fill: rgba(125, 211, 252, 0.14);
+  stroke: rgba(125, 211, 252, 0.5);
+}
+
+/* Same rule as the card's marks: the draw is the outcome this product
+   refuses to round away, so it is the one that carries the accent. */
+.auth-boleta .boleta-mark.is-draw {
+  fill: rgba(53, 208, 186, 0.16);
+  stroke: rgba(53, 208, 186, 0.62);
+}
+
+/* Below the two-column threshold the boleta would push the card off-centre,
+   so it stands down and the card's own 1 · X · 2 row carries the identity —
+   one signature at a time, never two. */
+@media (max-width: 720px) {
+  .auth-gate {
+    grid-template-columns: minmax(0, 360px);
+    padding: 10vh 0 32px;
+  }
+
+  .auth-boleta {
+    display: none;
+  }
+}
+
+@media (min-width: 721px) {
+  .auth-card .auth-marks {
+    display: none;
+  }
+}
+
+.auth-card {
+  display: grid;
+  gap: 16px;
+  width: min(360px, 100%);
+  padding: 28px 26px 26px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: linear-gradient(180deg, var(--paper-strong) 0%, var(--paper) 100%);
+  box-shadow: var(--shadow);
+}
+
+.auth-marks {
+  display: flex;
+  gap: 8px;
+  margin: 0;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.95rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.auth-marks span {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: rgba(11, 11, 15, 0.55);
+  color: var(--muted);
+}
+
+/* The draw is the outcome this product refuses to round away, so it is the
+   mark that carries the accent. */
+.auth-marks .is-draw {
+  border-color: rgba(53, 208, 186, 0.55);
+  color: var(--accent-2);
+}
+
+.auth-card .secret-field {
+  min-width: 0;
+}
+
+.auth-card button[type="submit"] {
+  width: 100%;
+}
+
+.auth-error {
+  margin: 0;
+  padding: 9px 12px;
+  border: 1px solid rgba(255, 122, 144, 0.4);
+  border-radius: 8px;
+  background: rgba(255, 92, 122, 0.09);
+  color: var(--bad-soft);
+  font-size: 0.83rem;
+  line-height: 1.4;
+}
+
+/* ── First paint after login ───────────────────────────────────────────
+   Same three marks as the gate, breathing, so the wait reads as continuity
+   with the screen the operator just left rather than a different app. */
+.app-loading {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  min-height: 52vh;
+  align-content: center;
+  text-align: center;
+}
+
+.app-loading-mark {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.app-loading-mark span {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(11, 11, 15, 0.55);
+  color: var(--muted);
+  font-family: "IBM Plex Mono", monospace;
+  font-weight: 700;
+  animation: auth-mark-pulse 1.5s ease-in-out infinite;
+}
+
+.app-loading-mark span:nth-child(2) {
+  animation-delay: 0.18s;
+  border-color: rgba(53, 208, 186, 0.55);
+  color: var(--accent-2);
+}
+
+.app-loading-mark span:nth-child(3) {
+  animation-delay: 0.36s;
+}
+
+@keyframes auth-mark-pulse {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 1; }
+}
+
+.app-loading-title {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 700;
+}
+
+.app-loading-copy {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-loading-mark span {
+    animation: none;
+    opacity: 0.75;
+  }
+}
+
 .auth-feedback.ok {
   color: var(--win);
 }
