@@ -61,6 +61,11 @@ class MatchPredictionResponse(BaseModel):
     competition_readiness: str
     live_pick_allowed: bool
     policy_reason: str
+    # True when no feed ever reported this fixture and the competition
+    # above was inferred from team history rather than observed. Such a
+    # competition cannot lend its benchmark permissions, so its readiness
+    # is capped — see PredictionService._cap_inferred_competition_policy.
+    competition_inferred: bool = False
     confidence_band: str
     rationale: list[str]
     # True when the slate operator (or the upstream parser) flagged

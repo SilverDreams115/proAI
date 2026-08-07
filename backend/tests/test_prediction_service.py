@@ -102,7 +102,7 @@ class StubFeatureService:
         return dict(self._feature_map)
 
 
-def build_slate(competition_name: str = "Liga MX") -> object:
+def build_slate(competition_name: str = "Liga MX", is_placeholder: bool = False) -> object:
     match = SimpleNamespace(
         id="match-1",
         competition=SimpleNamespace(name=competition_name),
@@ -110,6 +110,7 @@ def build_slate(competition_name: str = "Liga MX") -> object:
         away_team=SimpleNamespace(name="Club B"),
         kickoff_at=SimpleNamespace(),
         evidence_items=[object(), object()],
+        is_placeholder=is_placeholder,
     )
     slate_match = SimpleNamespace(position=1, match=match)
     return SimpleNamespace(id="slate-1", matches=[slate_match])
@@ -279,6 +280,88 @@ def test_prediction_blocks_live_pick_for_not_ready_competition() -> None:
     assert response.competition_readiness == "not_ready"
     assert response.confidence_band != "blocked"
     assert "blocked" in response.policy_reason.lower()
+
+
+def test_inferred_competition_cannot_lend_live_pick_permission() -> None:
+    """PG-2345 regression. When no feed reported the fixture, the
+    promotion path infers the competition from team history and marks
+    the match `is_placeholder`. Eight Leagues Cup fixtures landed on
+    "Liga MX" / "MLS" and two friendlies on "E0" that way, inheriting
+    live-pick permission the guessed league earned with its own
+    benchmark — while the same Leagues Cup was blocked on PGM-807,
+    where the fixtures resolved for real. The guessed competition keeps
+    the fixture classified, but must not confer the permission."""
+    service = PredictionService(StubTrainingService({"home": 0.54, "draw": 0.23, "away": 0.23}))
+    service.feature_service = StubFeatureService(
+        {"evidence_count": 2.0, "home_recent_matches": 3.0, "away_recent_matches": 3.0}
+    )
+
+    response = service.build_slate_predictions(
+        build_slate("Premier League", is_placeholder=True)
+    )[0]
+
+    assert response.live_pick_allowed is False
+    assert response.competition_readiness == "context_only"
+    assert response.competition_inferred is True
+    assert "inferida del historial" in response.policy_reason
+    # The cap withdraws a permission; it does not block the position.
+    assert response.confidence_band != "blocked"
+
+
+def test_observed_competition_keeps_its_live_pick_permission() -> None:
+    """The cap keys on `is_placeholder`, so a fixture a feed actually
+    reported is untouched — this is the PGM-807 side of the same
+    behaviour, where the competition is observed rather than guessed."""
+    service = PredictionService(StubTrainingService({"home": 0.54, "draw": 0.23, "away": 0.23}))
+    service.feature_service = StubFeatureService(
+        {"evidence_count": 2.0, "home_recent_matches": 3.0, "away_recent_matches": 3.0}
+    )
+
+    response = service.build_slate_predictions(
+        build_slate("Premier League", is_placeholder=False)
+    )[0]
+
+    assert response.live_pick_allowed is True
+    assert response.competition_readiness == "ready"
+    assert response.competition_inferred is False
+
+
+def test_inferred_competition_cap_never_raises_a_stricter_verdict() -> None:
+    """The cap is one-directional. A competition the benchmark already
+    disqualified keeps `not_ready` — being unobserved must never
+    promote a fixture to the more permissive `context_only`."""
+    service = PredictionService(StubTrainingService({"home": 0.52, "draw": 0.22, "away": 0.26}))
+    service.feature_service = StubFeatureService(
+        {"evidence_count": 2.0, "home_recent_matches": 3.0, "away_recent_matches": 3.0}
+    )
+
+    response = service.build_slate_predictions(
+        build_slate("Bundesliga", is_placeholder=True)
+    )[0]
+
+    assert response.competition_readiness == "not_ready"
+    assert response.live_pick_allowed is False
+    assert response.competition_inferred is True
+    # Untouched verdict keeps its own explanation.
+    assert "Bundesliga" in response.policy_reason
+
+
+def test_inferred_unclassified_competition_stays_blocked() -> None:
+    """An unobserved fixture on an unclassified competition — the
+    synthetic "Progol Concurso NNNN" case — must keep the block the
+    unclassified verdict already imposes."""
+    service = PredictionService(StubTrainingService({"home": 0.52, "draw": 0.22, "away": 0.26}))
+    service.feature_service = StubFeatureService(
+        {"evidence_count": 2.0, "home_recent_matches": 3.0, "away_recent_matches": 3.0}
+    )
+
+    response = service.build_slate_predictions(
+        build_slate("Progol Concurso 2345", is_placeholder=True)
+    )[0]
+
+    assert response.competition_readiness == "unclassified"
+    assert response.live_pick_allowed is False
+    assert response.confidence_band == "blocked"
 
 
 def test_prediction_blocks_when_no_data_anchors_the_match() -> None:

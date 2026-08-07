@@ -331,6 +331,7 @@ class PredictionService:
                     competition_readiness=str(competition_policy["competition_readiness"]),
                     live_pick_allowed=bool(competition_policy["live_pick_allowed"]),
                     policy_reason=str(competition_policy["policy_reason"]),
+                    competition_inferred=bool(competition_policy.get("competition_inferred", False)),
                     confidence_band=confidence_band,
                     rationale=rationale,
                     is_knockout=is_knockout,
@@ -1001,6 +1002,20 @@ class PredictionService:
             return False
         return engine not in self.NON_DEGRADED_ENGINES
 
+    # Readiness levels ordered from most restrictive to most permissive.
+    # Used only to cap an inferred competition's policy — the cap never
+    # raises a level, so a competition that was already `not_ready` or
+    # `unclassified` keeps its own verdict.
+    READINESS_PERMISSIVENESS = (
+        "unclassified",
+        "not_ready",
+        "context_only",
+        "covered",
+        "ready",
+    )
+    # Highest readiness a fixture no feed ever reported may reach.
+    INFERRED_COMPETITION_CEILING = "context_only"
+
     def _competition_policy_for_match(self, match: MatchModel) -> dict[str, object]:
         if self.training_service is None or not hasattr(self.training_service, "competition_operating_policy"):
             return {
@@ -1008,4 +1023,55 @@ class PredictionService:
                 "live_pick_allowed": False,
                 "policy_reason": "No benchmark policy is available to validate this competition.",
             }
-        return self.training_service.competition_operating_policy(match.competition.name)
+        policy = self.training_service.competition_operating_policy(match.competition.name)
+        return self._cap_inferred_competition_policy(policy, match)
+
+    def _cap_inferred_competition_policy(
+        self, policy: dict[str, object], match: MatchModel
+    ) -> dict[str, object]:
+        """Stop a guessed competition from lending its benchmark permissions.
+
+        When the resolver finds no real fixture for a Progol pair, the
+        promotion path still needs a competition, so it infers one from
+        team history (`slate_proposal_service`) and marks the match row
+        `is_placeholder`. The inferred name is a guess about which
+        tournament the pair is playing, not an observation: PG-2345 put
+        eight Leagues Cup fixtures on "Liga MX" / "MLS" and two
+        pre-season friendlies on "E0", inheriting `ready` and live-pick
+        permission that Liga MX and the Premier League earned with their
+        own history. The same Leagues Cup was `unclassified` and blocked
+        on PGM-807, where the fixtures resolved for real — the system was
+        strict exactly when it knew the competition and permissive when
+        it had guessed it.
+
+        The guess is still the best information available, so we keep it:
+        the name, the blend weights and the competition profile all stay,
+        and scoring is unchanged. Only the permission is withdrawn, and
+        only downwards.
+        """
+        if not bool(getattr(match, "is_placeholder", False)):
+            return policy
+        readiness = str(policy.get("competition_readiness", "unclassified"))
+        capped = dict(policy)
+        capped["competition_inferred"] = True
+        try:
+            level = self.READINESS_PERMISSIVENESS.index(readiness)
+            ceiling = self.READINESS_PERMISSIVENESS.index(self.INFERRED_COMPETITION_CEILING)
+        except ValueError:
+            # Unknown readiness label: withdraw the permission but leave
+            # the label alone rather than guessing where it ranks.
+            capped["live_pick_allowed"] = False
+            return capped
+        if level <= ceiling:
+            # Already at or below the ceiling. `context_only` and below
+            # never grant live picks, so there is nothing to withdraw.
+            return capped
+        capped["competition_readiness"] = self.INFERRED_COMPETITION_CEILING
+        capped["live_pick_allowed"] = False
+        capped["policy_reason"] = (
+            f"Ningun feed reporto este partido; la competencia '{match.competition.name}' "
+            f"esta inferida del historial de los equipos, no observada. Se degrada de "
+            f"'{readiness}' a '{self.INFERRED_COMPETITION_CEILING}': el benchmark de esa "
+            f"competencia no respalda este encuentro."
+        )
+        return capped
