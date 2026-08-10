@@ -63,12 +63,19 @@ def db(tmp_path):
 
 def _make_slate(session: Session, draw_code: str = "PG-ADS-1", n: int = 3) -> Any:
     now = datetime.now(timezone.utc)
+    # Teams are namespaced per draw_code so two slates in one test stay
+    # independent. They used to share names and a kickoff that differed only by
+    # the microseconds between two datetime.now() calls, which produced a
+    # separate match row per slate only because the identity lookup demanded an
+    # exact timestamp. Promotion now recognises a fixture stated slightly
+    # differently, so same-named teams at the same hour correctly resolve to
+    # ONE match — and these slates would silently share their rows.
     matches = [
         MatchReferencePayload(
             position=i,
             competition=CompetitionPayload(name="Liga MX"),
-            home_team=TeamPayload(name=f"Home{i}"),
-            away_team=TeamPayload(name=f"Away{i}"),
+            home_team=TeamPayload(name=f"Home{i}-{draw_code}"),
+            away_team=TeamPayload(name=f"Away{i}-{draw_code}"),
             kickoff_at=now + timedelta(days=10),
         )
         for i in range(1, n + 1)

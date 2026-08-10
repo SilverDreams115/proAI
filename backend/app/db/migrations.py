@@ -10,7 +10,7 @@ from sqlalchemy.engine import Engine
 
 from app.db.base import Base
 
-SCHEMA_VERSION = 36
+SCHEMA_VERSION = 37
 POSTGRES_MIGRATION_LOCK_ID = 791796
 ALEMBIC_VERSION_PATTERN = re.compile(r"^0*(?P<version>\d+)_.*\.py$")
 
@@ -177,6 +177,9 @@ def _run_migrations_unlocked(engine: Engine) -> None:
         if current_version < 36:
             _migrate_to_v36(connection)
             current_version = 36
+        if current_version < 37:
+            _migrate_to_v37(connection)
+            current_version = 37
         connection.execute(text("UPDATE schema_migrations SET version = :version"), {"version": current_version})
 
 
@@ -691,6 +694,10 @@ def _add_column_if_missing(connection, table_name: str, column_name: str, ddl: s
     columns = {column["name"] for column in inspector.get_columns(table_name)}
     if column_name not in columns:
         connection.execute(text(f"ALTER TABLE {table_name} ADD COLUMN {ddl}"))
+
+
+def _table_exists(connection, table_name: str) -> bool:
+    return inspect(connection).has_table(table_name)
 
 
 def _deduplicate_sqlite_rows(connection) -> None:
@@ -1455,6 +1462,177 @@ def _migrate_to_v34(connection) -> None:
             """),
             {"target_id": target[0], "draw_code": draw_code, "position": position},
         )
+
+
+_DUPLICATE_FIXTURE_TOLERANCE_SECONDS = 48 * 3600
+
+# (table, fk column, columns that must stay unique alongside the fk)
+_MATCH_DEPENDENTS = (
+    ("match_results", "match_id", ("source_id", "played_at")),
+    ("match_live_results", "match_id", ("source_id",)),
+    ("match_stat_snapshots", "match_id", ("source_id", "captured_at", "stat_type")),
+    ("player_availability", "match_id",
+     ("team_id", "player_name", "status", "category", "source_id", "captured_at")),
+    ("evidence_items", "match_id", ()),
+    ("match_feature_snapshots", "match_id", ()),
+    ("predictions", "match_id", ()),
+    ("source_documents", "matched_match_id", ()),
+    # Must be here, and a dry run is what proved it: leaving the slate link
+    # behind while the results move to the survivor strips the very coverage
+    # this migration exists to restore. PGM-800 went from complete to 4/9 in a
+    # rehearsal that omitted this line. `uq_progol_slate_match` keeps one link
+    # per (slate, match), so a slate holding both rows of a cluster collapses
+    # to a single link rather than duplicating a position.
+    ("progol_slate_matches", "match_id", ("slate_id",)),
+)
+
+
+def _migrate_to_v37(connection) -> None:
+    """Consolidate fixtures that exist twice because feeds disagree on kickoff.
+
+    ``uq_matches_fixture_identity`` keys on the exact kickoff, so one real
+    match reported by two sources an hour apart is two rows, and everything
+    that arrives later splits between them. Production carries 41 such groups:
+    14 have a result on both sides, and 27 have a hollow twin.
+
+    The hollow twin is the expensive half. PGM-797 has five positions pointing
+    at rows that hold the EVIDENCE while their twins hold the RESULTS, which is
+    why that slate reports 1/9 canonical coverage while eight results sit in
+    the database. Note the direction — the row the slate points at is not the
+    empty one, so relinking the slate to the twin would trade one loss for
+    another. Consolidation has to move the dependents, not the link.
+
+    Survivor per cluster, in order: the row a slate already points at, then a
+    real row over a fabricated one, then the row carrying more results, then
+    the earliest kickoff. Keeping the slate's row means predictions, snapshots
+    and ticket history stay attached to what produced them.
+
+    Every dependent is re-pointed, skipping rows that would collide with a
+    unique key the survivor already satisfies. Losers are then marked
+    ``is_placeholder`` so no resolver returns them again. Nothing is deleted:
+    a skipped dependent stays readable on a row that is out of circulation.
+
+    The companion change is in ``SlateRepository.upsert_slate``, which now
+    falls back to ``find_match_near_identity`` before creating a row, so
+    promotion stops minting these. This migration only cleans up what the
+    old behaviour already produced. Mirrors alembic 0037.
+    """
+    pair_sql = (
+        """
+        SELECT a.id, b.id
+        FROM matches a
+        JOIN matches b
+          ON a.competition_id = b.competition_id
+         AND a.home_team_id  = b.home_team_id
+         AND a.away_team_id  = b.away_team_id
+         AND a.id < b.id
+        WHERE ABS(EXTRACT(EPOCH FROM (a.kickoff_at - b.kickoff_at))) <= :tolerance
+        """
+        if connection.dialect.name != "sqlite"
+        else """
+        SELECT a.id, b.id
+        FROM matches a
+        JOIN matches b
+          ON a.competition_id = b.competition_id
+         AND a.home_team_id  = b.home_team_id
+         AND a.away_team_id  = b.away_team_id
+         AND a.id < b.id
+        WHERE ABS((julianday(a.kickoff_at) - julianday(b.kickoff_at)) * 86400.0)
+              <= :tolerance
+        """
+    )
+    pairs = connection.execute(
+        text(pair_sql), {"tolerance": _DUPLICATE_FIXTURE_TOLERANCE_SECONDS}
+    ).fetchall()
+    if not pairs:
+        return
+
+    # Union the pairs into clusters so a fixture recorded three times folds
+    # into one survivor rather than into two half-merges.
+    parent: dict[str, str] = {}
+
+    def _find(node: str) -> str:
+        parent.setdefault(node, node)
+        while parent[node] != node:
+            parent[node] = parent[parent[node]]
+            node = parent[node]
+        return node
+
+    def _union(left: str, right: str) -> None:
+        left_root, right_root = _find(left), _find(right)
+        if left_root != right_root:
+            parent[right_root] = left_root
+
+    for left, right in pairs:
+        _union(left, right)
+
+    clusters: dict[str, list[str]] = {}
+    for node in list(parent):
+        clusters.setdefault(_find(node), []).append(node)
+
+    for members in clusters.values():
+        if len(members) < 2:
+            continue
+        ranked = sorted(members, key=lambda mid: _duplicate_survivor_rank(connection, mid))
+        survivor, losers = ranked[0], ranked[1:]
+        for loser in losers:
+            _repoint_match_dependents(connection, loser, survivor)
+            connection.execute(
+                text("UPDATE matches SET is_placeholder = :yes WHERE id = :id"),
+                {"yes": True, "id": loser},
+            )
+
+
+def _duplicate_survivor_rank(connection, match_id: str) -> tuple:
+    """Lower sorts first: slate link, then real over fabricated, then more
+    results, then earliest kickoff, then id so the order is deterministic."""
+    row = connection.execute(
+        text(
+            """
+            SELECT
+              (SELECT COUNT(*) FROM progol_slate_matches sm WHERE sm.match_id = m.id),
+              m.is_placeholder,
+              (SELECT COUNT(*) FROM match_results r WHERE r.match_id = m.id),
+              m.kickoff_at
+            FROM matches m WHERE m.id = :id
+            """
+        ),
+        {"id": match_id},
+    ).fetchone()
+    if row is None:
+        return (1, 1, 0, "", match_id)
+    slate_links, is_placeholder, results, kickoff = row
+    return (
+        0 if slate_links else 1,
+        1 if is_placeholder else 0,
+        -int(results or 0),
+        str(kickoff),
+        match_id,
+    )
+
+
+def _repoint_match_dependents(connection, loser_id: str, survivor_id: str) -> None:
+    for table, column, unique_rest in _MATCH_DEPENDENTS:
+        if not _table_exists(connection, table):
+            continue
+        if unique_rest:
+            conflict = " AND ".join(f"other.{col} = {table}.{col}" for col in unique_rest)
+            statement = text(
+                f"""
+                UPDATE {table}
+                SET {column} = :survivor
+                WHERE {column} = :loser
+                  AND NOT EXISTS (
+                      SELECT 1 FROM {table} AS other
+                      WHERE other.{column} = :survivor AND {conflict}
+                  )
+                """
+            )
+        else:
+            statement = text(
+                f"UPDATE {table} SET {column} = :survivor WHERE {column} = :loser"
+            )
+        connection.execute(statement, {"survivor": survivor_id, "loser": loser_id})
 
 
 _BRASILEIRAO_PROVIDER_SPLITS = (

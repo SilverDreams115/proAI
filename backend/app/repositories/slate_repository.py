@@ -320,6 +320,22 @@ class SlateRepository:
                 kickoff_at=item.kickoff_at,
             )
             if match is None:
+                # The exact-kickoff lookup above is the unique constraint's own
+                # notion of identity, and promotion used to create a row the
+                # moment it missed. But the LN programme and the feeds routinely
+                # state one fixture an hour apart, so that miss was minting a
+                # second row for a match already ingested. The two then split
+                # what arrived later: PGM-797 ended up with five positions on
+                # rows holding the evidence while their twins held the results,
+                # which is why the slate reports 1/9 canonical coverage with
+                # eight results sitting in the database.
+                match = entity_repository.find_match_near_identity(
+                    competition_id=competition.id,
+                    home_team_id=home_team.id,
+                    away_team_id=away_team.id,
+                    kickoff_at=item.kickoff_at,
+                )
+            if match is None:
                 match = MatchModel(
                     competition=competition,
                     home_team=home_team,

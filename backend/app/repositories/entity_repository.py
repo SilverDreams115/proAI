@@ -1,3 +1,5 @@
+from datetime import timedelta, timezone
+
 from sqlalchemy import case
 from sqlalchemy import func
 from sqlalchemy import or_
@@ -12,6 +14,11 @@ from app.models.tables import PlayerModel
 from app.models.tables import TeamPlayerModel
 from app.models.tables import TeamAliasModel
 from app.models.tables import TeamModel
+
+# Same tolerance the result dedupe uses: feeds disagree by an hour when one
+# stores local kickoff against UTC, and by a day when one dates a late kickoff
+# by the calendar day it ends on. A rematch is never this close.
+_NEAR_IDENTITY_TOLERANCE = timedelta(hours=48)
 
 
 class EntityRepository:
@@ -219,6 +226,63 @@ class EntityRepository:
             )
         )
         return self.session.scalar(statement)
+
+    def find_match_near_identity(
+        self,
+        *,
+        competition_id: str,
+        home_team_id: str,
+        away_team_id: str,
+        kickoff_at,
+        tolerance=_NEAR_IDENTITY_TOLERANCE,
+    ) -> MatchModel | None:
+        """Same fixture, allowing the feeds to disagree about the kickoff.
+
+        ``find_match_by_identity`` demands an exact timestamp, which is what
+        ``uq_matches_fixture_identity`` enforces. Callers that create a row on
+        a miss therefore mint a second row for one real fixture whenever their
+        source states the kickoff an hour off — and the two then split the
+        evidence and the result between them. The results path already guards
+        against this with its own nearby lookup; this is the same idea, shared.
+
+        Fabricated rows are excluded rather than merely ranked last, for the
+        reason v32 recorded: a construction is not evidence that a fixture
+        exists at that hour, and returning one copies an invented kickoff into
+        a new slate. Re-promoting the same slate still finds its own row
+        through the exact-kickoff lookup, so idempotency does not depend on
+        this one.
+        """
+        if kickoff_at.tzinfo is None:
+            kickoff_at = kickoff_at.replace(tzinfo=timezone.utc)
+        statement = (
+            select(MatchModel)
+            .where(
+                MatchModel.competition_id == competition_id,
+                MatchModel.home_team_id == home_team_id,
+                MatchModel.away_team_id == away_team_id,
+                MatchModel.kickoff_at >= kickoff_at - tolerance,
+                MatchModel.kickoff_at <= kickoff_at + tolerance,
+                MatchModel.is_placeholder.is_(False),
+            )
+            .options(
+                joinedload(MatchModel.home_team),
+                joinedload(MatchModel.away_team),
+                joinedload(MatchModel.competition),
+            )
+        )
+        best: MatchModel | None = None
+        best_key: tuple[bool, float] | None = None
+        for candidate in self.session.scalars(statement).unique().all():
+            candidate_kickoff = candidate.kickoff_at
+            if candidate_kickoff.tzinfo is None:
+                candidate_kickoff = candidate_kickoff.replace(tzinfo=timezone.utc)
+            key = (
+                bool(candidate.is_placeholder),
+                abs((candidate_kickoff - kickoff_at).total_seconds()),
+            )
+            if best_key is None or key < best_key:
+                best, best_key = candidate, key
+        return best
 
     def attach_player_to_team(
         self,
