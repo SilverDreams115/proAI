@@ -96,11 +96,26 @@ calibration:
 publish-backtest:
 	docker compose exec proai sh -c 'cd /app/backend && python -m app.cli publish-backtest'
 
+# The report reads the API, which requires auth. Take the key from the
+# environment when it is already exported, otherwise off .env, so the target
+# does not depend on the caller having sourced anything.
 confidence-report:
-	.venv/bin/python backend/scripts/current_progol_confidence_report.py
+	@PROAI_AUTH_API_KEY="$${PROAI_AUTH_API_KEY:-$$(sed -n 's/^PROAI_AUTH_API_KEY=//p' .env | tr -d "\"'")}" \
+		$(PYTHON) backend/scripts/current_progol_confidence_report.py
 
+# Runs inside the SERVING container rather than a throwaway one, because the
+# base URL has to satisfy TrustedHostMiddleware: PROAI_ALLOWED_HOSTS lists
+# localhost/127.0.0.1, never the compose service name, so a separate container
+# calling http://proai:8000 is answered 400 "Invalid host header" before the
+# route is ever reached. From inside the serving container 127.0.0.1 is both
+# reachable and an allowed Host, and PROAI_AUTH_API_KEY is already in its
+# environment. The report is then copied out instead of being written through
+# a root-owned bind mount.
 confidence-report-docker:
-	docker compose run --rm --user root -e PYTHONPATH=/app/backend -v ./reports:/app/reports proai sh -c 'cd /app/backend && python scripts/current_progol_confidence_report.py --base-url http://proai:8000 --output /app/reports/current_progol_confidence.md'
+	docker compose exec -T --workdir /app/backend proai \
+		python scripts/current_progol_confidence_report.py \
+		--base-url http://127.0.0.1:8000 --output /tmp/current_progol_confidence.md
+	docker compose cp proai:/tmp/current_progol_confidence.md reports/current_progol_confidence.md
 
 production-check:
 	docker compose exec proai sh -c 'cd /app/backend && python -m app.cli production-check'
