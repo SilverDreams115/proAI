@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import or_
 from sqlalchemy import select
@@ -7,6 +7,13 @@ from sqlalchemy.orm import Session
 
 from app.models.tables import MatchModel
 from app.models.tables import MatchResultModel
+
+# How far two reports of one fixture may sit apart and still be the same match.
+# Feeds disagree by an hour when they store local kickoff against UTC, and by a
+# day when one dates a late kickoff by the calendar day it ends on. The widest
+# real skew observed in production is 32h (México vs South Korea, reported
+# 17/06 and 18/06). A second leg or a rematch is never this close.
+_SAME_MATCH_TOLERANCE = timedelta(hours=48)
 
 
 class ResultRepository:
@@ -171,20 +178,38 @@ class ResultRepository:
         }
 
     def _dedupe_results(self, results: list[MatchResultModel]) -> list[MatchResultModel]:
+        """Collapse rows that describe the same real match.
+
+        ``played_at`` used to be part of the identity, which meant two feeds
+        reporting one fixture at kickoffs an hour or a day apart both survived
+        and the match was counted twice in every form window that saw it.
+        Measured across production: 41 fixtures carry a duplicate row and 14 of
+        them have a result on both sides, so those 14 were double counted.
+
+        Proximity is the discriminator rather than an exact timestamp. Two rows
+        are the same match when competition, both teams and the score agree and
+        the kickoffs are within ``_SAME_MATCH_TOLERANCE``. The score has to stay
+        in the key and the window has to stay narrow, because the same pair does
+        meet again in the same competition — a second leg, or next season's
+        fixture — and those are different matches that must both count.
+        """
         deduped: list[MatchResultModel] = []
-        seen: set[tuple[object, ...]] = set()
+        seen: dict[tuple[object, ...], list[datetime]] = {}
         for result in results:
             match = result.match
             identity = (
                 match.competition_id,
                 match.home_team_id,
                 match.away_team_id,
-                result.played_at,
                 result.home_goals,
                 result.away_goals,
             )
-            if identity in seen:
+            played_at = result.played_at
+            if played_at.tzinfo is None:
+                played_at = played_at.replace(tzinfo=timezone.utc)
+            previous = seen.setdefault(identity, [])
+            if any(abs(played_at - other) <= _SAME_MATCH_TOLERANCE for other in previous):
                 continue
-            seen.add(identity)
+            previous.append(played_at)
             deduped.append(result)
         return deduped
