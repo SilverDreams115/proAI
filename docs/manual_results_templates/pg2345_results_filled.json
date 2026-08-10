@@ -1,0 +1,91 @@
+{
+  "draw_code": "PG-2345",
+  "source": "manual_official",
+  "source_note": "Cadena oficial de signos leida de TuLotero (concurso 2345, publicado 10/08/2026): V V V V L L L L V L L L E L. Marcadores obtenidos de TheSportsDB (searchevents/eventsday, clave publica 3) para los 14 partidos; la cadena derivada de los marcadores coincide 100% con TuLotero (14/14). LN no habia publicado el 2345 en loterianacional.gob.mx/Progol/Resultados al 2026-08-10 (ultimo mostrado = 2344). Ningun partido de Leagues Cup de esta jornada se decidio en penales (el proveedor marca PEN cuando ocurre; los 14 aparecen FT), por lo que el marcador de 90' es el mostrado.",
+  "results": [
+    {
+      "position": 1,
+      "sign": "V",
+      "score": "1-2",
+      "source_note": "Orlando City vs Leon (Leagues Cup, 2026-08-08)"
+    },
+    {
+      "position": 2,
+      "sign": "V",
+      "score": "1-2",
+      "source_note": "Inter Miami vs Monterrey (Leagues Cup, 2026-08-09)"
+    },
+    {
+      "position": 3,
+      "sign": "V",
+      "score": "0-1",
+      "source_note": "Guadalajara vs FC Dallas (Leagues Cup, 2026-08-09; proveedor lo nombra CD Guadalajara)"
+    },
+    {
+      "position": 4,
+      "sign": "V",
+      "score": "0-1",
+      "source_note": "Toluca vs Los Angeles FC (Leagues Cup, 2026-08-09)"
+    },
+    {
+      "position": 5,
+      "sign": "L",
+      "score": "2-1",
+      "source_note": "Cruz Azul vs New York City FC (Leagues Cup, 2026-08-09)"
+    },
+    {
+      "position": 6,
+      "sign": "L",
+      "score": "3-1",
+      "source_note": "Philadelphia Union vs Necaxa (Leagues Cup, 2026-08-09)"
+    },
+    {
+      "position": 7,
+      "sign": "L",
+      "score": "1-0",
+      "source_note": "San Diego vs Tijuana (Leagues Cup, kickoff 2026-08-09 noche / 2026-08-10 UTC)"
+    },
+    {
+      "position": 8,
+      "sign": "L",
+      "score": "3-1",
+      "source_note": "America vs Portland Timbers (Leagues Cup, kickoff 2026-08-09 noche / 2026-08-10 UTC)"
+    },
+    {
+      "position": 9,
+      "sign": "V",
+      "score": "1-2",
+      "source_note": "Juventus FC vs FC Internazionale Milano (amistoso de pretemporada, 2026-08-08)"
+    },
+    {
+      "position": 10,
+      "sign": "L",
+      "score": "3-0",
+      "source_note": "Chelsea vs AC Milan (amistoso de pretemporada, 2026-08-08)"
+    },
+    {
+      "position": 11,
+      "sign": "L",
+      "score": "3-1",
+      "source_note": "Man City vs Atletico de Madrid (amistoso de pretemporada, 2026-08-09)"
+    },
+    {
+      "position": 12,
+      "sign": "L",
+      "score": "1-0",
+      "source_note": "Maritimo vs Casa Pia (Primeira Liga, 2026-08-08)"
+    },
+    {
+      "position": 13,
+      "sign": "E",
+      "score": "1-1",
+      "source_note": "Botafogo vs Fluminense (Brasileirao, 2026-08-09)"
+    },
+    {
+      "position": 14,
+      "sign": "L",
+      "score": "2-0",
+      "source_note": "Dundee vs Aberdeen (Scottish Premiership, 2026-08-08)"
+    }
+  ]
+}
