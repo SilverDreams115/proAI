@@ -10,7 +10,7 @@ from sqlalchemy.engine import Engine
 
 from app.db.base import Base
 
-SCHEMA_VERSION = 35
+SCHEMA_VERSION = 36
 POSTGRES_MIGRATION_LOCK_ID = 791796
 ALEMBIC_VERSION_PATTERN = re.compile(r"^0*(?P<version>\d+)_.*\.py$")
 
@@ -174,6 +174,9 @@ def _run_migrations_unlocked(engine: Engine) -> None:
         if current_version < 35:
             _migrate_to_v35(connection)
             current_version = 35
+        if current_version < 36:
+            _migrate_to_v36(connection)
+            current_version = 36
         connection.execute(text("UPDATE schema_migrations SET version = :version"), {"version": current_version})
 
 
@@ -1452,6 +1455,146 @@ def _migrate_to_v34(connection) -> None:
             """),
             {"target_id": target[0], "draw_code": draw_code, "position": position},
         )
+
+
+_BRASILEIRAO_PROVIDER_SPLITS = (
+    # (duplicate to retire, canonical to keep)
+    ("Cruzeiro EC", "Cruzeiro"),
+    ("Flamengo", "CR Flamengo"),
+    ("Coritiba FBC", "Coritiba"),
+    ("Grêmio FBPA", "Gremio"),
+    ("Bahia", "EC Bahia"),
+    ("SC Corinthians Paulista", "Corinthians"),
+    ("Palmeiras", "SE Palmeiras"),
+    ("Fortaleza EC", "Fortaleza"),
+    ("Chapecoense AF", "Chapecoense"),
+    ("EC Juventude", "Juventude"),
+    ("Clube do Remo", "Remo"),
+    ("CR Vasco da Gama", "Vasco da Gama"),
+    ("SC Recife", "Sport Club do Recife"),
+    ("Atlético Mineiro", "CA Mineiro"),
+    ("CA Paranaense", "Athletico Paranaense"),
+)
+
+
+def _fold_provider_split(connection, duplicate_name: str, canonical_name: str) -> None:
+    """Merge a provider-split club row and close the door behind it.
+
+    ``_merge_team_into`` alone is not durable here. It re-points matches and
+    moves aliases but leaves the duplicate row under its own name, and
+    ``EntityRepository.find_team_by_alias`` matches on ``teams.name`` as well
+    as on the alias table — so the next ingest from the feed that writes the
+    duplicate spelling resolves straight back to it and the split reopens on
+    the following jornada.
+
+    So after the merge this pins the duplicate's spelling as an alias of the
+    canonical row and retires the duplicate: renamed ``<name> (merged)`` and
+    flagged a placeholder, which is what ``merge_duplicate_team.py`` does and
+    what the ``is_placeholder ASC`` ordering in that resolver relies on.
+
+    Nothing is deleted. Fixtures that would collide with one already sitting
+    on the canonical row stay behind on the retired row — they are duplicates
+    of a fixture the canonical already carries, and a retired row is never
+    resolved again, so they fall out of every form window.
+    """
+    from app.services.normalization_service import NormalizationService
+
+    duplicate = connection.execute(
+        text("SELECT id FROM teams WHERE name = :n LIMIT 1"), {"n": duplicate_name}
+    ).fetchone()
+    canonical = connection.execute(
+        text("SELECT id FROM teams WHERE name = :n LIMIT 1"), {"n": canonical_name}
+    ).fetchone()
+    if duplicate is None or canonical is None or duplicate[0] == canonical[0]:
+        return  # fresh DB, already folded, or same row
+
+    _merge_team_into(connection, duplicate_name, canonical_name)
+
+    # Pin the retired spelling so the feed that writes it resolves to the
+    # survivor. Both alias columns are unique; skip when anything already
+    # owns the string rather than stealing it from another team.
+    slug = NormalizationService().normalize_team_name(duplicate_name)
+    taken = connection.execute(
+        text(
+            "SELECT team_id FROM team_aliases"
+            " WHERE alias = :a OR normalized_alias = :s LIMIT 1"
+        ),
+        {"a": duplicate_name, "s": slug},
+    ).fetchone()
+    if taken is None:
+        connection.execute(
+            text(
+                "INSERT INTO team_aliases (id, team_id, alias, normalized_alias)"
+                " VALUES (:i, :t, :a, :s)"
+            ),
+            {"i": str(uuid.uuid4()), "t": canonical[0], "a": duplicate_name, "s": slug},
+        )
+
+    connection.execute(
+        text(
+            "UPDATE teams SET name = :merged, is_placeholder = TRUE"
+            " WHERE id = :id AND name = :original"
+        ),
+        {"merged": f"{duplicate_name} (merged)", "id": duplicate[0], "original": duplicate_name},
+    )
+
+
+def _migrate_to_v36(connection) -> None:
+    """Fold the Brasileirão club rows that two feeds split in half.
+
+    football-data.org and TheSportsDB spell Brazilian clubs differently, and
+    neither spelling was pinned as an alias of the other, so most of the
+    league is carrying two parallel rows: one per feed, each holding half the
+    history. Fifteen clubs are affected.
+
+    Found through PGM-808 position 9, Cruzeiro vs Flamengo. The slate resolved
+    to ``Cruzeiro`` (116 matches, last played 2026-07-30) while ``Cruzeiro EC``
+    (66 matches, last played 2026-08-09) held the fixtures the results feed
+    keeps writing. Flamengo is split the same way but ASYMMETRICALLY — the
+    slate landed on ``CR Flamengo``, the rich side. So the model compared a
+    fully-fed team against one missing two rounds, read the gap as 9.7 days of
+    extra rest, and flipped the pick from 1 to 2 while promoting the position
+    from REVISAR to LISTO. The pick was an artefact of the split, not a read
+    on the match.
+
+    Membership is established by fixture identity, never by name similarity.
+    Two rows for one club cannot hold different opponents at the same kickoff;
+    two rows for different clubs cannot hold the same opponent at the same
+    kickoff over and over. Every pair below has zero conflicts and positive
+    overlap once opponents are themselves resolved through this same mapping —
+    that second step matters, because the raw comparison reports Cruzeiro's 13
+    "conflicts" as different opponents when they are Chapecoense vs
+    Chapecoense AF, Gremio vs Grêmio FBPA and so on: the same match, with the
+    rival written under its own split pair.
+
+    Direction follows the row carrying more results, which is the guard
+    ``merge_duplicate_team.py`` enforces. It is safe to pick on that basis
+    rather than on which feed is live, because the retired spelling is pinned
+    as an alias, so either feed resolves to the survivor afterwards.
+
+    Deliberately excluded:
+
+    * ``Botafogo`` / ``Botafogo-SP`` — different clubs (Rio and Ribeirão
+      Preto). Two same-kickoff fixtures against different opponents prove it,
+      and this is exactly the false positive a name-similarity sweep makes.
+    * ``América Mineiro`` / ``Athletic Club-MG`` — different clubs, no shared
+      fixture anywhere.
+    * ``Atletico MG`` / ``Atletico PR`` / ``Atletico GO`` — a 2024-only CSV
+      season (38 matches each, all 2024-04-14 to 2024-12-08) that overlaps no
+      modern row, so nothing available proves identity. They are almost
+      certainly Mineiro, Paranaense and Goianiense, but "almost certainly" is
+      not the standard the rest of this list meets.
+    * ``Inter Porto Alegre`` — a one-match placeholder with no result and no
+      overlap with ``Internacional``. Placeholders already lose resolution
+      priority, so it costs nothing to leave it.
+
+    Same contract as v14/v16/v21/v27/v30/v31/v33/v35: additive, nothing
+    deleted, no-op when a row is absent, idempotent on re-run. Does not touch
+    composition_hash, which fingerprints the promotion payload rather than the
+    DB rows. Mirrors alembic 0036.
+    """
+    for duplicate_name, canonical_name in _BRASILEIRAO_PROVIDER_SPLITS:
+        _fold_provider_split(connection, duplicate_name, canonical_name)
 
 
 def _migrate_to_v35(connection) -> None:
