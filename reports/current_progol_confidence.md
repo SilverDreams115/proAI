@@ -1,7 +1,7 @@
-# Reporte de confianza - PG-2334
+# Reporte de confianza - PGM-808
 
-Generado: 2026-05-22T11:33:49
-Boleta: Progol Semanal 2334
+Generado: 2026-08-10T10:58:21
+Boleta: Progol 808
 
 ## Criterio
 
@@ -11,163 +11,108 @@ Boleta: Progol Semanal 2334
 
 ## Resumen
 
-- listo: 1
-- cautela: 11
-- benchmark bajo: 2
-- datos insuficientes: 0
+- listo: 0
+- cautela: 4
+- benchmark bajo: 0
+- datos insuficientes: 5
 
 ## Partido Por Partido
 
-### 1. Pumas vs Cruz Azul
+### 1. Charlotte vs Pachuca
 
 - Categoria: cautela
-- Jugada: L / V
-- Probabilidades: L 42% · V 34% · E 24%
-- Benchmark: covered; confianza medium
-- Calidad: 90/100 (good)
-- Evidencia/Forma/H2H: evidencia 1; forma 2; H2H 1
+- Jugada: L
+- Probabilidades: L 43% · V 34% · E 23%
+- Benchmark: context_only; confianza medium
+- Calidad: 63/100 (partial)
+- Evidencia/Forma/H2H: evidencia 1; forma 10; H2H 0
 - Accion: Priorizar doble o triple en completa.
-- Razon: Historical coverage exists for Liga MX; predictions are shown with caution. No dejar simple
+- Razon: Ningun feed reporto este partido; la competencia 'MLS' esta inferida del historial de los equipos, no observada. Se degrada de 'covered' a 'context_only': el benchmark de esa competencia no respalda este encuentro. No dejar simple Falta: historial directo, benchmark historico
 
-### 2. Espanyol vs Real Sociedad
+### 2. Columbus Crew vs Pumas
 
-- Categoria: benchmark bajo
-- Jugada: L / V
-- Probabilidades: L 42% · V 34% · E 24%
-- Benchmark: not_ready; confianza medium
-- Calidad: 75/100 (good)
-- Evidencia/Forma/H2H: evidencia 2; forma 2; H2H 1
-- Accion: Cubrir si entra en presupuesto; no subir confianza sin backtest.
-- Razon: Historical benchmark is below the live-pick threshold for LaLiga. No dejar simple Falta: benchmark confiable
+- Categoria: cautela
+- Jugada: L
+- Probabilidades: L 58% · V 23% · E 19%
+- Benchmark: context_only; confianza high
+- Calidad: 63/100 (partial)
+- Evidencia/Forma/H2H: evidencia 1; forma 10; H2H 0
+- Accion: Mantener simple solo si la papeleta ya agoto dobles/triples.
+- Razon: Ningun feed reporto este partido; la competencia 'MLS' esta inferida del historial de los equipos, no observada. Se degrada de 'covered' a 'context_only': el benchmark de esa competencia no respalda este encuentro. Cubrir si hay presupuesto Falta: historial directo, benchmark historico
 
-### 3. Villarreal vs Atletico de Madrid
+### 3. Cincinnati vs Atlas
 
-- Categoria: benchmark bajo
+- Categoria: cautela
+- Jugada: L
+- Probabilidades: L 59% · V 22% · E 19%
+- Benchmark: context_only; confianza high
+- Calidad: 63/100 (partial)
+- Evidencia/Forma/H2H: evidencia 1; forma 10; H2H 0
+- Accion: Mantener simple solo si la papeleta ya agoto dobles/triples.
+- Razon: Ningun feed reporto este partido; la competencia 'MLS' esta inferida del historial de los equipos, no observada. Se degrada de 'covered' a 'context_only': el benchmark de esa competencia no respalda este encuentro. Cubrir si hay presupuesto Falta: historial directo, benchmark historico
+
+### 4. Minnesota United vs Atlante
+
+- Categoria: datos insuficientes
 - Jugada: V / L
-- Probabilidades: V 43% · L 36% · E 22%
-- Benchmark: not_ready; confianza medium
-- Calidad: 75/100 (good)
-- Evidencia/Forma/H2H: evidencia 2; forma 2; H2H 1
-- Accion: Cubrir si entra en presupuesto; no subir confianza sin backtest.
-- Razon: Historical benchmark is below the live-pick threshold for LaLiga. No dejar simple Falta: benchmark confiable
+- Probabilidades: V 42% · L 35% · E 23%
+- Benchmark: context_only; confianza medium
+- Calidad: 33/100 (thin)
+- Evidencia/Forma/H2H: evidencia 0; forma 8; H2H 0
+- Accion: No subir confianza hasta reforzar evidencia/forma reciente.
+- Razon: Ningun feed reporto este partido; la competencia 'MLS' esta inferida del historial de los equipos, no observada. Se degrada de 'covered' a 'context_only': el benchmark de esa competencia no respalda este encuentro. No dejar simple Falta: evidencia contextual, historial directo, benchmark historico
 
-### 4. Brighton vs Manchester United
-
-- Categoria: listo
-- Jugada: L
-- Probabilidades: L 59% · E 22% · V 19%
-- Benchmark: ready; confianza high
-- Calidad: 90/100 (good)
-- Evidencia/Forma/H2H: evidencia 3; forma 2; H2H 1
-- Accion: Fijo defendible si coincide con presupuesto y validacion humana.
-- Razon: Historical benchmark passed for Premier League regime. Fijo defendible
-
-### 5. Fulham vs Newcastle
+### 5. Tigres vs Vancouver Whitecaps
 
 - Categoria: cautela
-- Jugada: L / V
-- Probabilidades: L 39% · V 37% · E 24%
-- Benchmark: ready; confianza low
-- Calidad: 90/100 (good)
-- Evidencia/Forma/H2H: evidencia 3; forma 2; H2H 5
+- Jugada: E / L
+- Probabilidades: E 39% · L 35% · V 26%
+- Benchmark: context_only; confianza low
+- Calidad: 63/100 (partial)
+- Evidencia/Forma/H2H: evidencia 1; forma 8; H2H 0
 - Accion: Priorizar doble o triple en completa.
-- Razon: Historical benchmark passed for Premier League regime. No dejar simple
+- Razon: Ningun feed reporto este partido; la competencia 'Liga MX' esta inferida del historial de los equipos, no observada. Se degrada de 'ready' a 'context_only': el benchmark de esa competencia no respalda este encuentro. No dejar simple Falta: historial directo, benchmark historico
 
-### 6. Sunderland vs Chelsea
+### 6. Monterrey vs Nashville SC
 
-- Categoria: cautela
-- Jugada: L / V
-- Probabilidades: L 40% · V 38% · E 22%
-- Benchmark: ready; confianza low
-- Calidad: 90/100 (good)
-- Evidencia/Forma/H2H: evidencia 3; forma 2; H2H 1
-- Accion: Priorizar doble o triple en completa.
-- Razon: Historical benchmark passed for Premier League regime. No dejar simple
-
-### 7. Minnesota vs Real Salt Lake
-
-- Categoria: cautela
+- Categoria: datos insuficientes
 - Jugada: L
-- Probabilidades: L 50% · V 28% · E 22%
-- Benchmark: covered; confianza medium
-- Calidad: 90/100 (good)
-- Evidencia/Forma/H2H: evidencia 3; forma 2; H2H 1
-- Accion: Mantener simple solo si la papeleta ya agoto dobles/triples.
-- Razon: Historical coverage exists for MLS; predictions are shown with caution. Cubrir si hay presupuesto
+- Probabilidades: L 51% · E 31% · V 18%
+- Benchmark: context_only; confianza medium
+- Calidad: 33/100 (thin)
+- Evidencia/Forma/H2H: evidencia 0; forma 10; H2H 0
+- Accion: No subir confianza hasta reforzar evidencia/forma reciente.
+- Razon: Ningun feed reporto este partido; la competencia 'Liga MX' esta inferida del historial de los equipos, no observada. Se degrada de 'ready' a 'context_only': el benchmark de esa competencia no respalda este encuentro. Cubrir si hay presupuesto Falta: evidencia contextual, historial directo, benchmark historico
 
-### 8. San Diego vs Vancouver
+### 7. Seattle Sounders vs Guadalajara
 
-- Categoria: cautela
-- Jugada: V / L
-- Probabilidades: V 43% · L 36% · E 22%
-- Benchmark: covered; confianza medium
-- Calidad: 90/100 (good)
-- Evidencia/Forma/H2H: evidencia 3; forma 2; H2H 1
-- Accion: Priorizar doble o triple en completa.
-- Razon: Historical coverage exists for MLS; predictions are shown with caution. No dejar simple
-
-### 9. Vitoria BA vs Internacional Porto Alegre
-
-- Categoria: cautela
+- Categoria: datos insuficientes
 - Jugada: L
-- Probabilidades: L 49% · V 29% · E 22%
+- Probabilidades: L 43% · E 29% · V 28%
 - Benchmark: context_only; confianza medium
-- Calidad: 83/100 (good)
-- Evidencia/Forma/H2H: evidencia 1; forma 3; H2H 1
-- Accion: Mantener simple solo si la papeleta ya agoto dobles/triples.
-- Razon: Brazil Serie A context is present, but no audited backtest is loaded for live picks. Cubrir si hay presupuesto Falta: benchmark historico
+- Calidad: 33/100 (thin)
+- Evidencia/Forma/H2H: evidencia 0; forma 10; H2H 0
+- Accion: No subir confianza hasta reforzar evidencia/forma reciente.
+- Razon: Ningun feed reporto este partido; la competencia 'MLS' esta inferida del historial de los equipos, no observada. Se degrada de 'covered' a 'context_only': el benchmark de esa competencia no respalda este encuentro. No dejar simple Falta: evidencia contextual, historial directo, benchmark historico
 
-### 10. Flamengo vs Palmeiras
+### 8. Cruz Azul vs Chicago Fire
 
-- Categoria: cautela
+- Categoria: datos insuficientes
 - Jugada: L
-- Probabilidades: L 49% · V 29% · E 22%
+- Probabilidades: L 62% · V 21% · E 17%
+- Benchmark: context_only; confianza high
+- Calidad: 33/100 (thin)
+- Evidencia/Forma/H2H: evidencia 0; forma 10; H2H 0
+- Accion: No subir confianza hasta reforzar evidencia/forma reciente.
+- Razon: Ningun feed reporto este partido; la competencia 'Liga MX' esta inferida del historial de los equipos, no observada. Se degrada de 'ready' a 'context_only': el benchmark de esa competencia no respalda este encuentro. No dejar simple Falta: evidencia contextual, historial directo, benchmark historico
+
+### 9. Cruzeiro vs CR Flamengo
+
+- Categoria: datos insuficientes
+- Jugada: E / V
+- Probabilidades: E 40% · V 38% · L 22%
 - Benchmark: context_only; confianza medium
-- Calidad: 83/100 (good)
-- Evidencia/Forma/H2H: evidencia 1; forma 2; H2H 1
-- Accion: Mantener simple solo si la papeleta ya agoto dobles/triples.
-- Razon: Brazil Serie A context is present, but no audited backtest is loaded for live picks. Cubrir si hay presupuesto Falta: benchmark historico
-
-### 11. Universidad Catolica vs Colo Colo
-
-- Categoria: cautela
-- Jugada: L
-- Probabilidades: L 51% · V 27% · E 22%
-- Benchmark: context_only; confianza medium
-- Calidad: 83/100 (good)
-- Evidencia/Forma/H2H: evidencia 1; forma 2; H2H 1
-- Accion: Mantener simple solo si la papeleta ya agoto dobles/triples.
-- Razon: Chile Primera Division context is present, but no audited backtest is loaded for live picks. Cubrir si hay presupuesto Falta: benchmark historico
-
-### 12. Spartak vs Krasnodar
-
-- Categoria: cautela
-- Jugada: V / L
-- Probabilidades: V 42% · L 36% · E 22%
-- Benchmark: context_only; confianza medium
-- Calidad: 83/100 (good)
-- Evidencia/Forma/H2H: evidencia 1; forma 2; H2H 1
-- Accion: Priorizar doble o triple en completa.
-- Razon: Russian Cup context is present, but cup ties need conservative handling without a benchmark. No dejar simple Falta: benchmark historico
-
-### 13. Okayama vs Cerezo Osaka
-
-- Categoria: cautela
-- Jugada: L
-- Probabilidades: L 49% · V 29% · E 22%
-- Benchmark: context_only; confianza medium
-- Calidad: 83/100 (good)
-- Evidencia/Forma/H2H: evidencia 1; forma 2; H2H 1
-- Accion: Mantener simple solo si la papeleta ya agoto dobles/triples.
-- Razon: J1 League context is present, but no audited backtest is loaded for live picks. Cubrir si hay presupuesto Falta: benchmark historico
-
-### 14. Shimizu vs Gamba Osaka
-
-- Categoria: cautela
-- Jugada: L / V
-- Probabilidades: L 42% · V 34% · E 24%
-- Benchmark: context_only; confianza medium
-- Calidad: 83/100 (good)
-- Evidencia/Forma/H2H: evidencia 1; forma 2; H2H 1
-- Accion: Priorizar doble o triple en completa.
-- Razon: J1 League context is present, but no audited backtest is loaded for live picks. No dejar simple Falta: benchmark historico
+- Calidad: 53/100 (partial)
+- Evidencia/Forma/H2H: evidencia 0; forma 10; H2H 5
+- Accion: No subir confianza hasta reforzar evidencia/forma reciente.
+- Razon: Ningun feed reporto este partido; la competencia 'Brasileirao' esta inferida del historial de los equipos, no observada. Se degrada de 'ready' a 'context_only': el benchmark de esa competencia no respalda este encuentro. No dejar simple Falta: evidencia contextual, benchmark historico
