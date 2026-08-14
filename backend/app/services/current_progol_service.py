@@ -84,7 +84,8 @@ class CurrentProgolService:
             step_durations_ms=step_durations_ms,
         )
 
-    def _resolve_context_path(self, local_path: str | None) -> Path:
+    @staticmethod
+    def _resolve_context_path(local_path: str | None) -> Path:
         selected_path = local_path or os.getenv("PROAI_LOCAL_CONTEXT_PATH")
         if selected_path is None:
             selected_path = "current.json" if os.getenv("PROAI_LOCAL_CONTEXT_ROOT") else "/data/progol_context/current.json"

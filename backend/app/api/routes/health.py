@@ -55,6 +55,31 @@ def _read_backup_marker() -> datetime | None:
         return None
 
 
+def _read_local_context_state() -> tuple[bool, str | None]:
+    """Is the Progol context the refresh job reads actually there?
+
+    `./data/progol_context` is a bind mount, and under Docker Desktop on WSL
+    the daemon stages bind mounts behind /run/desktop/mnt/host/wsl/... — when
+    that staging stops resolving the directory mounts EMPTY instead of
+    failing, so the host file is present, the container sees nothing, and
+    `current-progol-refresh` dies on FileNotFoundError every retry. That is
+    invisible here: the failure happens before an ingestion_run row exists,
+    so `last_ingest_*` keeps reporting the last SUCCESS and health stays ok.
+    It went unnoticed for hours on 2026-08-14, and the same mount mechanism
+    had already killed the backup sidecar for four days.
+
+    Resolved through the service so this can never drift from the path the
+    job actually opens.
+    """
+    try:
+        from app.services.current_progol_service import CurrentProgolService
+
+        path = CurrentProgolService._resolve_context_path(None)
+        return path.is_file(), str(path)
+    except Exception:  # pragma: no cover - non-fatal observation
+        return False, None
+
+
 def _freshness_alert(
     *,
     signal: str,
@@ -121,6 +146,8 @@ def _collect_operational_signals() -> dict[str, object]:
         "backup_age_seconds": None,
         "freshness_alerts": [],
         "unregistered_parser_sources": 0,
+        "local_context_readable": True,
+        "local_context_path": None,
     }
     now = datetime.now(timezone.utc)
 
@@ -228,6 +255,27 @@ def _collect_operational_signals() -> dict[str, object]:
     ):
         if alert is not None:
             alerts.append(alert)
+
+    context_readable, context_path = _read_local_context_state()
+    signals["local_context_readable"] = context_readable
+    signals["local_context_path"] = context_path
+    if not context_readable:
+        # Not a freshness alert — there is no age to compare, the file is
+        # simply not there. It rides the same list so anything already
+        # watching freshness_alerts sees it without changing shape.
+        alerts.append(
+            {
+                "signal": "local_context",
+                "severity": "critical",
+                "age_seconds": 0.0,
+                "threshold_seconds": 0.0,
+                "message": (
+                    f"local Progol context unreadable at {context_path or 'unresolved path'}; "
+                    "current-progol-refresh cannot run (check the data/progol_context bind mount)"
+                ),
+            }
+        )
+
     signals["freshness_alerts"] = alerts
 
     return signals

@@ -37,6 +37,11 @@ class HealthResponse(BaseModel):
     backup_age_seconds: float | None = None
     freshness_alerts: list[FreshnessAlert] = Field(default_factory=list)
     unregistered_parser_sources: int = 0
+    # False means the bind mount the refresh job reads from is gone. Defaults
+    # to True so a probe that cannot resolve the path at all does not read as
+    # a broken mount.
+    local_context_readable: bool = True
+    local_context_path: str | None = None
 
 
 class ReadyResponse(BaseModel):
