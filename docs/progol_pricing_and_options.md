@@ -3,11 +3,17 @@
 ## Pricing — state: verified 2026-08-14
 
 Base price and combination limits come from Lotería Nacional's own
-"Combinaciones Múltiples y Coperachas" pages. Both products cost the same per
-bet:
+"Combinaciones Múltiples y Coperachas" pages:
 
 - **$15.00 MXN** per quiniela sencilla — Progol and Progol Media Semana.
-- Progol (weekend) = **14 matches**; Progol Media Semana (midweek) = **9**.
+- **$5.00 MXN** per quiniela — Progol Revancha, charged on top of the Progol
+  ticket it rides on ($20 for the pair, played simple).
+- Progol (weekend) = **14 matches**; Progol Media Semana (midweek) = **9**;
+  Progol Revancha = **7**.
+- An unrecognised week type resolves to the `unknown` product: tightest known
+  limits, no price. Nothing inherits Progol's ceilings by accident — that is
+  how a Revancha slate came to be told it could mark 8 dobles and 324
+  quinielas.
 
 Verification is a flag, not a fact of nature: if a price change is suspected,
 set `base_price_verified=false` in `backend/app/domain/progol_pricing.py` and
@@ -39,6 +45,14 @@ make a ticket expensive — it makes it unplayable.
 | 1 | 3 | 24 | $360 |
 | 2 | 3 | 72 | $1,080 |
 
+### Progol Revancha (7 matches) — same 3 + 2 shape, at $5 a quiniela
+
+| triples | max dobles | quinielas | costo |
+|---|---|---|---|
+| 0 | 3 | 8 | $40 |
+| 1 | 3 | 24 | $120 |
+| 2 | 3 | 72 | $360 |
+
 Those tables are reproduced cell for cell by three ceilings — `max_doubles`,
 `max_triples` and `max_combinations` — and `test_progol_pricing.py` asserts the
 whole grid. All three are needed: for Progol, `max_combinations` is what allows
@@ -55,7 +69,14 @@ would fit under the 72 ceiling.
   "midweek": { "product": "Progol Media Semana", "match_count": 9,
   "base_price_mxn": 15.0, "base_price_verified": true, "max_doubles": 3,
   "max_triples": 2, "max_combinations": 72,
-  "source": "loterianacional.gob.mx/ProgolMediaSemana/Coperacha" } }
+  "source": "loterianacional.gob.mx/ProgolMediaSemana/Coperacha" },
+  "revancha": { "product": "Progol Revancha", "match_count": 7,
+  "base_price_mxn": 5.0, "base_price_verified": true, "max_doubles": 3,
+  "max_triples": 2, "max_combinations": 72,
+  "source": "loterianacional.gob.mx/Progol/Coperacha" },
+  "unknown": { "product": "producto no identificado", "match_count": null,
+  "base_price_mxn": null, "base_price_verified": false, "max_doubles": 3,
+  "max_triples": 2, "max_combinations": 72 } }
 ```
 
 ### Math

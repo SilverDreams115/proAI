@@ -1,16 +1,23 @@
-"""Progol / Progol MS pricing config + pure cost and legality calculator.
+"""Progol / Progol MS / Revancha pricing config + cost and legality calculator.
 
 Both the price and the multiple-bet limits are taken from Lotería Nacional's
 own "Combinaciones Múltiples y Coperachas" pages (see ``VALIDATION_SOURCES``),
 checked 2026-08-14:
 
-* one quiniela sencilla costs **$15 MXN** in both products;
+* one quiniela sencilla costs **$15 MXN** in Progol and Progol Media Semana;
 * Progol (14 matches) allows up to **8 dobles** and up to **5 triples**, and
   the published table of allowed combinations tops out at **324 quinielas**
   ($4,860) — 4 triples + 2 dobles, 3 triples + 3 dobles, 2 triples + 5 dobles,
   1 triple + 6 dobles, 5 triples alone, or 8 dobles alone;
 * Progol Media Semana (9 matches) allows up to **3 dobles and 2 triples**
-  together, i.e. **72 quinielas** ($1,080).
+  together, i.e. **72 quinielas** ($1,080);
+* Progol Revancha (7 matches) is an add-on to a Progol ticket, costs **$5 MXN**
+  per quiniela, and takes the same 3 dobles + 2 triples — 72 quinielas ($360).
+
+An unrecognised week type resolves to ``unknown``: the tightest limits we know
+of and no price at all. Falling back to Progol's own ceilings, as this module
+used to, would have told a Revancha slate it could mark 8 dobles and 324
+quinielas.
 
 The combination limit is not a house policy: a composition above it cannot be
 marked on a real boleto, so a ticket that exceeds it is not expensive, it is
@@ -48,6 +55,30 @@ PROGOL_PRICING: dict[str, dict[str, Any]] = {
         "max_combinations": 72,
         "source": "loterianacional.gob.mx/ProgolMediaSemana/Coperacha (verificado 2026-08-14)",
     },
+    "revancha": {
+        "product": "Progol Revancha",
+        "match_count": 7,
+        # Revancha is an extra $5 on top of the $15 Progol ticket it rides on;
+        # this is the Revancha leg alone.
+        "base_price_mxn": 5.0,
+        "base_price_verified": True,
+        "max_doubles": 3,
+        "max_triples": 2,
+        "max_combinations": 72,
+        "source": "loterianacional.gob.mx/Progol/Coperacha (verificado 2026-08-14)",
+    },
+    # No product matched. The tightest limits we know of, and no price: better
+    # a missing cost than one taken from the wrong game.
+    "unknown": {
+        "product": "producto no identificado",
+        "match_count": None,
+        "base_price_mxn": None,
+        "base_price_verified": False,
+        "max_doubles": 3,
+        "max_triples": 2,
+        "max_combinations": 72,
+        "source": "sin producto: limites mas restrictivos conocidos",
+    },
 }
 
 # Where the numbers above come from, and where to re-check them.
@@ -60,7 +91,8 @@ VALIDATION_SOURCES = [
 
 
 def _config_for(week_type: str) -> dict[str, Any]:
-    return PROGOL_PRICING.get(week_type, PROGOL_PRICING["weekend"])
+    """Never guess a product. An unknown week type gets `unknown`, not Progol."""
+    return PROGOL_PRICING.get(week_type, PROGOL_PRICING["unknown"])
 
 
 def combinations(doubles: int, triples: int) -> int:

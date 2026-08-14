@@ -19,6 +19,8 @@ from app.domain.progol_pricing import (
 OFFICIAL_TABLE = {
     "weekend": {0: 8, 1: 6, 2: 5, 3: 3, 4: 2, 5: 0},
     "midweek": {0: 3, 1: 3, 2: 3},
+    # Revancha takes the same shape as Media Semana at a third of the price.
+    "revancha": {0: 3, 1: 3, 2: 3},
 }
 
 
@@ -31,7 +33,7 @@ def test_combinations_is_two_pow_d_three_pow_t():
     assert combinations(3, 2) == 8 * 9  # 72
 
 
-@pytest.mark.parametrize("week_type", ["weekend", "midweek"])
+@pytest.mark.parametrize("week_type", ["weekend", "midweek", "revancha"])
 def test_legality_reproduces_the_official_table(week_type):
     """Every cell of the published table is legal and everything else is not.
 
@@ -65,6 +67,11 @@ def test_legality_reproduces_the_official_table(week_type):
         ("midweek", 3, 2, 1080.0),
         ("midweek", 0, 2, 135.0),
         ("midweek", 3, 0, 120.0),
+        # Revancha's own table: $5 a quiniela, same 3+2 corner.
+        ("revancha", 0, 0, 5.0),
+        ("revancha", 3, 0, 40.0),
+        ("revancha", 0, 2, 45.0),
+        ("revancha", 3, 2, 360.0),
     ],
 )
 def test_cost_matches_the_published_cells(week_type, doubles, triples, expected_cost):
@@ -94,6 +101,31 @@ def test_every_verified_price_carries_a_source():
         assert cfg["base_price_mxn"] is not None, week_type
         assert cfg["source"] and cfg["source"] != "pending_validation", week_type
         assert "verificado" in cfg["source"], week_type
+
+
+def test_revancha_is_its_own_product():
+    """A Revancha slate used to be priced and limited as if it were Progol:
+    $15 a quiniela and room for 8 dobles. It is 7 matches, $5, and 3+2."""
+    cfg = pricing_status()["config"]["revancha"]
+    assert cfg["match_count"] == 7
+    assert cfg["base_price_mxn"] == 5.0
+    assert limits_for("revancha") == {
+        "max_doubles": 3,
+        "max_triples": 2,
+        "max_combinations": 72,
+    }
+    assert not is_legal_composition("revancha", doubles=8, triples=0)
+
+
+def test_unknown_week_type_gets_no_price_and_the_tightest_limits():
+    """Nothing may inherit Progol's ceilings by accident — that is exactly
+    how Revancha ended up allowed to mark 324 quinielas."""
+    cost = compute_cost("temporada-de-nada", doubles=3, triples=2)
+    assert cost["price_status"] == "unverified"
+    assert cost["estimated_cost"] is None
+    assert cost["product"] == "producto no identificado"
+    assert limits_for("temporada-de-nada") == limits_for("midweek")
+    assert not is_legal_composition("temporada-de-nada", doubles=4, triples=0)
 
 
 def test_weekend_uses_14_matches():
