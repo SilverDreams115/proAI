@@ -658,6 +658,8 @@ class ModelTrainingService(ModelTrainingArtifactsMixin):
         xgb_hits = 0
         xgb_brier_total = 0.0
         xgb_log_loss_total = 0.0
+        paired_h_brier_total = 0.0
+        paired_deltas: list[float] = []
 
         # Precompute which match indices are XGBoost sample points so
         # the per-match check inside the loop stays O(1). We pick
@@ -739,6 +741,11 @@ class ModelTrainingService(ModelTrainingArtifactsMixin):
                         xgb_hits += 1
                     xgb_brier_total += xgb_metrics["brier"]
                     xgb_log_loss_total += xgb_metrics["log_loss"]
+                    # The heuristic's score on THIS match, kept apart from
+                    # its full-population total. The verdict below compares
+                    # the two engines only where both actually scored.
+                    paired_h_brier_total += h_metrics["brier"]
+                    paired_deltas.append(h_metrics["brier"] - xgb_metrics["brier"])
 
             entries.append(
                 {
@@ -778,14 +785,38 @@ class ModelTrainingService(ModelTrainingArtifactsMixin):
                 "brier_score": round(xgb_brier_total / xgb_evaluated, 4),
                 "log_loss": round(xgb_log_loss_total / xgb_evaluated, 4),
             }
-            if h_evaluated:
-                brier_delta = round(
-                    heuristic_summary["brier_score"]
-                    - xgboost_summary["brier_score"],
-                    4,
+            if paired_deltas:
+                # Paired, deliberately. XGBoost is scored on a sample
+                # (`XGBOOST_BACKTEST_MAX_TRAININGS`) because every point
+                # retrains the booster, while the heuristic is scored on
+                # every match because it is cheap. Subtracting a 50-match
+                # mean from a 1200-match mean compares two different
+                # populations, and the sign it produced was not always the
+                # sign of the head-to-head: Liga MX came out +0.0291 that
+                # way and -0.0379 paired, which is what put the booster in
+                # front of Progol's most common league.
+                paired_n = len(paired_deltas)
+                paired_mean = sum(paired_deltas) / paired_n
+                brier_delta = round(paired_mean, 4)
+                # With n≈50 a margin alone cannot tell a real edge from
+                # sampling noise, so the mean must also clear two standard
+                # errors. Across the 2026-08-14 verdict no competition did
+                # in XGBoost's favour, and five cleared it against.
+                if paired_n > 1:
+                    variance = sum((d - paired_mean) ** 2 for d in paired_deltas) / (
+                        paired_n - 1
+                    )
+                    standard_error = (variance / paired_n) ** 0.5
+                else:
+                    standard_error = 0.0
+                xgboost_summary["paired_matches"] = paired_n
+                xgboost_summary["paired_heuristic_brier"] = round(
+                    paired_h_brier_total / paired_n, 4
                 )
+                xgboost_summary["paired_brier_standard_error"] = round(standard_error, 4)
                 xgboost_beats_heuristic = (
                     brier_delta >= self.XGBOOST_BACKTEST_BRIER_MARGIN
+                    and brier_delta > 2 * standard_error
                 )
 
         summary = {
