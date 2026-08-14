@@ -41,6 +41,7 @@ from sqlalchemy import or_, select
 from app.db import session as db_session
 from app.db.session import managed_transaction
 from app.models.tables import MatchModel, MatchResultModel, TeamAliasModel, TeamModel
+from app.services.normalization_service import NormalizationService
 
 CONFIRM_TOKEN = "MERGE-DUPLICATE-TEAM"
 
@@ -163,15 +164,23 @@ def main(argv: list[str] | None = None) -> int:
             # and then try to insert it again — `normalized_alias` is unique,
             # so that aborts the whole merge.
             session.flush()
-            known = {
-                a.normalized_alias
-                for a in session.scalars(
-                    select(TeamAliasModel).where(TeamAliasModel.team_id == canon.id)
-                ).all()
-            }
+            carried = session.scalars(
+                select(TeamAliasModel).where(TeamAliasModel.team_id == canon.id)
+            ).all()
+            known = {a.normalized_alias for a in carried}
             known.update(a.normalized_alias for a in aliases)
-            normalized = dup.name.strip().lower()
-            if normalized not in known:
+            # `alias` carries its own unique index, so the raw spelling has to
+            # be checked too — a row whose normalized form differs can still
+            # collide on the name itself.
+            known_raw = {a.alias for a in carried}
+            known_raw.update(a.alias for a in aliases)
+            # Must match how `find_team_by_alias` looks aliases up: the
+            # resolver normalizes through NormalizationService (dash-joined,
+            # stopwords stripped). Writing `name.lower()` here produced a
+            # space-separated key that no lookup could ever match, so the
+            # carried-over alias silently did nothing.
+            normalized = NormalizationService().normalize_team_name(dup.name)
+            if normalized not in known and dup.name not in known_raw:
                 session.add(
                     TeamAliasModel(
                         team_id=canon.id, alias=dup.name, normalized_alias=normalized

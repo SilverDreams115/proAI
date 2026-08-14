@@ -12,6 +12,7 @@ __pycache__/
 *.migration.lock
 .env
 .env.local
+.env.bak*
 backend/data/
 backend/proai_backend.egg-info/
 build/
