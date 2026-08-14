@@ -18,7 +18,7 @@ export function resolveActiveSelection({ selectedId, slates, activeMeta } = {}) 
 
 // A slate is only *truly* missing predictions when nothing can be shown: no
 // persisted rows, no live availability and no matches to score. An active slate
-// with matches is "live_available", never a false "Sin predicción".
+// with matches is "live_available", never a false "Predicciones pendientes".
 export function isTrulyMissingPrediction(slate) {
   if (!slate) return true;
   if (slate.has_predictions) return false;

@@ -92,9 +92,9 @@ async def test_list_slates_includes_status_fields(client) -> None:
     assert slate["has_predictions"] is False
     assert slate["has_valid_snapshot"] is False
     # R5.6 hotfix: an active slate with matches but no persisted predictions
-    # reads "Predicción live" (served read-only on demand), never a false
-    # "Sin predicción".
-    assert slate["status_label"] == "Predicción live"
+    # reads "Predicciones en vivo" (served read-only on demand), never a
+    # false "Predicciones pendientes".
+    assert slate["status_label"] == "Predicciones en vivo"
     assert slate["prediction_status"] == "live_available"
 
 

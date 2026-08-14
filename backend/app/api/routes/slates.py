@@ -97,7 +97,7 @@ def _serialize_slate(
     match_count = len(slate.matches)
     # Live predictions are computable read-only for any active slate that has
     # matches, even with zero persisted rows — the GET predictions endpoint
-    # scores them on demand. So an active slate is never a true "Sin predicción".
+    # scores them on demand. So an active slate is never truly pending.
     live_prediction_available = bool(match_count) and not slate.is_archived and not is_closed
     if has_predictions:
         prediction_status = "persisted"
@@ -113,12 +113,17 @@ def _serialize_slate(
         status_label = "Cerrada"
     elif has_valid_snapshot:
         status_label = "Con ticket"
+    # One vocabulary for the four prediction states, shared with the UI's
+    # own map (`PREDICTION_LABEL` in operational-money-mode-status.js): the
+    # same slate used to read "Con predicciones" in the sidebar and
+    # "Predicciones listas" in the Money Mode panel, and a PGM served live
+    # read "Predicción live" next to "Predicción en vivo".
     elif has_predictions:
-        status_label = "Con predicciones"
+        status_label = "Predicciones listas"
     elif live_prediction_available:
-        status_label = "Predicción live"
+        status_label = "Predicciones en vivo"
     elif match_count:
-        status_label = "Pendiente de predicción"
+        status_label = "Predicciones pendientes"
     else:
         status_label = "Sin datos"
     return ProgolSlateResponse(

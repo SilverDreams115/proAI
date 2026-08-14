@@ -773,10 +773,9 @@ function renderSlateSwitcher() {
 function renderAsideSlates() {
   const STATUS_CLASS = {
     "Con ticket": "ok",
-    "Con predicciones": "ok",
-    "Predicción live": "ok",
-    "Pendiente de predicción": "warn",
-    "Sin predicción": "warn",
+    "Predicciones listas": "ok",
+    "Predicciones en vivo": "ok",
+    "Predicciones pendientes": "warn",
     "Sin datos": "warn",
     "Archivada": "muted",
     "Cerrada": "muted",

@@ -42,9 +42,9 @@ class ProgolSlateResponse(BaseModel):
     matches: list[SlateMatchResponse]
     has_predictions: bool = False
     has_valid_snapshot: bool = False
-    status_label: str = "Sin predicción"
+    status_label: str = "Sin datos"
     # R5.6 hotfix: distinguish persisted vs live-available vs pending so the UI
-    # never shows a false "Sin predicción" for an active slate whose predictions
+    # never shows false "Predicciones pendientes" for an active slate whose predictions
     # can be served live (read-only) on demand.
     prediction_status: str = "missing"  # persisted|live_available|pending|missing
     persisted_prediction_count: int = 0

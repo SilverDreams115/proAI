@@ -24,10 +24,12 @@ const DECISION_LABEL = {
   NO_JUGAR: "NO JUGAR",
 };
 
+// Same four strings the backend puts in `status_label` (routes/slates.py),
+// so a slate does not get one name here and another in the sidebar.
 const PREDICTION_LABEL = {
   persisted: "Predicciones listas",
-  live_available: "Predicción en vivo",
-  pending: "Sin predicción",
+  live_available: "Predicciones en vivo",
+  pending: "Predicciones pendientes",
   missing: "Sin datos",
 };
 

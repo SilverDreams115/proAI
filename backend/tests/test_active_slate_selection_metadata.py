@@ -1,7 +1,7 @@
 """Active-slate selection metadata (R5.6 hotfix).
 
 The slate list must give the UI enough read-only metadata to (a) keep both
-active slates selectable and (b) never show a false "Sin predicción" for an
+active slates selectable and (b) never show false "Predicciones pendientes" for an
 active slate whose predictions can be served live on demand.
 """
 from __future__ import annotations
@@ -72,8 +72,8 @@ async def test_active_ms_without_persisted_is_live_not_sin_prediccion(client):
     assert ms["persisted_prediction_count"] == 0
     assert ms["live_prediction_available"] is True
     assert ms["prediction_status"] == "live_available"
-    assert ms["status_label"] != "Sin predicción"
-    assert ms["status_label"] == "Predicción live"
+    assert ms["status_label"] != "Predicciones pendientes"
+    assert ms["status_label"] == "Predicciones en vivo"
 
 
 @pytest.mark.anyio
