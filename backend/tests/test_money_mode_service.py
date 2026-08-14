@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from math import prod
 
+import pytest
+
 from sqlalchemy import func, select
 
 from app.models.tables import (
@@ -99,7 +101,12 @@ def test_combinations_are_product_of_pick_widths(db, monkeypatch):  # noqa: F811
     for ticket in report["tickets"].values():
         expected = prod(width[sel["type"]] for sel in ticket["selections"])
         assert ticket["estimated_combinations"] == expected
-        assert ticket["estimated_cost"] is None  # costo unitario no configurado
+        # $15 per quiniela sencilla, verified against Loteria Nacional.
+        assert ticket["price_status"] == "verified"
+        assert ticket["estimated_cost"] == pytest.approx(15.0 * expected)
+        assert ticket["currency"] == "MXN"
+        # Nothing leaves this service that could not be marked on a boleto.
+        assert ticket["legal_composition"] is True, ticket["legality_violations"]
 
 
 def test_active_upcoming_includes_seeded_slate(db, monkeypatch):  # noqa: F811

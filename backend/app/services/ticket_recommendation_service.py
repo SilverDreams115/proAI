@@ -1,12 +1,14 @@
 from __future__ import annotations
 
-import math
 import json
+import logging
+import math
 from datetime import datetime, timezone
 from typing import Any
 
 from app.db.session import managed_transaction
 from app.domain.entities import Outcome
+from app.domain.progol_pricing import is_legal_composition
 from app.models.tables import ProgolSlateModel
 from app.repositories.ticket_repository import TicketRecommendationRepository
 from app.schemas.prediction import DrawRiskResponse
@@ -18,6 +20,8 @@ from app.schemas.prediction import TicketRecommendationResponse
 from app.schemas.prediction import TicketValidationResponse
 from app.services.coverage import prob_at_least
 from app.services.ticket_optimizer import TicketOption, optimize_ticket
+
+logger = logging.getLogger(__name__)
 
 
 class TicketRecommendationService:
@@ -168,6 +172,18 @@ class TicketRecommendationService:
             )
             for prediction in predictions
         ]
+        # Last word on composition: whatever the optimizer, the monotonic lift
+        # and the draw floor agreed on still has to fit on a real boleto.
+        self._enforce_legal_composition(
+            recommendations=recommendations,
+            predictions=predictions,
+            week_type=str(rule["week_type"]),
+            plan_by_mode={
+                "simple": (set(), set()),
+                "doubles": (double_ids, set()),
+                "full": (full_double_ids, full_triple_ids),
+            },
+        )
         coverage = self._coverage_modes(predictions, recommendations)
         payload: dict[str, Any] = {
             "slate_id": slate.id,
@@ -348,6 +364,90 @@ class TicketRecommendationService:
                 pick_type="double", picks=[best[0], second[0]], source=source
             )
         return TicketDecisionResponse(pick_type="fixed", picks=[best[0]], source=source)
+
+    def _enforce_legal_composition(
+        self,
+        *,
+        recommendations: list[MatchTicketRecommendationResponse],
+        predictions: list[MatchPredictionResponse],
+        week_type: str,
+        plan_by_mode: dict[str, tuple[set[str], set[str]]],
+    ) -> None:
+        """Demote coverage until every mode fits on a real boleto.
+
+        Two legal tickets merge into an illegal one. `full` inherits every
+        double the doubles-only ticket covers — the monotonic lift requires it
+        — and keeps its own triples on top, and the two budgets were never
+        meant to be added: PG-2346's conservative ticket reached 4 triples and
+        4 doubles, 1,296 quinielas against the 324 Loteria Nacional publishes.
+        That is not an expensive ticket, it is one nobody can mark.
+
+        What comes off first is the coverage the mode's own optimizer never
+        asked for — the lifts — cheapest outcome first, which usually lands
+        the ticket exactly back on the plan the optimizer had costed. Only if
+        that is still too big does the plan itself get trimmed.
+
+        Nesting is the casualty when the two collide. It cannot be otherwise:
+        once the doubles-only ticket spends its 8 dobles (256 quinielas), the
+        rules leave no room for a single triple on top, so a `full` that
+        contains it can only be the same ticket again. Two distinct legal
+        tickets serve the operator better than two identical ones, and an
+        unplayable ticket serves nobody.
+        """
+        sorted_by_id = {
+            prediction.match_id: self._sorted_outcomes(prediction) for prediction in predictions
+        }
+
+        def _planned_rank(mode: str, match_id: str) -> int:
+            plan_doubles, plan_triples = plan_by_mode.get(mode, (set(), set()))
+            if match_id in plan_triples:
+                return 3
+            if match_id in plan_doubles:
+                return 2
+            return 1
+
+        for mode in ("simple", "doubles", "full"):
+            while True:
+                doubles = [r for r in recommendations if r.decisions[mode].pick_type == "double"]
+                triples = [r for r in recommendations if r.decisions[mode].pick_type == "triple"]
+                if is_legal_composition(week_type, doubles=len(doubles), triples=len(triples)):
+                    break
+
+                candidates: list[tuple[int, float, float, str, Any, str]] = []
+                for rec in triples:
+                    _best, _second, third = sorted_by_id[rec.match_id]
+                    above_plan = 0 if _planned_rank(mode, rec.match_id) < 3 else 1
+                    candidates.append((above_plan, third[1], 2 / 3, rec.match_id, rec, "double"))
+                for rec in doubles:
+                    _best, second, _third = sorted_by_id[rec.match_id]
+                    above_plan = 0 if _planned_rank(mode, rec.match_id) < 2 else 1
+                    candidates.append((above_plan, second[1], 1 / 2, rec.match_id, rec, "fixed"))
+                if not candidates:
+                    break
+
+                # Lifts before plan; then the least probability given up; then
+                # the demotion that shrinks the ticket most.
+                _rank, loss, _factor, _mid, target, new_type = min(
+                    candidates, key=lambda item: (item[0], item[1], item[2], item[3])
+                )
+                best, second, _third = sorted_by_id[target.match_id]
+                picks = [best[0]] if new_type == "fixed" else [best[0], second[0]]
+                target.decisions[mode] = TicketDecisionResponse(
+                    pick_type=new_type,
+                    picks=picks,
+                    source="legal_composition",
+                )
+                logger.info(
+                    "ticket coverage demoted to stay inside the Progol table",
+                    extra={
+                        "event": "ticket_composition_demoted",
+                        "mode": mode,
+                        "position": target.position,
+                        "new_pick_type": new_type,
+                        "probability_given_up": round(float(loss), 4),
+                        "week_type": week_type,
+                    },
+                )
 
     def _grant_draw_coverage(
         self,

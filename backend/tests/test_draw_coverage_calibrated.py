@@ -2,8 +2,9 @@
 
 When the (draw-calibrated) decision p_draw reaches the live-draw threshold,
 X must end up covered (full lifted to a triple if neither doubles nor full
-covered it), while simple ⊆ doubles ⊆ full stays intact and the simple pick
-is never X.
+covered it), as long as the slate's triple budget can still pay for it. The
+simple pick is never X, and nesting holds wherever the resulting ticket is
+still one the operator could mark.
 """
 from __future__ import annotations
 
@@ -11,6 +12,7 @@ from app.domain.entities import Outcome
 
 from tests.test_ticket_draw_coverage import (  # noqa: E402
     _build_recommendations,
+    _nesting_is_affordable,
     _picks,
     _prediction,
     _service,
@@ -71,11 +73,10 @@ def test_full_never_exceeds_the_slate_triple_budget():
         f"full ticket used {len(triples)} triples at positions {triples}, "
         f"budget is {rule['combined_triple_max']}"
     )
-    # Only the triples are asserted here. `full` can still hold more doubles
-    # than `combined_double_max` because monotonicity forces it to cover
-    # whatever the doubles-only ticket covers, and that ticket runs on the
-    # larger `doubles_only_max` budget — a rule tension, not a leak in the
-    # draw floor.
+    # The doubles the nesting lift adds on top of `combined_double_max` are
+    # not this test's business: `_enforce_legal_composition` is what brings
+    # the whole composition back inside the official table, and
+    # test_ticket_legal_composition covers it.
 
 
 def test_draw_floor_still_fires_while_the_budget_lasts():
@@ -92,7 +93,7 @@ def test_draw_floor_still_fires_while_the_budget_lasts():
     assert Outcome.DRAW in m1.decisions["full"].picks
 
 
-def test_monotonic_preserved_across_slate_with_calibrated_draws():
+def test_nesting_preserved_across_slate_with_calibrated_draws():
     preds = [
         _prediction("a", position=1, home=0.38, draw=0.28, away=0.34, pick=Outcome.HOME, band="low"),
         _prediction("b", position=2, home=0.34, draw=0.30, away=0.36, pick=Outcome.AWAY, band="low"),
@@ -101,6 +102,10 @@ def test_monotonic_preserved_across_slate_with_calibrated_draws():
         for i in range(1, 13)
     ]
     recs = _build_recommendations(_service(), preds)
+    affordable = _nesting_is_affordable(recs)
     for r in recs:
         s, d, f = (_picks(r.decisions[k]) for k in ("simple", "doubles", "full"))
-        assert s <= d <= f
+        assert s <= d
+        assert s <= f
+        if affordable:
+            assert d <= f

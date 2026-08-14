@@ -44,6 +44,32 @@ def _decision_label(status: str) -> str:
     return _DECISION_LABEL.get(status, status)
 
 
+def _ticket_cost_line(entry: dict[str, Any], recommended: str | None) -> str:
+    """What the operator would actually pay, per ticket.
+
+    The recommended one is spelled out; the rest ride along so the choice is
+    visible. An illegal composition is flagged rather than priced — it has no
+    price because it cannot be bought.
+    """
+    tickets = (entry.get("money_mode") or {}).get("tickets") or {}
+    parts: list[str] = []
+    for label in ("aggressive", "balanced", "conservative"):
+        ticket = tickets.get(label)
+        if not ticket:
+            continue
+        combos = ticket.get("estimated_combinations")
+        cost = ticket.get("estimated_cost")
+        if not ticket.get("legal_composition", True):
+            money = "NO MARCABLE"
+        elif cost is None:
+            money = ticket.get("cost_note") or "sin precio"
+        else:
+            money = f"${cost:,.0f}"
+        mark = "*" if label == recommended else " "
+        parts.append(f"{mark}{label}={combos}q {money}")
+    return "COSTO      : " + ("  ".join(parts) if parts else "sin boletos")
+
+
 def _render_human(report: dict[str, Any]) -> str:
     if report.get("error"):
         return f"ERROR: {report['error']}"
@@ -64,6 +90,7 @@ def _render_human(report: dict[str, Any]) -> str:
         lines.append(f"DECISION   : {_decision_label(st['decision'])} (confidence={st['confidence']})")
         lines.append(f"             {st['reason']}")
         lines.append(f"RECOMMENDED: {st['recommended_ticket'] or 'none'}")
+        lines.append(_ticket_cost_line(entry, st.get("recommended_ticket")))
         lines.append(f"DO_NOT_SIMPLE: {st['do_not_simple_positions'] or 'none'}")
         lines.append(f"WARNINGS   : {st['warnings'] or 'none'}")
         lines.append(f"WRITE_SAFETY: write_safety_ok={entry['write_safety_ok']}")

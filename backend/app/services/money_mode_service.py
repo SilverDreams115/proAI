@@ -30,6 +30,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
+from app.domain.progol_pricing import compute_cost
 from app.models.tables import ProgolSlateModel
 from app.repositories.entity_repository import EntityRepository
 from app.repositories.feature_repository import FeatureRepository
@@ -58,9 +59,11 @@ _CODE_TO_SIGNAL = {"1": "L", "X": "E", "2": "V"}
 # as a fraction of slate size, above which the slate is not playable for money.
 _NO_JUGAR_RESIDUAL_RATIO = 0.34
 
-# Unit cost per combination: NOT configured in the system. Until a real
-# tariff exists, estimated_cost stays null and this is documented.
-_COST_NOTE = "costo unitario por combinacion no configurado"
+# Cost comes from `progol_pricing`, which carries the verified $15 per
+# quiniela sencilla and the official combination table. When a price is ever
+# marked unverified there, the cost goes back to null and this note is what
+# the operator sees instead of a peso amount.
+_UNVERIFIED_COST_NOTE = "costo no disponible: precio base sin verificar"
 
 
 def _signal(outcome: Any) -> str:
@@ -99,6 +102,7 @@ def _build_ticket(
     rec_by_match: dict[str, Any],
     coverage: list[Any],
     match_count: int,
+    week_type: str,
 ) -> dict[str, Any]:
     """Build one money-mode ticket from an optimizer coverage mode.
 
@@ -140,6 +144,9 @@ def _build_ticket(
         selections.append({"position": pos, "pick": picks, "type": typ})
 
     cov = _coverage_for_mode(coverage, mode_key)
+    pricing = compute_cost(
+        week_type, doubles=counts["double_count"], triples=counts["triple_count"]
+    )
     covers_all = not uncovered
     uncovered_ratio = (len(uncovered) / match_count) if match_count else 1.0
     risk = _risk_level(uncovered_ratio, covers_all, bool(cov.get("target_met")))
@@ -153,8 +160,18 @@ def _build_ticket(
         "uncovered_no_simple_positions": uncovered,
         **counts,
         "estimated_combinations": combinations,
-        "estimated_cost": None,
-        "cost_note": _COST_NOTE,
+        "estimated_cost": pricing["estimated_cost"],
+        "base_price_mxn": pricing["base_price_mxn"],
+        "currency": pricing["currency"],
+        "price_status": pricing["price_status"],
+        "pricing_source": pricing["source"],
+        "cost_note": None if pricing["estimated_cost"] is not None else _UNVERIFIED_COST_NOTE,
+        # A composition above the published table cannot be marked on a real
+        # boleto. The ticket builder demotes coverage to keep this true; the
+        # flag rides along so the operator never plays on trust alone.
+        "legal_composition": pricing["legal_composition"],
+        "legality_violations": pricing["legality_violations"],
+        "max_combinations": pricing["max_combinations"],
         "risk_level": risk,
         "coverage_estimate": cov,
         "selections": selections,
@@ -310,6 +327,7 @@ def _build_money_mode_uncached(session: Session, slate: ProgolSlateModel) -> dic
             rec_by_match=rec_by_match,
             coverage=recommendation.coverage,
             match_count=match_count,
+            week_type=str(slate.week_type or "weekend"),
         )
 
     decision = _decide(

@@ -1,6 +1,7 @@
 """R6.4 — slate options service (always-present, respects Money Mode, no writes)."""
 from __future__ import annotations
 
+import pytest
 from sqlalchemy import func, select
 
 from app.models.tables import (
@@ -61,12 +62,13 @@ def test_no_jugar_marks_no_option_recommended(db, monkeypatch):  # noqa: F811
     assert all(o["playable"] is False for o in report["options"])
 
 
-def test_options_carry_pricing_unverified(db, monkeypatch):  # noqa: F811
-    """Options carry combinations + unverified cost (None, not $0)."""
+def test_options_carry_verified_pricing(db, monkeypatch):  # noqa: F811
+    """Options carry combinations + the verified cost at $15 per quiniela."""
     seed_slate(db)
     report = build_slate_options(db, _slate(db))
     for opt in report["options"]:
-        assert opt["combinations"] == (2 ** opt["double_count"]) * (3 ** opt["triple_count"])
-        assert opt["price_status"] == "unverified"
-        assert opt["estimated_cost"] is None
-    assert report["pricing_verified"] is False
+        combinations = (2 ** opt["double_count"]) * (3 ** opt["triple_count"])
+        assert opt["combinations"] == combinations
+        assert opt["price_status"] == "verified"
+        assert opt["estimated_cost"] == pytest.approx(15.0 * combinations)
+    assert report["pricing_verified"] is True

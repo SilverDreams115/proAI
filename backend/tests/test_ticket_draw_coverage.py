@@ -1,11 +1,14 @@
-"""Ticket coverage monotonicity + draw-risk reporting.
+"""Ticket coverage nesting + draw-risk reporting.
 
 Covers the two combinatorial/reporting fixes from the draw-coverage audit:
 
-* Coverage nesting invariant simple ⊆ doubles ⊆ full. The full ticket is
-  the most aggressive mode and must never cover LESS than a cheaper one.
-  Regression cases observed in PG-2336: pos13 England–Croatia (doubles=2X,
-  full=2) and pos9 Sweden–Tunisia (doubles=1X, full=1).
+* Coverage nesting simple ⊆ doubles ⊆ full. The full ticket is the most
+  aggressive mode and should not cover LESS than a cheaper one. Regression
+  cases observed in PG-2336: pos13 England–Croatia (doubles=2X, full=2) and
+  pos9 Sweden–Tunisia (doubles=1X, full=1). Nesting is a preference, not an
+  invariant: when containing the cheaper ticket would push `full` past what
+  Lotería Nacional's combination table allows, legality wins and the two
+  tickets stop being nested — see `_nesting_is_affordable`.
 * draw_risk projection: p_draw, draw_rank, empate vivo (>=0.25) / fuerte
   (>=0.30) flags, and per-mode X coverage — reporting only, never alters
   probabilities or picks.
@@ -17,8 +20,25 @@ from datetime import datetime, timezone
 import pytest
 
 from app.domain.entities import Outcome
+from app.domain.progol_pricing import is_legal_composition
 from app.schemas.prediction import MatchPredictionResponse, TicketDecisionResponse
 from app.services.ticket_recommendation_service import TicketRecommendationService
+
+
+def _nesting_is_affordable(recs, week_type: str = "weekend") -> bool:
+    """Could `full` contain `doubles` and still be a markable boleto?
+
+    Answers the only question that excuses a break in nesting: the ticket
+    that covers the union of both modes, position by position, either fits
+    the official table or it does not exist as a real ticket.
+    """
+    rank = {"fixed": 1, "double": 2, "triple": 3}
+    doubles = triples = 0
+    for rec in recs:
+        merged = max(rank[rec.decisions["doubles"].pick_type], rank[rec.decisions["full"].pick_type])
+        doubles += merged == 2
+        triples += merged == 3
+    return is_legal_composition(week_type, doubles=doubles, triples=triples)
 
 
 def _service() -> TicketRecommendationService:
@@ -104,7 +124,7 @@ def _build_recommendations(
         full_triple_ids=full_triple_ids,
         max_triples=int(rule["combined_triple_max"]),
     )
-    return [
+    recommendations = [
         service._build_match_recommendation(
             prediction=p,
             profile=profiles[p.match_id],
@@ -115,23 +135,57 @@ def _build_recommendations(
         )
         for p in predictions
     ]
+    service._enforce_legal_composition(
+        recommendations=recommendations,
+        predictions=predictions,
+        week_type=str(rule["week_type"]),
+        plan_by_mode={
+            "simple": (set(), set()),
+            "doubles": (double_ids, set()),
+            "full": (full_double_ids, full_triple_ids),
+        },
+    )
+    return recommendations
 
 
-def test_full_is_superset_of_doubles_is_superset_of_simple() -> None:
+def test_every_mode_keeps_the_simple_pick_and_nests_when_it_can() -> None:
     service = _service()
     recs = _build_recommendations(service, _pg2336_predictions())
     assert len(recs) == 14
+    affordable = _nesting_is_affordable(recs)
     for rec in recs:
         simple = _picks(rec.decisions["simple"])
         doubles = _picks(rec.decisions["doubles"])
         full = _picks(rec.decisions["full"])
+        # The top pick is never traded away, in any mode.
         assert simple <= doubles, f"pos {rec.position}: doubles must contain simple"
-        assert doubles <= full, f"pos {rec.position}: full must contain doubles"
+        assert simple <= full, f"pos {rec.position}: full must contain simple"
+        if affordable:
+            assert doubles <= full, f"pos {rec.position}: full must contain doubles"
+
+
+def test_nesting_only_breaks_when_the_nested_ticket_is_unplayable() -> None:
+    """PG-2336's doubles-only ticket spends all 8 dobles (256 quinielas). A
+    `full` containing it cannot add a triple without passing 324, so the two
+    tickets are legitimately different — and each one is playable."""
+    service = _service()
+    recs = _build_recommendations(service, _pg2336_predictions())
+    broken = [
+        rec.position
+        for rec in recs
+        if not _picks(rec.decisions["doubles"]) <= _picks(rec.decisions["full"])
+    ]
+    if broken:
+        assert not _nesting_is_affordable(recs), (
+            f"full dropped coverage at {broken} while nesting was still legal"
+        )
 
 
 def test_full_keeps_x_when_doubles_covers_x() -> None:
     service = _service()
     recs = _build_recommendations(service, _pg2336_predictions())
+    if not _nesting_is_affordable(recs):
+        return
     for rec in recs:
         doubles = _picks(rec.decisions["doubles"])
         full = _picks(rec.decisions["full"])
