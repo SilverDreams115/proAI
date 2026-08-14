@@ -149,6 +149,10 @@ class ModelTrainingService(ModelTrainingArtifactsMixin):
         "swedish-allsvenskan": "swe",
         "allsvenskan": "swe",
         "club-friendlies": "club-friendlies",
+        "community-shield": "community-shield",
+        "fa-community-shield": "community-shield",
+        "supercup": "community-shield",
+        "super-cup": "community-shield",
         "serie-b-brazil": "serie-b-brazil",
         "brazilian-serie-b": "serie-b-brazil",
         "brazil-serie-b": "serie-b-brazil",
@@ -358,6 +362,28 @@ class ModelTrainingService(ModelTrainingArtifactsMixin):
             ),
             "blend_weights": {"elo": 0.28, "poisson": 0.20, "profile": 0.52},
             "draw_bias": 0.015,
+        },
+        "community-shield": {
+            # A one-off on neutral ground between the champions of two
+            # different competitions, played before either season starts.
+            # Filed as its own key rather than left under the domestic league
+            # (PG-2346 #7 arrived tagged `e0`, which is `ready`): the home
+            # side is not at home, neither team has league form for the
+            # season being played, and there is no benchmark for a single
+            # annual fixture. Never a safe simple pick — but classified, so
+            # the position is scored with context instead of blocked.
+            "competition_readiness": "context_only",
+            "live_pick_allowed": False,
+            "policy_reason": (
+                "Supercopa a partido unico en cancha neutral, antes del inicio de liga: "
+                "sin ventaja de local real ni forma de la temporada en curso. Se califica "
+                "con contexto, no como jugada simple segura."
+            ),
+            # Neutral ground means the home-advantage term in ELO is not
+            # earned, so lean off it and onto per-team profile; a cagey
+            # one-off draws more often than a league fixture.
+            "blend_weights": {"elo": 0.26, "poisson": 0.20, "profile": 0.54},
+            "draw_bias": 0.02,
         },
         "serie-b-brazil": {
             "competition_readiness": "ready",

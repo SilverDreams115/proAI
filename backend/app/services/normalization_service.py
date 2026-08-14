@@ -27,6 +27,20 @@ class NormalizationService:
         "rayo vallec": "rayo-vallecano",
         "u catolica": "universidad-catolica",
         "universidad catolica": "universidad-catolica",
+        # Four different clubs are called some form of "Nacional", and
+        # `_normalize` strips "club"/"cd"/"de" as stopwords, so three of them
+        # collapse onto the bare slug `nacional`. That is how 104 Portuguese
+        # matches and 8 Copa Libertadores ones ended up on one row.
+        # `TEAM_ALIAS_SLUGS` is consulted BEFORE stopword stripping, so it is
+        # the only place the distinction survives. Each live source spells its
+        # club differently, which is what makes the mapping unambiguous:
+        # TheSportsDB says "Club Nacional" for Asuncion, football-data.org
+        # sends full names ("Club Nacional de Football", "Club Nacional
+        # Potosi") because the connector reads `name` and never `shortName`,
+        # and the two Portuguese feeds say "CD Nacional" / "Nacional" — those
+        # keep the bare slug.
+        "club nacional": "nacional-asuncion",
+        "nacional asuncion": "nacional-asuncion",
         # National team aliases: Progol PDF uses Spanish names, TheSportsDB
         # uses English. Map both inputs to the same slug so the Progol
         # fixture resolver matches the friendlies ingested under
