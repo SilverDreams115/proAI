@@ -55,7 +55,7 @@ def _read_backup_marker() -> datetime | None:
         return None
 
 
-def _read_local_context_state() -> tuple[bool, str | None]:
+def _read_local_context_state() -> tuple[bool | None, str | None]:
     """Is the Progol context the refresh job reads actually there?
 
     `./data/progol_context` is a bind mount, and under Docker Desktop on WSL
@@ -70,14 +70,26 @@ def _read_local_context_state() -> tuple[bool, str | None]:
 
     Resolved through the service so this can never drift from the path the
     job actually opens.
+
+    Tri-state, following the same rule the backup marker follows: None means
+    "cannot tell", never "broken". The discriminator is the PARENT directory.
+    A lost mount leaves the mount point in place and empty, so directory
+    present + file absent is a real fault. Directory absent means this
+    deployment has no local context wired up at all — a fresh install or a
+    test process — and reporting that as a failure would degrade every
+    environment that simply does not use one.
     """
     try:
         from app.services.current_progol_service import CurrentProgolService
 
         path = CurrentProgolService._resolve_context_path(None)
-        return path.is_file(), str(path)
+        if path.is_file():
+            return True, str(path)
+        if path.parent.is_dir():
+            return False, str(path)
+        return None, str(path)
     except Exception:  # pragma: no cover - non-fatal observation
-        return False, None
+        return None, None
 
 
 def _freshness_alert(
@@ -146,7 +158,7 @@ def _collect_operational_signals() -> dict[str, object]:
         "backup_age_seconds": None,
         "freshness_alerts": [],
         "unregistered_parser_sources": 0,
-        "local_context_readable": True,
+        "local_context_readable": None,
         "local_context_path": None,
     }
     now = datetime.now(timezone.utc)
@@ -259,7 +271,7 @@ def _collect_operational_signals() -> dict[str, object]:
     context_readable, context_path = _read_local_context_state()
     signals["local_context_readable"] = context_readable
     signals["local_context_path"] = context_path
-    if not context_readable:
+    if context_readable is False:
         # Not a freshness alert — there is no age to compare, the file is
         # simply not there. It rides the same list so anything already
         # watching freshness_alerts sees it without changing shape.

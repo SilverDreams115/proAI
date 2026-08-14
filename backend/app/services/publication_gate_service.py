@@ -21,7 +21,13 @@ from app.services.slate_readiness_report_service import build_slate_readiness_re
 from app.services.slate_service import SlateService
 
 
-_BLOCKING_STATUSES = {"BLOQUEADO"}
+# NO_PRED belongs here for the same reason BLOQUEADO does: the gate cannot
+# vouch for a position it has no prediction for. Counting only BLOQUEADO read
+# an empty slate as a clean one — every counter derives from the predictions
+# that exist, so a slate with none scored blocked=0, warnings=0,
+# placeholders=0 and came out PLAY_CONSERVATIVE_ONLY with publish allowed.
+# PGM-809 did exactly that on 2026-08-14 with 0/9 predictions.
+_BLOCKING_STATUSES = {"BLOQUEADO", "NO_PRED"}
 _TEAM_BLOCKERS = {"team_resolution"}
 
 
@@ -219,6 +225,11 @@ def _data_debt(
         "blocked_count": len(blocked),
         "warning_count": len(warnings),
         "placeholder_count": len(placeholders),
+        # Broken out of blocked_count so the operator can tell "the model
+        # looked and refused" from "the model never ran here".
+        "missing_prediction_count": sum(
+            1 for row in blocked if str(row.get("status") or "") == "NO_PRED"
+        ),
         "data_blockers": data_blockers,
         "learning_exclusion": learning_exclusion,
         "blocked_positions": blocked,
@@ -231,6 +242,11 @@ def _reason(status: str, money_decision: dict[str, Any], data_debt: dict[str, An
     if status == "DO_NOT_PLAY":
         if data_debt["placeholder_count"]:
             return f"Resolver {data_debt['placeholder_count']} placeholder(s) antes de jugar."
+        if data_debt["missing_prediction_count"]:
+            return (
+                f"{data_debt['missing_prediction_count']} posición(es) sin predicción: "
+                "correr el refresh de la slate antes de jugar."
+            )
         if data_debt["blocked_count"]:
             return f"Resolver {data_debt['blocked_count']} posición(es) bloqueada(s) antes de jugar."
         if data_debt["data_blockers"]:
