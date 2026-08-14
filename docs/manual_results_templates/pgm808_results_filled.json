@@ -1,0 +1,61 @@
+{
+  "draw_code": "PGM-808",
+  "source": "manual_official",
+  "source_note": "Cadena 808 = V,E,V,L,E,L,V,V,E. LN aun NO publica 808 en /ProgolMediaSemana/Resultados (ultimo listado: 807, 07/08/2026), misma demora que tenia 807 cuando se ingesto. Cadena publicada tomada de La Razon (razon.com.mx, 2026-08-12, 'Resultados del Progol Media Semana 808'), que lista los 9 signos finales. Marcadores de TheSportsDB (Leagues Cup, league 5281, via eventsday/searchevents); pos 9 (Cruzeiro-Flamengo) cruzado ademas contra football-data.org competicion CLI, que lo confirma 1-1 FINISHED. La cadena derivada de los 9 marcadores coincide 9/9 con la publicada. Pos 2 (Columbus-Pumas) y pos 5 (Tigres-Vancouver) terminaron 1-1 y se definieron en penales: Progol cuenta el tiempo regular (90') => E, misma convencion aplicada en PGM-807. Correccion al capture: pos 9 no es Brasileirao sino Copa Libertadores (play-offs), segun ambos proveedores.",
+  "results": [
+    {
+      "position": 1,
+      "sign": "V",
+      "score": "0-1",
+      "source_note": "Charlotte FC vs Pachuca (Leagues Cup, 2026-08-11)"
+    },
+    {
+      "position": 2,
+      "sign": "E",
+      "score": "1-1",
+      "source_note": "Columbus Crew vs Pumas UNAM (1-1 en 90', definido en penales)"
+    },
+    {
+      "position": 3,
+      "sign": "V",
+      "score": "1-2",
+      "source_note": "FC Cincinnati vs Atlas (Leagues Cup, 2026-08-12)"
+    },
+    {
+      "position": 4,
+      "sign": "L",
+      "score": "3-1",
+      "source_note": "Minnesota United vs Atlante (2026-08-12)"
+    },
+    {
+      "position": 5,
+      "sign": "E",
+      "score": "1-1",
+      "source_note": "Tigres UANL vs Vancouver Whitecaps (1-1 en 90', definido en penales)"
+    },
+    {
+      "position": 6,
+      "sign": "L",
+      "score": "2-1",
+      "source_note": "Monterrey vs Nashville SC (Leagues Cup, 2026-08-13)"
+    },
+    {
+      "position": 7,
+      "sign": "V",
+      "score": "1-2",
+      "source_note": "Seattle Sounders vs CD Guadalajara (Leagues Cup, 2026-08-13)"
+    },
+    {
+      "position": 8,
+      "sign": "V",
+      "score": "1-2",
+      "source_note": "Cruz Azul vs Chicago Fire (Leagues Cup, 2026-08-14 UTC)"
+    },
+    {
+      "position": 9,
+      "sign": "E",
+      "score": "1-1",
+      "source_note": "Cruzeiro EC vs CR Flamengo (Copa Libertadores play-offs, 2026-08-13; confirmado por football-data.org CLI)"
+    }
+  ]
+}

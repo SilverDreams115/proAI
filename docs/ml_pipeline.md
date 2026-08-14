@@ -186,8 +186,23 @@ Both the confidence band (r=+0.13 with the gain) and a per-band temperature
 were tested as pre-match switches: the band carries no signal, and per-band T
 was worse than global (+0.0231 vs +0.0309, 7/9 vs 8/9 folds).
 
-**Status (2026-08-04):** 106 trainable rows over 9 complete slates; readiness
-`ready`. An artifact is promoted and running as read-only shadow.
+**Status (2026-08-14):** 132 trainable rows over 12 complete slates; readiness
+`ready`. The active shadow is still the artifact promoted on 2026-08-07 (115
+rows, 10 slates, worst fold -0.0734).
+
+The candidate trained after PGM-808 landed (`b4d95b00`, 132 rows) was **refused
+by the gate**: mean +0.0156, 9/12 folds helped, 0 pick changes, but the worst
+fold — PG-2345 at **-0.1093** — sits 0.0093 under the floor. That fold carries
+the lowest baseline Brier of the set (0.4927), which is the r=+0.99 relationship
+above doing exactly what it predicts: temperature scaling loses most where the
+served model was already sharp and right. Nothing was forced; the previous
+active artifact keeps serving. A jornada the model reads less well should pull
+the worst fold back over the floor on its own.
+
+Note that a slate only enters this dataset once its jornada score is
+**persisted** — `_build_all_rows` reads `jornada_scores`, not `match_results`.
+`scripts/score_completed_slate` is read-only and does not persist; after
+applying results, call `POST /api/scoring/slates/{slate_id}/compute`.
 
 ---
 
