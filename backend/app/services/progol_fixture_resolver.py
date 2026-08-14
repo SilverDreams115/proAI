@@ -95,10 +95,20 @@ class ProgolFixtureResolver:
 
     def infer_competition_for_pair(self, home_name: str, away_name: str):
         """Best guess at the competition this pair "belongs to" when no
-        upcoming match is present. Tries shared history first, then each
-        team alone. Returns None when neither team is known to us — that
-        case still falls back to the synthetic placeholder competition
-        so we never invent league metadata out of nothing."""
+        upcoming match is present. Tries the competitions the two have met
+        in, then the ones both of them play, and only then — when the other
+        team is a stranger to us — one team alone. Returns None when the
+        guess would contradict what we already know, so the caller falls
+        back to the synthetic placeholder competition instead of inventing
+        league metadata.
+
+        A single team's league is only admissible when we know nothing
+        about the opponent. PGM-809 is what the old fallback did with it:
+        Fenerbahce vs Lyon became "F1", Nijmegen vs Bodo/Glimt "N1", and
+        Independiente Rivadavia vs Fluminense "Brasileirao" — three
+        cross-border ties wearing one club's domestic league, each of them
+        borrowing that league's blend weights and competition profile to
+        score a match it could not possibly be part of."""
         home_team = self.repo.find_team_by_alias(
             home_name, self.normalizer.normalize_team_name(home_name)
         )
@@ -111,6 +121,15 @@ class ProgolFixtureResolver:
             )
             if shared is not None:
                 return shared
+            both = self.repo.most_played_competition_for_both(
+                team_a_id=home_team.id, team_b_id=away_team.id
+            )
+            if both is not None:
+                return both
+            # Both teams are known and share no competition at all. Any
+            # single-team guess from here is one our own history already
+            # contradicts, so we make none.
+            return None
         for team in (home_team, away_team):
             if team is None:
                 continue

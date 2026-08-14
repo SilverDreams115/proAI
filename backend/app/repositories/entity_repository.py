@@ -177,10 +177,68 @@ class EntityRepository:
                 or_(
                     (MatchModel.home_team_id == home_team_id) & (MatchModel.away_team_id == away_team_id),
                     (MatchModel.home_team_id == away_team_id) & (MatchModel.away_team_id == home_team_id),
-                )
+                ),
+                # A placeholder meeting is not a meeting: its competition was
+                # inferred by an earlier promotion, so counting it here would
+                # let that guess confirm itself on the next one.
+                MatchModel.is_placeholder.is_(False),
             )
             .group_by(CompetitionModel.id)
             .order_by(func.count(MatchModel.id).desc())
+            .limit(1)
+        )
+        row = self.session.execute(statement).first()
+        return row[0] if row else None
+
+    def most_played_competition_for_both(
+        self,
+        *,
+        team_a_id: str,
+        team_b_id: str,
+    ) -> CompetitionModel | None:
+        """Most played competition that BOTH teams have real history in.
+
+        Not "where the two met" — that is `most_played_competition_for_pair`
+        — but "which tournament both of them actually play". Two clubs from
+        different countries never share a domestic league and usually do
+        share a continental cup, which is exactly the distinction the
+        single-team fallback could not make: it dressed Fenerbahce vs Lyon
+        as Ligue 1 because Lyon plays there.
+
+        Placeholder rows are excluded on purpose: they carry a competition
+        that was itself inferred, so counting them would let an earlier
+        guess vouch for itself.
+        """
+
+        def _competitions_of(team_id: str):
+            return (
+                select(MatchModel.competition_id)
+                .where(
+                    or_(
+                        MatchModel.home_team_id == team_id,
+                        MatchModel.away_team_id == team_id,
+                    ),
+                    MatchModel.is_placeholder.is_(False),
+                )
+                .distinct()
+            )
+
+        statement = (
+            select(CompetitionModel, func.count(MatchModel.id).label("c"))
+            .join(MatchModel, MatchModel.competition_id == CompetitionModel.id)
+            .where(
+                MatchModel.is_placeholder.is_(False),
+                CompetitionModel.id.in_(_competitions_of(team_a_id)),
+                CompetitionModel.id.in_(_competitions_of(team_b_id)),
+                or_(
+                    MatchModel.home_team_id.in_([team_a_id, team_b_id]),
+                    MatchModel.away_team_id.in_([team_a_id, team_b_id]),
+                ),
+            )
+            .group_by(CompetitionModel.id)
+            # Name breaks the count tie so the same pair always infers the
+            # same competition run to run.
+            .order_by(func.count(MatchModel.id).desc(), CompetitionModel.name)
             .limit(1)
         )
         row = self.session.execute(statement).first()
@@ -194,7 +252,8 @@ class EntityRepository:
                 or_(
                     MatchModel.home_team_id == team_id,
                     MatchModel.away_team_id == team_id,
-                )
+                ),
+                MatchModel.is_placeholder.is_(False),
             )
             .group_by(CompetitionModel.id)
             .order_by(func.count(MatchModel.id).desc())

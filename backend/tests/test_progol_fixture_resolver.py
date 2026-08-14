@@ -177,6 +177,137 @@ def test_infer_competition_falls_back_to_single_team(tmp_path) -> None:
         session.close()
 
 
+def _seed_history(session, *, home_name: str, away_name: str, competition_name: str, kickoff_at,
+                  is_placeholder: bool = False):
+    """Like `_seed_match`, but reuses the teams and competition already in
+    the session so a club can build up history across several tournaments."""
+    from app.models.tables import CompetitionModel, MatchModel, TeamModel
+    from sqlalchemy import select
+
+    def _get_or_create(model, name):
+        row = session.execute(select(model).where(model.name == name)).scalars().first()
+        if row is None:
+            row = model(name=name)
+            session.add(row)
+            session.flush()
+        return row
+
+    competition = _get_or_create(CompetitionModel, competition_name)
+    home = _get_or_create(TeamModel, home_name)
+    away = _get_or_create(TeamModel, away_name)
+    match = MatchModel(
+        competition=competition,
+        home_team=home,
+        away_team=away,
+        kickoff_at=kickoff_at,
+        is_placeholder=is_placeholder,
+    )
+    session.add(match)
+    session.flush()
+    return match
+
+
+def test_infer_competition_prefers_the_one_both_teams_play(tmp_path) -> None:
+    """The two clubs never met, but both have history in a continental cup
+    while each also plays its own domestic league. The cup is the only
+    competition that can hold this fixture, so it must win over either
+    league — the single-team fallback would have picked one at random."""
+    from app.services.progol_fixture_resolver import ProgolFixtureResolver
+
+    session = _make_session(tmp_path)
+    try:
+        base = datetime(2026, 5, 31, 3, 0, tzinfo=timezone.utc)
+        # Rivadavia: plenty of domestic football, a little continental.
+        for i in range(6):
+            _seed_history(
+                session, home_name="RIVADAVIA", away_name="RIVAL_ARG",
+                competition_name="Argentinian Primera Division",
+                kickoff_at=base - timedelta(days=30 * (i + 1)),
+            )
+        _seed_history(
+            session, home_name="RIVADAVIA", away_name="OTRO_SUDAMERICANO",
+            competition_name="Copa Libertadores", kickoff_at=base - timedelta(days=200),
+        )
+        # Fluminense: same shape, different league.
+        for i in range(6):
+            _seed_history(
+                session, home_name="FLUMINENSE", away_name="RIVAL_BRA",
+                competition_name="Brasileirao",
+                kickoff_at=base - timedelta(days=30 * (i + 1)),
+            )
+        _seed_history(
+            session, home_name="FLUMINENSE", away_name="OTRO_SUDAMERICANO",
+            competition_name="Copa Libertadores", kickoff_at=base - timedelta(days=210),
+        )
+
+        resolver = ProgolFixtureResolver(session)
+        inferred = resolver.infer_competition_for_pair("RIVADAVIA", "FLUMINENSE")
+        assert inferred is not None
+        assert inferred.name == "Copa Libertadores"
+    finally:
+        session.close()
+
+
+def test_infer_competition_returns_none_when_known_pair_shares_nothing(tmp_path) -> None:
+    """PGM-809 position 1: Fenerbahce vs Lyon. Both clubs are known, they
+    never met, and they share no competition — the old fallback handed the
+    fixture Lyon's Ligue 1. Now nobody's league is admissible and the
+    caller falls back to the synthetic placeholder competition."""
+    from app.services.progol_fixture_resolver import ProgolFixtureResolver
+
+    session = _make_session(tmp_path)
+    try:
+        base = datetime(2026, 5, 31, 3, 0, tzinfo=timezone.utc)
+        for i in range(5):
+            _seed_history(
+                session, home_name="FENERBAHCE", away_name="RIVAL_TUR",
+                competition_name="T1", kickoff_at=base - timedelta(days=30 * (i + 1)),
+            )
+            _seed_history(
+                session, home_name="LYON", away_name="RIVAL_FRA",
+                competition_name="F1", kickoff_at=base - timedelta(days=30 * (i + 1)),
+            )
+
+        resolver = ProgolFixtureResolver(session)
+        assert resolver.infer_competition_for_pair("FENERBAHCE", "LYON") is None
+    finally:
+        session.close()
+
+
+def test_infer_competition_ignores_placeholder_history(tmp_path) -> None:
+    """A placeholder row carries a competition that was itself inferred.
+    Counting it would let a previous bad guess confirm itself: the
+    Brasileirao placeholder PGM-809 created for Rivadavia must not make
+    Brasileirao a competition "both teams play"."""
+    from app.services.progol_fixture_resolver import ProgolFixtureResolver
+
+    session = _make_session(tmp_path)
+    try:
+        base = datetime(2026, 5, 31, 3, 0, tzinfo=timezone.utc)
+        for i in range(5):
+            _seed_history(
+                session, home_name="RIVADAVIA", away_name="RIVAL_ARG",
+                competition_name="Argentinian Primera Division",
+                kickoff_at=base - timedelta(days=30 * (i + 1)),
+            )
+            _seed_history(
+                session, home_name="FLUMINENSE", away_name="RIVAL_BRA",
+                competition_name="Brasileirao",
+                kickoff_at=base - timedelta(days=30 * (i + 1)),
+            )
+        # The bad guess from the previous promotion, still on the books.
+        _seed_history(
+            session, home_name="RIVADAVIA", away_name="FLUMINENSE",
+            competition_name="Brasileirao", kickoff_at=base + timedelta(days=5),
+            is_placeholder=True,
+        )
+
+        resolver = ProgolFixtureResolver(session)
+        assert resolver.infer_competition_for_pair("RIVADAVIA", "FLUMINENSE") is None
+    finally:
+        session.close()
+
+
 def test_infer_competition_returns_none_when_both_teams_unknown(tmp_path) -> None:
     from app.services.progol_fixture_resolver import ProgolFixtureResolver
 
