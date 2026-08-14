@@ -42,13 +42,13 @@
           "away_team": "Cruz Azul",
           "away_country": "Mexico",
           "away_is_placeholder": false,
-          "kickoff_at": "2026-08-15T16:00:00+00:00",
-          "fixture_is_placeholder": true,
+          "kickoff_at": "2026-08-17T03:00:00+00:00",
+          "fixture_is_placeholder": false,
           "venue": null
         },
         {
           "position": 3,
-          "competition": "E0",
+          "competition": "Club Friendlies",
           "country": null,
           "season": null,
           "competition_is_placeholder": false,
@@ -58,8 +58,8 @@
           "away_team": "AC Milan",
           "away_country": null,
           "away_is_placeholder": false,
-          "kickoff_at": "2026-08-15T17:00:00+00:00",
-          "fixture_is_placeholder": true,
+          "kickoff_at": "2026-08-15T14:45:00+00:00",
+          "fixture_is_placeholder": false,
           "venue": null
         },
         {
