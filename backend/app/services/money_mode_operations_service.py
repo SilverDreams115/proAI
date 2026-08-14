@@ -152,8 +152,19 @@ def _build_operational_status_uncached(session: Session, scope: list[Any]) -> di
 def _readiness_summary(money_mode: dict[str, Any]) -> dict[str, Any]:
     """Cheap readiness rollup from an already-built Money Mode report.
 
-    READY = the presentation guard allows a confident simple. Never invents a
-    promotion; safe_promotions is exactly the count of already-defensible picks.
+    READY = the presentation guard allows a confident simple.
+
+    This used to also report `safe_promotions`, set to the same number, and
+    the two words are not synonyms. `readiness_expansion_service` — the
+    authority — only calls a promotion safe when nothing at all blocks the
+    match, and that includes two things this rollup cannot see without the
+    work it exists to avoid: whether the competition is a friendly, and
+    whether the results provider matched the fixture. On 2026-08-14 that gap
+    read as "3 promociones seguras" in the operator's report while the audit
+    said none of them were safe.
+
+    So the count is not published here. `ready_now` is what this can honestly
+    know; `scripts/audit_ready_expansion.py` answers the promotion question.
     """
     matches = money_mode.get("matches", [])
     ready_now = sum(1 for m in matches if m.get("simple_allowed"))
@@ -161,7 +172,6 @@ def _readiness_summary(money_mode: dict[str, Any]) -> dict[str, Any]:
     return {
         "ready_now": ready_now,
         "not_ready": not_ready,
-        "safe_promotions": ready_now,  # only already-sufficient picks count
     }
 
 
@@ -287,7 +297,8 @@ def run_operational_money_mode(
     readiness_total = {
         "ready_now": sum(s["readiness_summary"]["ready_now"] for s in slates_out),
         "not_ready": sum(s["readiness_summary"]["not_ready"] for s in slates_out),
-        "safe_promotions": sum(s["readiness_summary"]["safe_promotions"] for s in slates_out),
+        # No safe-promotion count here on purpose — see `_readiness_summary`.
+        "safe_promotions_source": "scripts.audit_ready_expansion",
     }
     results_provider_status = (
         {"checked": True, "slates": [

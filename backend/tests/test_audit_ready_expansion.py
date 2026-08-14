@@ -57,6 +57,31 @@ def test_audit_does_not_invent_ready(db, monkeypatch):  # noqa: F811
     assert set(report["safe_promotions"]).issubset(ready_positions)
 
 
+def test_money_mode_rollup_does_not_claim_safe_promotions(db, monkeypatch):  # noqa: F811
+    """The operator report may not answer a question it cannot see.
+
+    Money Mode's cheap rollup counted a READY pick as a safe promotion, but
+    `safe_to_promote_now` also requires that nothing else blocks the match —
+    a friendly context, an unmatched provider fixture. On 2026-08-14 the two
+    disagreed out loud: the operational report said 3 promociones seguras
+    while this audit said none of them were safe.
+    """
+    from app.services.money_mode_operations_service import run_operational_money_mode
+
+    seed_slate(db)
+    audit = build_ready_expansion(db, _slate(db))
+    report = run_operational_money_mode(db, draw_code=DRAW)
+
+    summary = report["readiness_expansion_summary"]
+    assert "safe_promotions" not in summary, (
+        "the rollup cannot see friendly context or provider matching; it must "
+        "not publish a number the audit contradicts"
+    )
+    assert summary["safe_promotions_source"] == "scripts.audit_ready_expansion"
+    # And the audit still answers it, for the same slate.
+    assert isinstance(audit["safe_promotions"], list)
+
+
 def test_audit_json_serialisable(db, monkeypatch):  # noqa: F811
     seed_slate(db)
     report = build_ready_expansion(db, _slate(db))

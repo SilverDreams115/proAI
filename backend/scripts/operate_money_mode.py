@@ -98,7 +98,7 @@ def _render_human(report: dict[str, Any]) -> str:
     rp = report.get("results_provider_status", {})
     lines.append("")
     lines.append(f"READINESS  : ready_now={rx.get('ready_now')} not_ready={rx.get('not_ready')} "
-                 f"safe_promotions={rx.get('safe_promotions')}")
+                 f"· promociones seguras: {rx.get('safe_promotions_source')}")
     if rp.get("checked"):
         for entry in rp.get("slates", []):
             cov = entry.get("coverage", {})
