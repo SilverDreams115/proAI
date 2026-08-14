@@ -147,6 +147,16 @@ class TicketRecommendationService:
         }
         double_ids = self._choose_doubles(predictions, profiles, rule["doubles_only_max"])
         full_double_ids, full_triple_ids = self._choose_full_coverage(predictions, profiles, rule)
+        # The draw-coverage floor spends triples too, so it has to be decided
+        # against the same budget the optimizer just spent from — see
+        # `_grant_draw_coverage`.
+        draw_lift_ids = self._grant_draw_coverage(
+            predictions=predictions,
+            double_ids=double_ids,
+            full_double_ids=full_double_ids,
+            full_triple_ids=full_triple_ids,
+            max_triples=int(rule["combined_triple_max"]),
+        )
         recommendations = [
             self._build_match_recommendation(
                 prediction=prediction,
@@ -154,6 +164,7 @@ class TicketRecommendationService:
                 double_ids=double_ids,
                 full_double_ids=full_double_ids,
                 full_triple_ids=full_triple_ids,
+                draw_lift_ids=draw_lift_ids,
             )
             for prediction in predictions
         ]
@@ -268,6 +279,7 @@ class TicketRecommendationService:
         double_ids: set[str],
         full_double_ids: set[str],
         full_triple_ids: set[str],
+        draw_lift_ids: set[str],
     ) -> MatchTicketRecommendationResponse:
         outcomes = self._sorted_outcomes(prediction)
         best, second, _third = outcomes
@@ -284,7 +296,10 @@ class TicketRecommendationService:
         # doubles nor full already covers it, lift `full` to a triple — this
         # only ever RAISES coverage and keeps simple ⊆ doubles ⊆ full intact.
         # Never touches the simple pick, so X is never made a fixed/auto draw.
-        full = self._ensure_draw_coverage(prediction, doubles, full)
+        # Whether this match gets one of the leftover triples was decided for
+        # the slate as a whole, under the budget — see `_grant_draw_coverage`.
+        if prediction.match_id in draw_lift_ids:
+            full = self._ensure_draw_coverage(prediction, doubles, full)
         decisions = {"simple": simple, "doubles": doubles, "full": full}
         return MatchTicketRecommendationResponse(
             position=prediction.position,
@@ -333,6 +348,48 @@ class TicketRecommendationService:
                 pick_type="double", picks=[best[0], second[0]], source=source
             )
         return TicketDecisionResponse(pick_type="fixed", picks=[best[0]], source=source)
+
+    def _grant_draw_coverage(
+        self,
+        *,
+        predictions: list[MatchPredictionResponse],
+        double_ids: set[str],
+        full_double_ids: set[str],
+        full_triple_ids: set[str],
+        max_triples: int,
+    ) -> set[str]:
+        """Hand the leftover triples to the live draws that need one.
+
+        The floor used to fire per match, outside any budget: every live
+        draw whose X was uncovered lifted `full` to a triple. PGM-809 is
+        what that costs — the midweek rule allows 2 triples, the optimizer
+        spent both, and the floor added a third, taking the ticket from 72
+        to 216 combinations with nothing in the report saying so.
+
+        The triples the optimizer did not spend are handed out here instead,
+        strongest draw first. A live draw that finds the budget empty stays
+        uncovered rather than quietly enlarging the ticket — the slate is
+        already telling us it has more uncertainty than it can afford.
+        """
+        remaining = max_triples - len(full_triple_ids)
+        if remaining <= 0:
+            return set()
+        candidates: list[tuple[float, str]] = []
+        for prediction in predictions:
+            _home, p_draw, _away = prediction.decision_vector()
+            if p_draw < self.LIVE_DRAW_THRESHOLD:
+                continue
+            best, second, _third = self._sorted_outcomes(prediction)
+            simple = TicketDecisionResponse(pick_type="fixed", picks=[best[0]])
+            doubles = self._doubles_decision(prediction, best, second, double_ids)
+            full = self._full_decision(prediction, best, second, full_double_ids, full_triple_ids)
+            doubles, full = self._enforce_monotonic_coverage(simple, doubles, full, best, second)
+            if Outcome.DRAW in doubles.picks or Outcome.DRAW in full.picks:
+                continue
+            candidates.append((p_draw, prediction.match_id))
+        # Strongest draw first; the id breaks ties so the grant is stable.
+        candidates.sort(key=lambda item: (-item[0], item[1]))
+        return {match_id for _p_draw, match_id in candidates[:remaining]}
 
     def _ensure_draw_coverage(
         self,

@@ -87,13 +87,22 @@ def _pg2336_predictions() -> list[MatchPredictionResponse]:
     ]
 
 
-def _build_recommendations(service: TicketRecommendationService, predictions):
+def _build_recommendations(
+    service: TicketRecommendationService, predictions, week_type: str = "weekend"
+):
     """Run the real pre-persistence pipeline (no DB writes)."""
-    rule = service._rule_for_slate("weekend", len(predictions))
+    rule = service._rule_for_slate(week_type, len(predictions))
     profiles = {p.match_id: service._risk_profile(p, {}) for p in predictions}
     double_ids = service._choose_doubles(predictions, profiles, rule["doubles_only_max"])
     full_double_ids, full_triple_ids = service._choose_full_coverage(
         predictions, profiles, rule
+    )
+    draw_lift_ids = service._grant_draw_coverage(
+        predictions=predictions,
+        double_ids=double_ids,
+        full_double_ids=full_double_ids,
+        full_triple_ids=full_triple_ids,
+        max_triples=int(rule["combined_triple_max"]),
     )
     return [
         service._build_match_recommendation(
@@ -102,6 +111,7 @@ def _build_recommendations(service: TicketRecommendationService, predictions):
             double_ids=double_ids,
             full_double_ids=full_double_ids,
             full_triple_ids=full_triple_ids,
+            draw_lift_ids=draw_lift_ids,
         )
         for p in predictions
     ]
@@ -140,6 +150,7 @@ def test_pos13_like_case_full_cannot_be_less_than_doubles() -> None:
         double_ids={"m13"},          # doubles → [away, draw] = 2X
         full_double_ids=set(),       # full would have been fixed → 2
         full_triple_ids=set(),
+        draw_lift_ids={"m13"},
     )
     assert _picks(rec.decisions["doubles"]) == {"2", "X"}
     # Monotonicity fix: full must cover at least what doubles covers.
@@ -156,6 +167,7 @@ def test_pos9_like_case_full_cannot_drop_x() -> None:
         double_ids={"m9"},           # doubles → [home, draw] = 1X
         full_double_ids=set(),
         full_triple_ids=set(),
+        draw_lift_ids={"m9"},
     )
     assert _picks(rec.decisions["doubles"]) == {"1", "X"}
     assert _picks(rec.decisions["full"]) >= {"1", "X"}
@@ -172,6 +184,7 @@ def test_monotonicity_lift_does_not_remove_triple_coverage() -> None:
         double_ids={"m"},
         full_double_ids=set(),
         full_triple_ids={"m"},       # full → triple
+        draw_lift_ids={"m"},
     )
     assert _picks(rec.decisions["full"]) == {"1", "X", "2"}
 
@@ -186,6 +199,7 @@ def test_draw_risk_rank_and_flags() -> None:
         double_ids={"m13"},
         full_double_ids=set(),
         full_triple_ids=set(),
+        draw_lift_ids={"m13"},
     )
     risk = rec.draw_risk
     assert risk is not None
@@ -206,6 +220,7 @@ def test_draw_risk_live_threshold_boundary() -> None:
     rec_live = service._build_match_recommendation(
         prediction=live, profile=service._risk_profile(live, {}),
         double_ids=set(), full_double_ids=set(), full_triple_ids=set(),
+        draw_lift_ids={"a"},
     )
     assert rec_live.draw_risk is not None
     assert rec_live.draw_risk.is_live_draw is True
@@ -216,6 +231,7 @@ def test_draw_risk_live_threshold_boundary() -> None:
     rec_cold = service._build_match_recommendation(
         prediction=cold, profile=service._risk_profile(cold, {}),
         double_ids=set(), full_double_ids=set(), full_triple_ids=set(),
+        draw_lift_ids={"b"},
     )
     assert rec_cold.draw_risk is not None
     assert rec_cold.draw_risk.is_live_draw is False
@@ -227,6 +243,7 @@ def test_draw_risk_third_rank_when_draw_is_least_likely() -> None:
     rec = service._build_match_recommendation(
         prediction=pred, profile=service._risk_profile(pred, {}),
         double_ids=set(), full_double_ids=set(), full_triple_ids=set(),
+        draw_lift_ids={"m14"},
     )
     assert rec.draw_risk is not None
     assert rec.draw_risk.draw_rank == 3
