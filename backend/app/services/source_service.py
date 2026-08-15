@@ -35,6 +35,7 @@ class SourceService:
         "progol_catalog_html",
         "progol_ms_guia_pdf",
         "local_context_json",
+        "espn_scoreboard",
     }
     ALLOWED_PARSER_PROFILES = {"generic", "sports_feed_v1"}
     KIND_TO_ALLOWED_PARSERS = {
@@ -48,6 +49,9 @@ class SourceService:
         "progol_catalog_html": {"generic"},
         "progol_ms_guia_pdf": {"generic"},
         "local_context_json": {"generic"},
+        # Emits the same fixture shape football-data.org does, on purpose:
+        # no new parser to maintain for a feed that may not outlive it.
+        "espn_scoreboard": {"sports_feed_v1"},
     }
     SUPPORTED_PROVIDERS = [
         {
@@ -121,6 +125,18 @@ class SourceService:
             "connector_kind": "progol_catalog_html",
             "parser_profile": "generic",
             "description": "TuLotero Progol Media Semana product page with contest options and sale window.",
+        },
+        {
+            "provider_id": "espn-scoreboard",
+            "connector_kind": "espn_scoreboard",
+            "parser_profile": "sports_feed_v1",
+            "description": (
+                "ESPN public soccer scoreboard — keyless fixtures and full-time results for "
+                "competitions no other configured feed carries (CONMEBOL Sudamericana, UEFA "
+                "qualifying). Undocumented endpoint: treat as best-effort. "
+                "URL: https://site.api.espn.com/apis/site/v2/sports/soccer"
+                "?leagues=<slug,slug>&days_back=3&days_ahead=10"
+            ),
         },
         {
             "provider_id": "ln-progol-ms-guide",

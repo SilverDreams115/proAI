@@ -7,6 +7,7 @@ from typing import ClassVar
 from app.connectors.availability_json import AvailabilityJsonConnector
 from app.connectors.base import SourceConnector
 from app.connectors.base import SourceDocument
+from app.connectors.espn_scoreboard import EspnScoreboardConnector
 from app.connectors.football_data_api import FootballDataApiConnector
 from app.connectors.football_data_uk import FootballDataUkSeasonConnector
 from app.connectors.html import GenericHtmlConnector
@@ -287,6 +288,8 @@ class IngestionService:
                 base_url=root,
                 season_path=path,
             )
+        if source.kind == "espn_scoreboard":
+            return EspnScoreboardConnector(name=source.name, base_url=source.base_url)
         if source.kind == "thesportsdb_season":
             return TheSportsDbSeasonConnector(
                 name=source.name,

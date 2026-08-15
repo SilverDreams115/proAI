@@ -275,6 +275,14 @@ class NormalizationService:
         "primera division uruguay": "uruguayan-primera-division",
         "ligapro serie a": "ecuador-serie-a",
         "ecuador serie a": "ecuador-serie-a",
+        # ESPN labels the CONMEBOL cups with the confederation in front. Left
+        # unaliased they would open a second competition next to the one
+        # football-data.org already fills, and the same match would exist
+        # twice under two fixture identities.
+        "conmebol libertadores": "copa-libertadores",
+        "copa libertadores": "copa-libertadores",
+        "conmebol sudamericana": "copa-sudamericana",
+        "copa sudamericana": "copa-sudamericana",
         # football-data.co.uk's ARG.csv labels the Argentine top flight by its
         # sponsor-era name, "Liga Profesional". Both COMPETITION_STOPWORDS
         # entries in it ("liga") strip away, leaving the slug "profesional",
