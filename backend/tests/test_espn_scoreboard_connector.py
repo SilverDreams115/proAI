@@ -186,6 +186,52 @@ def test_window_covers_played_and_upcoming(monkeypatch):
     assert seen and expected in seen[0]
 
 
+def test_long_history_is_requested_in_slices():
+    """ESPN answers ~100 events per request: a year asked at once comes back
+    a fraction of itself. 365 days of Copa Sudamericana returned FEWER
+    finished matches than 120 days did."""
+    from app.connectors.espn_scoreboard import _windows
+
+    windows = _windows("https://x/y?leagues=a&days_back=120&days_ahead=10&chunk_days=30")
+    assert len(windows) == 5, windows
+    # Contiguous and non-overlapping: every slice starts the day after the
+    # previous one ends, so no match is fetched twice or skipped.
+    for earlier, later in zip(windows, windows[1:]):
+        end = datetime.strptime(earlier.split("-")[1], "%Y%m%d").date()
+        start = datetime.strptime(later.split("-")[0], "%Y%m%d").date()
+        assert start == end + timedelta(days=1)
+    today = datetime.now(timezone.utc).date()
+    assert windows[0].startswith(f"{today - timedelta(days=120):%Y%m%d}")
+    assert windows[-1].endswith(f"{today + timedelta(days=10):%Y%m%d}")
+
+
+def test_a_rescheduled_event_is_not_ingested_twice(monkeypatch):
+    """Slices do not overlap, but the same event id showing up in two of them
+    must still yield one document."""
+    import app.connectors.espn_scoreboard as mod
+
+    class _Response:
+        def read(self) -> bytes:
+            return json.dumps(
+                {
+                    "leagues": [{"name": "L"}],
+                    "events": [dict(_event(), id="401")],
+                }
+            ).encode()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_exc):
+            return False
+
+    monkeypatch.setattr(mod, "urlopen", lambda request, timeout=0: _Response())  # noqa: ARG005
+    documents = EspnScoreboardConnector(
+        "ESPN", "https://x/y?leagues=a&days_back=90&days_ahead=0&chunk_days=30"
+    ).fetch()
+    assert len(documents) == 1
+
+
 def test_no_leagues_configured_fetches_nothing(monkeypatch):
     import app.connectors.espn_scoreboard as mod
 

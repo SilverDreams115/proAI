@@ -50,6 +50,12 @@ DEFAULT_PATH = "/apis/site/v2/sports/soccer"
 # played, fixtures for the slate about to close.
 DEFAULT_DAYS_BACK = 3
 DEFAULT_DAYS_AHEAD = 10
+# ESPN answers at most ~100 events per request and rejects a range much wider
+# than a year, so a long history has to be asked for in slices. 30 days keeps
+# even a busy league (MLS) well under the cap.
+DEFAULT_CHUNK_DAYS = 30
+# A chunk that comes back exactly at the ceiling was probably cut short.
+_TRUNCATION_HINT = 100
 
 # ESPN status names → the vocabulary `sports_feed_v1` already understands from
 # football-data.org. Anything unmapped rides through as-is.
@@ -76,22 +82,36 @@ def parse_leagues(base_url: str) -> list[str]:
     return seen
 
 
-def _window(base_url: str) -> tuple[str, str]:
-    params = parse_qs(urlsplit(base_url).query)
+def _int_param(base_url: str, key: str, default: int) -> int:
+    values = parse_qs(urlsplit(base_url).query).get(key) or []
+    if not values:
+        return default
+    try:
+        return max(0, int(values[0]))
+    except (TypeError, ValueError):
+        return default
 
-    def _int(key: str, default: int) -> int:
-        values = params.get(key) or []
-        if not values:
-            return default
-        try:
-            return max(0, int(values[0]))
-        except (TypeError, ValueError):
-            return default
 
+def _windows(base_url: str) -> list[str]:
+    """The requested range as `YYYYMMDD-YYYYMMDD` slices, oldest first.
+
+    One request per slice instead of one for the whole range: ESPN caps a
+    response at roughly 100 events, so asking a year at once silently returns
+    a fraction of it — 365 days of Copa Sudamericana came back with fewer
+    finished matches than 120 days did.
+    """
     today = datetime.now(timezone.utc).date()
-    start = today - timedelta(days=_int("days_back", DEFAULT_DAYS_BACK))
-    end = today + timedelta(days=_int("days_ahead", DEFAULT_DAYS_AHEAD))
-    return start.strftime("%Y%m%d"), end.strftime("%Y%m%d")
+    start = today - timedelta(days=_int_param(base_url, "days_back", DEFAULT_DAYS_BACK))
+    end = today + timedelta(days=_int_param(base_url, "days_ahead", DEFAULT_DAYS_AHEAD))
+    chunk = max(1, _int_param(base_url, "chunk_days", DEFAULT_CHUNK_DAYS))
+
+    windows: list[str] = []
+    cursor = start
+    while cursor <= end:
+        stop = min(cursor + timedelta(days=chunk - 1), end)
+        windows.append(f"{cursor:%Y%m%d}-{stop:%Y%m%d}")
+        cursor = stop + timedelta(days=1)
+    return windows
 
 
 def _fixture_from_event(event: dict, league_name: str, league_slug: str) -> dict | None:
@@ -171,54 +191,78 @@ class EspnScoreboardConnector(SourceConnector):
         leagues = parse_leagues(self.base_url)
         if not leagues:
             return []
-        start, end = _window(self.base_url)
-        dates = f"{start}-{end}"
 
         documents: list[SourceDocument] = []
+        seen: set[tuple[str, str]] = set()
         for league_slug in leagues:
-            url = self._endpoint(league_slug, dates)
-            try:
-                # No custom User-Agent on purpose. ESPN's edge answers
-                # urllib's default and returns 403 to a named client — both
-                # "proAI/0.1" and a browser-shaped string were refused on
-                # 2026-08-14. Adding one back to "identify ourselves politely"
-                # silently kills the feed.
-                request = Request(url)
-                with urlopen(request, timeout=20) as response:
-                    payload = json.loads(response.read().decode("utf-8", errors="replace"))
-            except Exception as exc:  # noqa: BLE001 — one league must not sink the run
-                # Undocumented endpoint: a slug can disappear without notice.
-                # Log it and keep the other leagues.
-                logger.warning(
-                    "espn scoreboard league failed",
-                    extra={
-                        "event": "espn_scoreboard_league_failed",
-                        "league": league_slug,
-                        "url": url,
-                        "error": str(exc),
+            for dates in _windows(self.base_url):
+                documents.extend(self._fetch_window(league_slug, dates, seen))
+        return documents
+
+    def _fetch_window(
+        self, league_slug: str, dates: str, seen: set[tuple[str, str]]
+    ) -> list[SourceDocument]:
+        documents: list[SourceDocument] = []
+        url = self._endpoint(league_slug, dates)
+        try:
+            # No custom User-Agent on purpose. ESPN's edge answers
+            # urllib's default and returns 403 to a named client — both
+            # "proAI/0.1" and a browser-shaped string were refused on
+            # 2026-08-14. Adding one back to "identify ourselves politely"
+            # silently kills the feed.
+            request = Request(url)
+            with urlopen(request, timeout=20) as response:
+                payload = json.loads(response.read().decode("utf-8", errors="replace"))
+        except Exception as exc:  # noqa: BLE001 — one league must not sink the run
+            # Undocumented endpoint: a slug can disappear without notice.
+            # Log it and keep the other leagues.
+            logger.warning(
+                "espn scoreboard league failed",
+                extra={
+                    "event": "espn_scoreboard_league_failed",
+                    "league": league_slug,
+                    "url": url,
+                    "error": str(exc),
+                },
+            )
+            return documents
+
+        league_meta = (payload.get("leagues") or [{}])[0]
+        league_name = str(league_meta.get("name") or league_slug)
+        events = payload.get("events") or []
+        if len(events) >= _TRUNCATION_HINT:
+            logger.warning(
+                "espn scoreboard window may be truncated; shrink chunk_days",
+                extra={
+                    "event": "espn_scoreboard_window_truncated",
+                    "league": league_slug,
+                    "dates": dates,
+                    "events": len(events),
+                },
+            )
+        for event in events:
+            fixture = _fixture_from_event(event, league_name, league_slug)
+            if fixture is None:
+                continue
+            # Slices share no days, but a rescheduled event can surface in
+            # two of them; the id keeps one copy.
+            key = (league_slug, str(event.get("id") or f"{fixture['home_team']}|{fixture['kickoff_at']}"))
+            if key in seen:
+                continue
+            seen.add(key)
+            label = f"{fixture['home_team']} vs {fixture['away_team']}"
+            documents.append(
+                SourceDocument(
+                    source_name=self.name,
+                    source_url=url,
+                    captured_at=datetime.now(timezone.utc),
+                    payload={
+                        "title": f"{league_name} {label}",
+                        "summary": label,
+                        "headings": [league_name, label],
+                        "fixtures": [fixture],
+                        "fixture_candidates": [],
                     },
                 )
-                continue
-
-            league_meta = (payload.get("leagues") or [{}])[0]
-            league_name = str(league_meta.get("name") or league_slug)
-            for event in payload.get("events") or []:
-                fixture = _fixture_from_event(event, league_name, league_slug)
-                if fixture is None:
-                    continue
-                label = f"{fixture['home_team']} vs {fixture['away_team']}"
-                documents.append(
-                    SourceDocument(
-                        source_name=self.name,
-                        source_url=url,
-                        captured_at=datetime.now(timezone.utc),
-                        payload={
-                            "title": f"{league_name} {label}",
-                            "summary": label,
-                            "headings": [league_name, label],
-                            "fixtures": [fixture],
-                            "fixture_candidates": [],
-                        },
-                    )
-                )
+            )
         return documents

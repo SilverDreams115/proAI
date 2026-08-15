@@ -197,6 +197,26 @@ def run_ms_pdf_watch(
                 "observados); no se reactiva ni se mueve el cierre provisional"
             )
         elif slate is not None:
+            # The provisional window is `first_seen + N days`, which knows
+            # nothing about when the matches are. On PGM-809 that produced a
+            # cierre on 19 Aug 19:30Z for a concurso whose first match kicks
+            # off on the 18th at 19:00Z — a day in which the operator could
+            # still "play" a slate already under way. An invented close may
+            # never outlive the first kickoff; an official one is left alone,
+            # because that is the contest's own word.
+            if activation_source == "provisional_ms_pdf_window":
+                first_kickoff = _first_kickoff(slate)
+                if first_kickoff is not None and activation_closes_at > first_kickoff:
+                    logger.info(
+                        "ms_pdf_watch provisional close clamped to first kickoff",
+                        extra={
+                            "event": "ms_pdf_provisional_close_clamped",
+                            "draw_code": slate.draw_code,
+                            "window_close": activation_closes_at.isoformat(),
+                            "first_kickoff": first_kickoff.isoformat(),
+                        },
+                    )
+                    activation_closes_at = first_kickoff
             slate.registration_closes_at = activation_closes_at
             if slate.is_archived:
                 slate.is_archived = False
@@ -248,6 +268,17 @@ def run_ms_pdf_watch(
     session.flush()
     logger.info("ms_pdf_watch", extra={"event": "ms_pdf_watch", **result})
     return result
+
+
+def _first_kickoff(slate: ProgolSlateModel) -> datetime | None:
+    """Earliest kickoff on the slate, or None when no fixture carries one."""
+    kickoffs: list[datetime] = []
+    for link in slate.matches or []:
+        match = getattr(link, "match", None)
+        kickoff = _aware(getattr(match, "kickoff_at", None) if match is not None else None)
+        if kickoff is not None:
+            kickoffs.append(kickoff)
+    return min(kickoffs, default=None)
 
 
 def _slate_has_started(session: Any, slate: ProgolSlateModel, now: datetime) -> bool:

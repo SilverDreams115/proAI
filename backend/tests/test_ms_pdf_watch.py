@@ -136,6 +136,30 @@ def test_stale_invalid_activates_existing_slate_with_provisional_close(db):
     assert closes > datetime.now(timezone.utc)
 
 
+def test_provisional_close_never_outlives_the_first_kickoff(db):
+    """PGM-809 regression. The window is `first_seen + N days` and knows
+    nothing about when the matches are: 809 got a cierre on 19 Aug 19:30Z for
+    a concurso whose first match kicked off on the 18th at 19:00Z, leaving a
+    day in which the operator could still play a slate already under way."""
+    first_kickoff = datetime.now(timezone.utc) + timedelta(hours=6)
+    slate = _seed_ms_802(db, closes_at=_past(), kickoff_at=first_kickoff)
+    conn = _FakeMsConnector(sha="aaa", closes_at=None, accepted=False, rejected_block="800")
+
+    res = run_ms_pdf_watch(db, proposal_service=_svc(db, conn), generate_prediction=False)
+
+    assert res["activated"] is True
+    assert res["registration_close_source"] == "provisional_ms_pdf_window"
+    db.refresh(slate)
+    closes = slate.registration_closes_at
+    if closes.tzinfo is None:
+        closes = closes.replace(tzinfo=timezone.utc)
+    assert closes <= first_kickoff, (
+        f"cierre {closes} is after the first kickoff {first_kickoff}"
+    )
+    # Still a usable window: clamped, not collapsed into the past.
+    assert closes > datetime.now(timezone.utc)
+
+
 def test_started_slate_not_reactivated_by_provisional_window(db):
     # A concurso whose matches already kicked off must NOT be reopened with a
     # provisional future cierre — you cannot bet a match already in progress.
